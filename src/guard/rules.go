@@ -68,23 +68,30 @@ func checkIn(command string, readOnly bool, cwd string) Result {
 		// Every check reads the same redirect-free words, so an operator such as `>/dev/null` placed among
 		// git's options cannot hide them. Only the write check needs the redirects themselves.
 		tokens, redirect := shellTokens(seg)
+		if !redirectsWellFormed(tokens, redirect) {
+			r.Blocked = append(r.Blocked, Finding{RuleOpaque, "the command uses process substitution or a redirect the guard cannot read"})
+			continue
+		}
 		raw := withoutRedirects(tokens, redirect)
+
+		// A file write through a redirect counts before any other check, whatever the command is.
+		fileWrite := writesFile(tokens, redirect)
+		if fileWrite {
+			if readOnly {
+				r.Blocked = append(r.Blocked, Finding{RuleReadOnly, "redirects output into a file"})
+				continue
+			}
+			r.OtherWrites = true
+		}
+
 		if len(raw) > 0 && raw[0] == "export" && slices.ContainsFunc(raw[1:], gitEnv) {
 			r.gitEnv = true
 			continue
 		}
 
-		// A redirection with no command (`> tracked.go`) still truncates the file.
-		fileWrite := writesFile(tokens, redirect)
 		_, opaque := unwrap(raw)
 		words := commandWords(seg)
 		if len(words) == 0 {
-			if fileWrite {
-				if readOnly {
-					r.Blocked = append(r.Blocked, Finding{RuleReadOnly, "redirects output into a file"})
-				}
-				r.OtherWrites = true
-			}
 			continue
 		}
 
@@ -142,7 +149,7 @@ func checkIn(command string, readOnly bool, cwd string) Result {
 			continue
 		}
 
-		if f, writes := notReadOnly(words, raw, fileWrite); writes {
+		if f, writes := notReadOnly(words, raw, false); writes {
 			if readOnly {
 				r.Blocked = append(r.Blocked, f)
 				continue
@@ -284,6 +291,17 @@ func withoutRedirects(words []string, redirect []bool) []string {
 		out = append(out, words[i])
 	}
 	return out
+}
+
+// redirectsWellFormed rejects a redirect with no target and an operator used as another operator's target;
+// the guard cannot read those, so it refuses them. Process substitution is caught by the tokenizer.
+func redirectsWellFormed(words []string, redirect []bool) bool {
+	for i := range words {
+		if redirect[i] && (i+1 >= len(words) || redirect[i+1]) {
+			return false
+		}
+	}
+	return true
 }
 
 // writesFile reports an output redirection to a real file. Duplicating or closing a descriptor (>&1, 2>&-)
@@ -1015,6 +1033,17 @@ func shellTokens(s string) (words []string, redirect []bool) {
 			start := i
 			for i < len(s) && strings.IndexByte("<>&|", s[i]) >= 0 {
 				i++
+			}
+			// Process substitution, >(cmd) or <(cmd), runs a command the guard cannot read: emit an operator
+			// with no target, which redirectsWellFormed refuses.
+			if i < len(s) && s[i] == '(' {
+				cur.WriteString(fd + s[start:i])
+				inWord = true
+				emit(true)
+				words = append(words, "(")
+				redirect = append(redirect, true)
+				i--
+				continue
 			}
 			cur.WriteString(fd + s[start:i])
 			i--

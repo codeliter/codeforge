@@ -229,6 +229,12 @@ func TestCheck_PushRefsAndMixedWrites(t *testing.T) {
 	require.Equal(t, []string{RuleNoVerify}, rules(Check("nice -n 2&>/dev/null git push --no-verify", false)),
 		"&> takes no descriptor prefix, so 2 stays nice's priority")
 	require.Equal(t, GatePush, Check("nice -n 2&>>/tmp/log git push", false).Gate)
+	require.Equal(t, []string{RuleReadOnly}, rules(Check("> tracked.go sh -c true", true)), "an outer redirect is checked before the shell")
+	require.True(t, Check("> tracked.go sh -c true", false).OtherWrites)
+	require.Equal(t, []string{RuleOpaque}, rules(Check("git > >(grep status) -c core.hooksPath=/dev/null push --force origin main", false)),
+		"process substitution is refused")
+	require.Equal(t, []string{RuleOpaque}, rules(Check("diff <(git show a) b", false)))
+	require.Equal(t, []string{RuleOpaque}, rules(Check("git push origin main >", false)), "a redirect needs a target")
 	require.False(t, Check("git push origin main 2>&1 | tail -1", false).OtherWrites, "tail after a push is not a write")
 	require.True(t, Check("echo x > a.go && git add a.go && git commit -m x && git push", false).OtherWrites)
 	require.False(t, Check("git push origin feat", false).OtherWrites)
