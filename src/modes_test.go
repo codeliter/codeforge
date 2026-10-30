@@ -52,6 +52,26 @@ func TestModeArgs_Chat(t *testing.T) {
 	require.Equal(t, []string{"--model", "a/coder", "--effort", "low"}, args)
 }
 
+func TestModeArgs_Resume(t *testing.T) {
+	for _, mode := range modes {
+		for _, want := range [][]string{
+			{"--resume", "session-123"},
+			{"--resume=session-123"},
+			{"--session", "session-123"},
+			{"-s", "session-123", "continue"},
+		} {
+			t.Run(mode+"/"+want[0], func(t *testing.T) {
+				gotMode, args, err := modeArgs(t.Context(), "/nonexistent", Config{Model: "a/coder"}, mode, want)
+				require.NoError(t, err)
+				require.Equal(t, mode, gotMode)
+				require.Equal(t, want, args)
+			})
+		}
+	}
+	_, _, err := modeArgs(t.Context(), "/nonexistent", Config{}, modeChat, []string{"--resume", "session-123", "--effort", "max"})
+	require.ErrorIs(t, err, errEffortAboveCeiling)
+}
+
 func TestModeArgs_TicketNeedsSummaryWithoutTerminal(t *testing.T) {
 	_, _, err := modeArgs(t.Context(), "/nonexistent", Config{}, modeTicket, []string{"--ticket", "ABC-1"})
 	require.ErrorIs(t, err, errStartUsage)

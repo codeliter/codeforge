@@ -173,6 +173,18 @@ func launch(ctx context.Context, home, bin, mode string, args []string) error {
 }
 
 func modeArgs(ctx context.Context, bin string, cfg Config, cmd string, args []string) (string, []string, error) {
+	// Resumes keep their saved task and settings instead of preparing a new task.
+	for _, flag := range []string{"--resume", "--session", "-s"} {
+		if hasFlag(args, flag) {
+			if err := checkEffort(args); err != nil {
+				return cmd, nil, err
+			}
+			if cmd == "start" {
+				cmd = modeTicket
+			}
+			return cmd, args, nil
+		}
+	}
 	var err error
 	switch cmd {
 	case modeReview:
