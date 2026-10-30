@@ -74,9 +74,17 @@ func checkIn(command string, readOnly bool, cwd string) Result {
 			continue
 		}
 
+		// A redirection with no command (`> tracked.go`) still truncates the file.
+		fileWrite := writesFile(tokens, redirect)
 		_, opaque := unwrap(raw)
 		words := commandWords(seg)
 		if len(words) == 0 {
+			if fileWrite {
+				if readOnly {
+					r.Blocked = append(r.Blocked, Finding{RuleReadOnly, "redirects output into a file"})
+				}
+				r.OtherWrites = true
+			}
 			continue
 		}
 
@@ -134,7 +142,7 @@ func checkIn(command string, readOnly bool, cwd string) Result {
 			continue
 		}
 
-		if f, writes := notReadOnly(words, raw, tokens); writes {
+		if f, writes := notReadOnly(words, raw, fileWrite); writes {
 			if readOnly {
 				r.Blocked = append(r.Blocked, f)
 				continue
@@ -265,7 +273,7 @@ func pushRefs(w []string) []string {
 }
 
 // withoutRedirects removes unquoted redirections and, when an operator stands alone (`2>& 1`, `> log`),
-// the target word after it.
+// the target word after it. Operators are standalone tokens; `2>&1` carries its own target.
 func withoutRedirects(words []string, redirect []bool) []string {
 	out := make([]string, 0, len(words))
 	for i := 0; i < len(words); i++ {
@@ -273,11 +281,28 @@ func withoutRedirects(words []string, redirect []bool) []string {
 			out = append(out, words[i])
 			continue
 		}
-		if op := strings.TrimLeft(words[i], "0123456789&"); strings.Trim(op, "<>&|") == "" {
+		if !strings.Contains(words[i], "&") || strings.HasSuffix(words[i], "&") || strings.HasPrefix(words[i], "&") {
 			i++
 		}
 	}
 	return out
+}
+
+// writesFile reports an unquoted output redirection to anything but /dev/null or a file descriptor.
+func writesFile(words []string, redirect []bool) bool {
+	for i, w := range words {
+		op := strings.TrimLeft(w, "0123456789")
+		if !redirect[i] || !strings.ContainsRune(op, '>') {
+			continue
+		}
+		if strings.Contains(op, "&") && !strings.HasSuffix(op, "&") && !strings.HasPrefix(op, "&") {
+			continue
+		}
+		if i+1 < len(words) && words[i+1] != "/dev/null" {
+			return true
+		}
+	}
+	return false
 }
 
 // joinDir resolves next against base; an absolute next replaces base.
@@ -663,13 +688,13 @@ var readOnlySubcommands = map[string][]string{
 }
 
 // notReadOnly decides with an allowlist, because a denylist misses every unknown way to write a file.
-// tokens still contain redirections, so writes through `>` are caught; raw is the redirect-free form.
-func notReadOnly(w, raw, tokens []string) (Finding, bool) {
+// raw is the redirect-free command; fileWrite reports an output redirection to a real file.
+func notReadOnly(w, raw []string, fileWrite bool) (Finding, bool) {
 	name := w[0]
 	switch {
 	case !readOnlyCommands[name]:
 		return Finding{RuleReadOnly, name + " is not on the read-only allowlist"}, true
-	case redirectsToFile(tokens):
+	case fileWrite:
 		return Finding{RuleReadOnly, "redirects output into a file"}, true
 	case name == "find" && hasAny(w, "-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprintf", "-fls", "-fprint0"):
 		return Finding{RuleReadOnly, "find can delete files or run commands"}, true
@@ -695,30 +720,6 @@ func ghWrites(w []string) bool {
 		return apiWrites(w[2:])
 	}
 	return len(w) > 2 && !hasAny(w[2:3], "view", "list", "diff", "checks", "status")
-}
-
-// redirectsToFile works on shell words, so `echo "a > b"` is text while `2 >file` and `>file` are writes.
-func redirectsToFile(raw []string) bool {
-	for i, a := range raw {
-		op := strings.TrimLeft(a, "0123456789&")
-		if !strings.HasPrefix(op, ">") {
-			continue
-		}
-
-		target := strings.TrimLeft(op, ">|&")
-		if target == "" && i+1 < len(raw) {
-			target = raw[i+1]
-		}
-		if target != "" && target != "/dev/null" && !isFD(target) {
-			return true
-		}
-	}
-	return false
-}
-
-func isFD(s string) bool {
-	s = strings.TrimPrefix(s, "&")
-	return s != "" && strings.Trim(s, "0123456789-") == ""
 }
 
 var interpreters = map[string]string{
@@ -957,19 +958,19 @@ func dropMessages(w []string) []string {
 	return out
 }
 
-// shellTokens splits like a POSIX shell for the cases that matter here (quotes group words, backslashes
-// escape) and reports, per word, whether it starts with an unquoted redirection operator (>, <, 2>&1, &>),
-// so a quoted '>topic' stays an argument while a real redirect can be dropped.
+// shellTokens splits like a POSIX shell for the cases that matter here: quotes group words, backslashes
+// escape, and an unquoted redirection (>, >>, <, 2>&1, &>) is its own token even when written against a
+// word, as in `'2'>/dev/null`. redirect marks those tokens; a quoted '>topic' stays an ordinary argument.
 func shellTokens(s string) (words []string, redirect []bool) {
 	var cur strings.Builder
-	inWord, isRedir := false, false
+	inWord, quoted := false, false
 	var quote byte
-	flush := func() {
+	emit := func(isRedir bool) {
 		if inWord {
 			words = append(words, cur.String())
 			redirect = append(redirect, isRedir)
 			cur.Reset()
-			inWord, isRedir = false, false
+			inWord, quoted = false, false
 		}
 	}
 
@@ -981,22 +982,44 @@ func shellTokens(s string) (words []string, redirect []bool) {
 		case quote != 0:
 			cur.WriteByte(c)
 		case c == '"' || c == '\'':
-			quote, inWord = c, true
+			quote, inWord, quoted = c, true, true
 		case c == '\\' && i+1 < len(s):
 			i++
 			cur.WriteByte(s[i])
-			inWord = true
+			inWord, quoted = true, true
 		case c == ' ' || c == '\t' || c == '(' || c == ')':
-			flush()
-		default:
-			if (c == '>' || c == '<') && strings.Trim(cur.String(), "0123456789&") == "" {
-				isRedir = true
+			emit(false)
+		case c == '>' || c == '<' || c == '&' && i+1 < len(s) && s[i+1] == '>':
+			// An unquoted all-digit word right before the operator is its file descriptor (2>), anything else
+			// is a separate argument the operator ends.
+			fd := ""
+			if inWord && !quoted && strings.Trim(cur.String(), "0123456789") == "" {
+				fd = cur.String()
+				cur.Reset()
+				inWord = false
 			}
+			emit(false)
+
+			start := i
+			for i < len(s) && strings.IndexByte("<>&|", s[i]) >= 0 {
+				i++
+			}
+			// A descriptor target such as 1 in 2>&1 belongs to the operator.
+			if s[i-1] == '&' {
+				for i < len(s) && (s[i] >= '0' && s[i] <= '9' || s[i] == '-') {
+					i++
+				}
+			}
+			cur.WriteString(fd + s[start:i])
+			i--
+			inWord = true
+			emit(true)
+		default:
 			cur.WriteByte(c)
 			inWord = true
 		}
 	}
-	flush()
+	emit(false)
 	return words, redirect
 }
 

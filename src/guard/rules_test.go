@@ -210,6 +210,13 @@ func TestCheck_PushRefsAndMixedWrites(t *testing.T) {
 	require.Contains(t, rules(Check("git >/dev/null -c core.hooksPath=/dev/null -c push.default=matching push origin", false)), RuleSelf,
 		"a redirect among git's options cannot hide a hook override")
 	require.Contains(t, rules(Check("git 2>&1 -c push.default=matching push origin", false)), RulePushScope)
+	require.Equal(t, []string{RuleNoVerify}, rules(Check(`git -C '2'>/dev/null push --no-verify`, false)),
+		"a quoted 2 is the -C value, not a file descriptor, so --no-verify is still seen")
+	require.Equal(t, []string{"2"}, Check(`git -C '2'>/dev/null push --no-verify`, false).Dirs)
+	require.Equal(t, []string{"/b"}, Check(`git -C /b>/dev/null push`, false).Dirs)
+	require.True(t, Check("> tracked.go", false).OtherWrites, "a bare redirection truncates a file")
+	require.Equal(t, []string{RuleReadOnly}, rules(Check("> tracked.go", true)))
+	require.Empty(t, rules(Check("ls 2>&1 >/dev/null", true)))
 	require.False(t, Check("git push origin main 2>&1 | tail -1", false).OtherWrites, "tail after a push is not a write")
 	require.True(t, Check("echo x > a.go && git add a.go && git commit -m x && git push", false).OtherWrites)
 	require.False(t, Check("git push origin feat", false).OtherWrites)
