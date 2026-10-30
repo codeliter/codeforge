@@ -109,10 +109,12 @@ func pushScope(ctx context.Context, repo string, res Result) []Finding {
 	}
 
 	current := git("branch", "--show-current")
+	head := git("rev-parse", "HEAD")
 	for _, ref := range res.PushRefs {
-		if current == "" || !pushesHead(ref, current) {
-			out = append(out, Finding{RulePushScope, "pushes " + ref + ", but the gate reviewed only the current branch"})
+		if current != "" && pushesHead(ref, current) || pointsAtHead(git, ref, head) {
+			continue
 		}
+		out = append(out, Finding{RulePushScope, "pushes " + ref + ", but the gate reviewed only the current branch"})
 	}
 
 	if len(res.PushRefs) == 0 && implicitWidePush(git) {
@@ -125,6 +127,16 @@ func implicitWidePush(git func(...string) string) bool {
 	return git("config", "--get", "push.default") == "matching" ||
 		git("config", "--get-regexp", `^remote\..*\.push$`) != "" ||
 		git("config", "--get-regexp", `^remote\..*\.mirror$`) != ""
+}
+
+// pointsAtHead accepts a ref, such as a release tag, whose commit is the reviewed HEAD, matching what
+// git's pre-push hook checks. Ref-wide flags like --all never qualify.
+func pointsAtHead(git func(...string) string, ref, head string) bool {
+	src, _, _ := strings.Cut(strings.TrimPrefix(ref, "+"), ":")
+	if head == "" || src == "" || strings.HasPrefix(src, "-") {
+		return false
+	}
+	return git("rev-parse", "--verify", "--quiet", src+"^{commit}") == head
 }
 
 // pushesHead accepts refspecs whose source is the checked-out branch.

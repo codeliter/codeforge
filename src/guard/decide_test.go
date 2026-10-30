@@ -211,6 +211,14 @@ func TestDecide_PushMustStandAloneAndCoverHead(t *testing.T) {
 	require.False(t, Decide(t.Context(), st, shell(t, repo, "git commit -m x && git push"), false, now).Allow, "commit then push in one call")
 	require.False(t, Decide(t.Context(), st, shell(t, repo, "git push --all origin"), false, now).Allow)
 	require.False(t, Decide(t.Context(), st, shell(t, repo, "git push origin other"), false, now).Allow)
+
+	gitOut(t, repo, "tag", "-a", "v1", "-m", "v1")
+	require.True(t, Decide(t.Context(), st, shell(t, repo, "git push origin v1"), false, now).Allow, "a tag of the reviewed HEAD")
+	gitOut(t, repo, "commit", "-q", "--allow-empty", "-m", "later")
+	tree, err = TreeID(t.Context(), repo)
+	require.NoError(t, err)
+	st.PassGate(repo, tree, "", "ok", now)
+	require.False(t, Decide(t.Context(), st, shell(t, repo, "git push origin v1"), false, now).Allow, "a tag of an older commit")
 }
 
 func TestDecide_PushNeedsCleanTree(t *testing.T) {
