@@ -246,6 +246,11 @@ func pushRefs(w []string) []string {
 	for i := 2; i < len(w); i++ {
 		a := w[i]
 		switch {
+		case isRedirect(a):
+			// The shell handles redirects such as 2>&1 or >log; with a separate target word, skip that too.
+			if strings.HasSuffix(a, ">") || strings.HasSuffix(a, "<") {
+				i++
+			}
 		case pushValueFlags[a]:
 			i++
 		case a == "--all" || a == "--tags" || a == "--branches" || a == "--follow-tags":
@@ -259,6 +264,12 @@ func pushRefs(w []string) []string {
 		out = append(out, pos[1:]...)
 	}
 	return out
+}
+
+// isRedirect matches shell redirections: >file, 2>&1, &>/dev/null, <in, 2>>log.
+func isRedirect(a string) bool {
+	s := strings.TrimLeft(a, "0123456789&")
+	return strings.HasPrefix(s, ">") || strings.HasPrefix(s, "<")
 }
 
 // joinDir resolves next against base; an absolute next replaces base.

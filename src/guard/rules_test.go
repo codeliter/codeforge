@@ -201,6 +201,10 @@ func TestCheck_PushRefsAndMixedWrites(t *testing.T) {
 	require.Equal(t, []string{"--all"}, Check("git push --all origin", false).PushRefs)
 	require.Equal(t, []string{"other"}, Check("git push origin other", false).PushRefs)
 	require.Empty(t, Check("git push -u origin", false).PushRefs)
+	require.Equal(t, []string{"main"}, Check("git push origin main 2>&1 | tail -1", false).PushRefs, "a redirect is not a refspec")
+	require.Equal(t, []string{"main"}, Check("git push origin main 2>&1", false).PushRefs)
+	require.Equal(t, []string{"main"}, Check("git push origin main > /tmp/log", false).PushRefs)
+	require.False(t, Check("git push origin main 2>&1 | tail -1", false).OtherWrites, "tail after a push is not a write")
 	require.True(t, Check("echo x > a.go && git add a.go && git commit -m x && git push", false).OtherWrites)
 	require.False(t, Check("git push origin feat", false).OtherWrites)
 }
