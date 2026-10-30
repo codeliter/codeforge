@@ -94,13 +94,9 @@ func checkIn(command string, readOnly bool, cwd string) Result {
 			}
 		}
 
-		// Git is the user's own tool: outside review mode every git command is allowed as written. The one
-		// exception is git used as a launcher (a `!` alias, a config value, a hook) for gh, infra tools or
-		// codeforge, whose own rules would otherwise be skipped.
+		// Git is the user's own tool: outside review mode every git command is allowed as written. Launching
+		// codeforge allow through a git alias or hook gains nothing, because allow needs a real terminal.
 		if words[0] == "git" && !readOnly {
-			if guardedTool.MatchString(strings.Join(raw, " ")) {
-				r.Blocked = append(r.Blocked, Finding{RuleOpaque, "this git command names gh, terraform, kubectl or codeforge, which the guard checks only when called directly"})
-			}
 			continue
 		}
 

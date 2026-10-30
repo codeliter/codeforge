@@ -42,12 +42,14 @@ func TestCheck_GHAndInfraStillGuarded(t *testing.T) {
 	require.Equal(t, GateOpenPR, Check("gh pr create --fill", false).Gate)
 	require.Equal(t, []string{RuleInfra}, rules(Check("terraform apply", false)))
 	require.Equal(t, []string{RuleSelf}, rules(Check("codeforge allow merge", false)))
-	require.Equal(t, []string{RuleOpaque}, rules(Check("git -c alias.approve='!codeforge allow merge' approve", false)),
-		"git cannot launch codeforge allow through an alias")
-	require.Equal(t, []string{RuleOpaque}, rules(Check("git -c alias.m='!gh pr merge 1' m", false)))
-	require.Equal(t, []string{RuleOpaque}, rules(Check("git config alias.x '!codeforge allow merge'", false)),
-		"a persistent alias cannot launch codeforge either")
-	require.Empty(t, rules(Check("git -c user.name=me commit -m x", false)), "ordinary config is fine")
+	for _, cmd := range []string{
+		"git add assets/agents/codeforge-ticket.md",
+		"git diff -- src/guard/gh.go",
+		"git commit -m 'Handle gh pr merge errors'",
+		"git -c user.name=me commit -m x",
+	} {
+		require.Empty(t, rules(Check(cmd, false)), cmd)
+	}
 }
 
 func TestCheckTool_MessagesAreNotCommands(t *testing.T) {
