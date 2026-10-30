@@ -94,9 +94,13 @@ func checkIn(command string, readOnly bool, cwd string) Result {
 			}
 		}
 
-		// Git is the user's own tool: outside review mode every git command is allowed as written. Launching
-		// codeforge allow through a git alias or hook gains nothing, because allow needs a real terminal.
+		// Git is the user's own tool: outside review mode every git command is allowed as written, except setting
+		// config that makes git run another program (shell aliases, hooks, pagers, helpers). Those launch commands
+		// outside the agent's tool calls, so gh, terraform or codeforge could run unchecked through them.
 		if words[0] == "git" && !readOnly {
+			if key, ok := gitExecConfig(raw); ok {
+				r.Blocked = append(r.Blocked, Finding{RuleOpaque, "setting " + key + " makes git run another program outside the guard; set it yourself if you need it"})
+			}
 			continue
 		}
 
@@ -262,6 +266,9 @@ var shells = map[string]bool{"sh": true, "bash": true, "zsh": true, "dash": true
 
 func classify(w []string) ([]Finding, string) {
 	switch w[0] {
+	case "script", "expect", "unbuffer", "socat", "tmux", "screen", "zpty":
+		// These give a program a pseudo-terminal the agent controls, which could answer codeforge allow's prompt.
+		return []Finding{{RuleSelf, w[0] + " can drive a terminal prompt such as codeforge allow; run it yourself if you need it"}}, gateNone
 	case "codeforge":
 		if len(w) > 1 && hasAny(w[1:2], "allow", "trust", "init", "models") {
 			return []Finding{{RuleSelf, "only you can approve actions or change codeforge settings"}}, gateNone
