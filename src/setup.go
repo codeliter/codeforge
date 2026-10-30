@@ -114,12 +114,11 @@ func ensureSignedIn(ctx context.Context, bin string, opts setupOptions) error {
 	}
 
 	provider := loginProviders[0]
-	form := huh.NewSelect[string]().
+	if err := runForm("provider picker", huh.NewSelect[string]().
 		Title("No model provider is signed in. Which subscription do you use?").
 		Options(huh.NewOptions(loginProviders...)...).
-		Value(&provider)
-	if err := form.Run(); err != nil {
-		return fmt.Errorf("provider picker: %w", err)
+		Value(&provider)); err != nil {
+		return err
 	}
 
 	cmd := exec.CommandContext(ctx, bin, "--login", provider)
@@ -218,7 +217,7 @@ func confirm(question string) bool {
 	}
 
 	ok := false
-	if err := huh.NewConfirm().Title(question).Value(&ok).Run(); err != nil {
+	if err := runForm("confirm", huh.NewConfirm().Title(question).Value(&ok)); err != nil {
 		return false
 	}
 	return ok

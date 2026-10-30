@@ -64,8 +64,10 @@ func workFromArgs(args []string) (work, []string, error) {
 	return w, rest, nil
 }
 
+// askWork asks on two short pages, so each fits a normal terminal without scrolling a field out of view.
 func askWork(w *work) error {
-	form := huh.NewForm(
+	const textLines = 3
+	return runGroups("ticket form",
 		huh.NewGroup(
 			huh.NewInput().
 				Title("Ticket").
@@ -79,22 +81,22 @@ func askWork(w *work) error {
 			huh.NewText().
 				Title("Details").
 				Description("Context, links, logs, constraints. Optional.").
+				Lines(textLines).
 				Value(&w.details),
+		),
+		huh.NewGroup(
 			huh.NewText().
 				Title("Done when").
 				Description("How you will know it works. Optional.").
+				Lines(textLines).
 				Value(&w.done),
 			huh.NewText().
 				Title("Out of scope").
 				Description("Anything the agent must not touch. Optional.").
+				Lines(textLines).
 				Value(&w.outOfBox),
 		),
 	)
-
-	if err := form.Run(); err != nil {
-		return fmt.Errorf("start form: %w", err)
-	}
-	return nil
 }
 
 // prompt leads with the summary so the effort judges score the work, not the template around it.

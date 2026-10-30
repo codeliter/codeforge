@@ -40,16 +40,13 @@ func pickMode(cfg Config, args []string) (string, error) {
 	}
 
 	mode := modeTicket
-	form := huh.NewSelect[string]().
+	err := runForm("mode picker", huh.NewSelect[string]().
 		Title("What are we doing?").
 		Options(
 			huh.NewOption("Ticket: take a task to a verified change and draft PR", modeTicket),
 			huh.NewOption("Chat: questions, explanations, small edits", modeChat),
 			huh.NewOption("Review: a PR or my local work", modeReview),
 		).
-		Value(&mode)
-	if err := form.Run(); err != nil {
-		return "", fmt.Errorf("mode picker: %w", err)
-	}
-	return mode, nil
+		Value(&mode))
+	return mode, err
 }

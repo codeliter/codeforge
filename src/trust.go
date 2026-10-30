@@ -82,14 +82,13 @@ func trusted(home, path, content string) (bool, error) {
 	}
 
 	ok := false
-	confirm := huh.NewConfirm().
+	if err := runForm("trust prompt", huh.NewConfirm().
 		Title("Use this repository's persona?").
 		Description(fmt.Sprintf("%s is new or changed. It becomes part of the agent's instructions in this repository.\n\n%s", path, preview(content))).
 		Affirmative("Trust it").
 		Negative("Skip").
-		Value(&ok)
-	if err := confirm.Run(); err != nil {
-		return false, fmt.Errorf("trust prompt: %w", err)
+		Value(&ok)); err != nil {
+		return false, err
 	}
 	if !ok {
 		return false, nil

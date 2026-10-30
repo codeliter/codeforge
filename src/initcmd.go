@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/huh"
 
 	"github.com/codeliter/codeforge/src/guard"
@@ -205,7 +206,7 @@ func askInit() (initAnswers, error) {
 				Description("For example: ticket format, PR template, words you avoid.").
 				Value(&ans.notes),
 		),
-	)
+	).WithProgramOptions(tea.WithAltScreen())
 
 	if err := form.Run(); err != nil {
 		return ans, fmt.Errorf("init form: %w", err)
