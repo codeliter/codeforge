@@ -68,10 +68,19 @@ func TestCheck_GHAndInfraStillGuarded(t *testing.T) {
 		"GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.deploy GIT_CONFIG_VALUE_0='!./deploy.sh' git deploy",
 		"export GIT_CONFIG_PARAMETERS=x",
 		"env GIT_SSH_COMMAND=./x git fetch",
+		"git config core.hooksPath get",
+		"git ls-remote --upload-pack='terraform apply -auto-approve; #' .",
+		"git fetch -u ./x origin",
+		"git rebase -x 'gh pr merge 1' main",
+		"git push --receive-pack=./x origin",
+		"git difftool --extcmd=./x",
 	} {
 		require.Equal(t, []string{RuleOpaque}, rules(Check(cmd, false)), cmd)
 	}
-	for _, cmd := range []string{"git config get user.email", "git config --list", "git config set user.email me@x.com", "git config alias.co"} {
+	for _, cmd := range []string{
+		"git config get user.email", "git config --list", "git config set user.email me@x.com", "git config alias.co",
+		"git push -u origin main", "git add -u", "git commit -m 'use -x flags'",
+	} {
 		require.Empty(t, rules(Check(cmd, false)), cmd)
 	}
 

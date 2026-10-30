@@ -47,47 +47,81 @@ func gitExecConfig(raw []string) (string, bool) {
 	return configWrite(rest[1:])
 }
 
-// configWrite finds the key a `git config` invocation would change. Pure reads pass; a write to a key outside
-// the safe list, or a form the guard cannot read with certainty (edit, unset, rename, files), is refused.
+// configWrite allows `git config` only in shapes the guard reads with certainty: a read (a read option, `get` or
+// `list` as the action, or a lone key), or a write whose key is on the safe list. Everything else is refused.
 func configWrite(args []string) (string, bool) {
 	var operands []string
+	read := false
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		switch {
-		case slices.Contains(gitConfigReader, a):
-			return "", false
-		case a == "--file" || a == "-f" || a == "--blob" || a == "--type" || a == "--default" || a == "--value" || a == "--comment":
-			if a == "--file" || a == "-f" || a == "--blob" {
-				return a, true
-			}
+		case slices.Contains(gitConfigReader, a) && strings.HasPrefix(a, "-"):
+			read = true
+		case a == "--type" || a == "--default" || a == "--comment" || a == "--value":
 			i++
+		case a == "--global" || a == "--local" || a == "--system" || a == "--worktree" || a == "--bool" ||
+			a == "--int" || a == "--path" || a == "--null" || a == "-z" || a == "--show-origin" || a == "--show-scope" ||
+			a == "--name-only" || a == "--includes" || a == "--no-includes":
 		case strings.HasPrefix(a, "-"):
-			if a == "--edit" || a == "-e" || strings.HasPrefix(a, "--unset") || strings.HasPrefix(a, "--rename") ||
-				strings.HasPrefix(a, "--remove") || strings.HasPrefix(a, "--replace") || strings.HasPrefix(a, "--add") ||
-				strings.HasPrefix(a, "--file=") {
-				return a, true
-			}
+			return a, true
 		default:
 			operands = append(operands, a)
 		}
 	}
 
-	// Modern form: git config <subcommand> key [value].
-	if len(operands) > 0 && slices.Contains([]string{"set", "unset", "rename-section", "remove-section", "edit"}, operands[0]) {
-		if operands[0] != "set" || len(operands) < 2 || !safeConfigKey.MatchString(operands[1]) {
-			return "git config " + operands[0], true
-		}
+	switch {
+	case read:
+		return "", false
+	case len(operands) == 1:
+		return "", false
+	case len(operands) > 0 && (operands[0] == "get" || operands[0] == "list"):
+		return "", false
+	case len(operands) == 3 && operands[0] == "set" && safeConfigKey.MatchString(operands[1]):
+		return "", false
+	case len(operands) == 2 && safeConfigKey.MatchString(operands[0]):
+		return "", false
+	case len(operands) == 0:
 		return "", false
 	}
-	if len(operands) > 0 && slices.Contains([]string{"get", "list"}, operands[0]) {
-		return "", false
-	}
+	return "git config " + strings.Join(operands, " "), true
+}
 
-	// Classic form: git config key [value]; a key alone only reads.
-	if len(operands) > 1 && !safeConfigKey.MatchString(operands[0]) {
-		return operands[0], true
+// gitExecFlag reports a git argument that makes git run a program: --upload-pack, --receive-pack, --exec,
+// rebase -x, a merge/diff tool, or an external diff.
+func gitExecFlag(raw []string) (string, bool) {
+	for i, a := range raw {
+		name, _, _ := strings.Cut(a, "=")
+		switch name {
+		case "--upload-pack", "-u", "--receive-pack", "--exec", "-x", "--extcmd", "--tool", "-t", "--ext-diff":
+			if name == "-u" || name == "-t" || name == "-x" {
+				if i == 0 || !gitSubcommandTakes(raw, name) {
+					continue
+				}
+			}
+			return a, true
+		}
 	}
 	return "", false
+}
+
+// gitSubcommandTakes limits short flags to the subcommands where they run a program.
+func gitSubcommandTakes(raw []string, flag string) bool {
+	sub := ""
+	for _, w := range raw {
+		if !strings.HasPrefix(w, "-") && w != "git" && !strings.HasSuffix(w, "/git") {
+			sub = w
+			break
+		}
+	}
+	switch flag {
+	case "-x":
+		return sub == "rebase"
+	case "-u":
+		return sub == "ls-remote" || sub == "fetch" || sub == "clone"
+	case "-t":
+		return sub == "difftool" || sub == "mergetool"
+	}
+	return false
 }
 
 // gitConfigEnv reports environment variables that inject git configuration or replace git's helper programs.

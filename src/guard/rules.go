@@ -107,6 +107,8 @@ func checkIn(command string, readOnly bool, cwd string) Result {
 		if words[0] == "git" && !readOnly {
 			if key, ok := gitExecConfig(raw); ok {
 				r.Blocked = append(r.Blocked, Finding{RuleOpaque, "setting " + key + " makes git run another program outside the guard; set it yourself if you need it"})
+			} else if flag, ok := gitExecFlag(raw); ok {
+				r.Blocked = append(r.Blocked, Finding{RuleOpaque, flag + " makes git run another program outside the guard; run it yourself if you need it"})
 			}
 			continue
 		}
