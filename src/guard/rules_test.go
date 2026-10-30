@@ -207,6 +207,9 @@ func TestCheck_PushRefsAndMixedWrites(t *testing.T) {
 	require.Equal(t, []string{"main"}, Check("git push origin main 2>& 1", false).PushRefs, "standalone operator and its target")
 	require.Equal(t, []string{">topic"}, Check("git push origin '>topic'", false).PushRefs, "a quoted refspec is an argument")
 	require.Equal(t, []string{">topic"}, Check(`git push origin \>topic`, false).PushRefs, "an escaped refspec is an argument")
+	require.Contains(t, rules(Check("git >/dev/null -c core.hooksPath=/dev/null -c push.default=matching push origin", false)), RuleSelf,
+		"a redirect among git's options cannot hide a hook override")
+	require.Contains(t, rules(Check("git 2>&1 -c push.default=matching push origin", false)), RulePushScope)
 	require.False(t, Check("git push origin main 2>&1 | tail -1", false).OtherWrites, "tail after a push is not a write")
 	require.True(t, Check("echo x > a.go && git add a.go && git commit -m x && git push", false).OtherWrites)
 	require.False(t, Check("git push origin feat", false).OtherWrites)

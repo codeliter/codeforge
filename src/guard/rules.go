@@ -65,7 +65,10 @@ func checkIn(command string, readOnly bool, cwd string) Result {
 	r := Result{cwd: cwd}
 	dir := ""
 	for _, seg := range segments(command) {
-		raw := shellWords(seg)
+		// Every check reads the same redirect-free words, so an operator such as `>/dev/null` placed among
+		// git's options cannot hide them. Only the write check needs the redirects themselves.
+		tokens, redirect := shellTokens(seg)
+		raw := withoutRedirects(tokens, redirect)
 		if len(raw) > 0 && raw[0] == "export" && slices.ContainsFunc(raw[1:], gitEnv) {
 			r.gitEnv = true
 			continue
@@ -131,7 +134,7 @@ func checkIn(command string, readOnly bool, cwd string) Result {
 			continue
 		}
 
-		if f, writes := notReadOnly(words, raw); writes {
+		if f, writes := notReadOnly(words, raw, tokens); writes {
 			if readOnly {
 				r.Blocked = append(r.Blocked, f)
 				continue
@@ -660,12 +663,13 @@ var readOnlySubcommands = map[string][]string{
 }
 
 // notReadOnly decides with an allowlist, because a denylist misses every unknown way to write a file.
-func notReadOnly(w, raw []string) (Finding, bool) {
+// tokens still contain redirections, so writes through `>` are caught; raw is the redirect-free form.
+func notReadOnly(w, raw, tokens []string) (Finding, bool) {
 	name := w[0]
 	switch {
 	case !readOnlyCommands[name]:
 		return Finding{RuleReadOnly, name + " is not on the read-only allowlist"}, true
-	case redirectsToFile(raw):
+	case redirectsToFile(tokens):
 		return Finding{RuleReadOnly, "redirects output into a file"}, true
 	case name == "find" && hasAny(w, "-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprintf", "-fls", "-fprint0"):
 		return Finding{RuleReadOnly, "find can delete files or run commands"}, true
@@ -953,14 +957,9 @@ func dropMessages(w []string) []string {
 	return out
 }
 
-// shellWords splits like a POSIX shell for the cases that matter here: quotes group words, backslashes escape.
-func shellWords(s string) []string {
-	words, _ := shellTokens(s)
-	return words
-}
-
-// shellTokens is shellWords that also reports, per word, whether it starts with an unquoted redirection
-// operator (>, <, 2>&1, &>), so a quoted '>topic' stays an argument while a real redirect can be skipped.
+// shellTokens splits like a POSIX shell for the cases that matter here (quotes group words, backslashes
+// escape) and reports, per word, whether it starts with an unquoted redirection operator (>, <, 2>&1, &>),
+// so a quoted '>topic' stays an argument while a real redirect can be dropped.
 func shellTokens(s string) (words []string, redirect []bool) {
 	var cur strings.Builder
 	inWord, isRedir := false, false
