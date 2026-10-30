@@ -246,11 +246,6 @@ func pushRefs(w []string) []string {
 	for i := 2; i < len(w); i++ {
 		a := w[i]
 		switch {
-		case isRedirect(a):
-			// The shell handles redirects such as 2>&1 or >log; with a separate target word, skip that too.
-			if strings.HasSuffix(a, ">") || strings.HasSuffix(a, "<") {
-				i++
-			}
 		case pushValueFlags[a]:
 			i++
 		case a == "--all" || a == "--tags" || a == "--branches" || a == "--follow-tags":
@@ -266,10 +261,20 @@ func pushRefs(w []string) []string {
 	return out
 }
 
-// isRedirect matches shell redirections: >file, 2>&1, &>/dev/null, <in, 2>>log.
-func isRedirect(a string) bool {
-	s := strings.TrimLeft(a, "0123456789&")
-	return strings.HasPrefix(s, ">") || strings.HasPrefix(s, "<")
+// withoutRedirects removes unquoted redirections and, when an operator stands alone (`2>& 1`, `> log`),
+// the target word after it.
+func withoutRedirects(words []string, redirect []bool) []string {
+	out := make([]string, 0, len(words))
+	for i := 0; i < len(words); i++ {
+		if !redirect[i] {
+			out = append(out, words[i])
+			continue
+		}
+		if op := strings.TrimLeft(words[i], "0123456789&"); strings.Trim(op, "<>&|") == "" {
+			i++
+		}
+	}
+	return out
 }
 
 // joinDir resolves next against base; an absolute next replaces base.
@@ -794,9 +799,10 @@ func segments(command string) []string {
 	return out
 }
 
-// commandWords drops env assignments, wrappers such as sudo or env with their options, and git's global options.
+// commandWords drops redirections, env assignments, wrappers such as sudo or env with their options,
+// and git's global options.
 func commandWords(seg string) []string {
-	words, _ := unwrap(shellWords(seg))
+	words, _ := unwrap(withoutRedirects(shellTokens(seg)))
 	if len(words) == 0 {
 		return nil
 	}
@@ -949,10 +955,24 @@ func dropMessages(w []string) []string {
 
 // shellWords splits like a POSIX shell for the cases that matter here: quotes group words, backslashes escape.
 func shellWords(s string) []string {
-	var words []string
+	words, _ := shellTokens(s)
+	return words
+}
+
+// shellTokens is shellWords that also reports, per word, whether it starts with an unquoted redirection
+// operator (>, <, 2>&1, &>), so a quoted '>topic' stays an argument while a real redirect can be skipped.
+func shellTokens(s string) (words []string, redirect []bool) {
 	var cur strings.Builder
-	inWord := false
+	inWord, isRedir := false, false
 	var quote byte
+	flush := func() {
+		if inWord {
+			words = append(words, cur.String())
+			redirect = append(redirect, isRedir)
+			cur.Reset()
+			inWord, isRedir = false, false
+		}
+	}
 
 	for i := 0; i < len(s); i++ {
 		c := s[i]
@@ -968,20 +988,17 @@ func shellWords(s string) []string {
 			cur.WriteByte(s[i])
 			inWord = true
 		case c == ' ' || c == '\t' || c == '(' || c == ')':
-			if inWord {
-				words = append(words, cur.String())
-				cur.Reset()
-				inWord = false
-			}
+			flush()
 		default:
+			if (c == '>' || c == '<') && strings.Trim(cur.String(), "0123456789&") == "" {
+				isRedir = true
+			}
 			cur.WriteByte(c)
 			inWord = true
 		}
 	}
-	if inWord {
-		words = append(words, cur.String())
-	}
-	return words
+	flush()
+	return words, redirect
 }
 
 func has(w []string, s string) bool {
