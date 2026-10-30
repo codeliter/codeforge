@@ -1,6 +1,7 @@
 package guard
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"slices"
@@ -74,8 +75,29 @@ func checkProtected(in Input) []Finding {
 		if protectedPath(p, in.Cwd, home) || protectedAncestor(p, in.Cwd, home) {
 			return []Finding{{RuleSelf, "touches " + p + ", which controls codeforge's approvals or the guard itself"}}
 		}
+		// Moving .git away would leave its config and hooks unprotected, so file-level commands may not move,
+		// copy over or remove it. Git commands themselves are unaffected.
+		if filepath.Base(filepath.Clean(p)) == ".git" && movesFiles(in) {
+			return []Finding{{RuleSelf, "moving or removing " + p + " would expose its hooks and config"}}
+		}
 	}
 	return nil
+}
+
+func movesFiles(in Input) bool {
+	if !slices.Contains(shellTools, in.Tool) {
+		return false
+	}
+	var args map[string]any
+	if json.Unmarshal(in.Args, &args) != nil {
+		return true
+	}
+	for _, seg := range segments(str(args["command"])) {
+		if w := commandWords(seg); len(w) > 0 && slices.Contains([]string{"mv", "cp", "rm", "ln", "rsync", "rmdir", "install", "ditto"}, w[0]) {
+			return true
+		}
+	}
+	return false
 }
 
 // protectedAncestor catches moving or deleting a folder that holds enforcement files, such as ~/.empryo/bin.

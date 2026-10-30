@@ -70,10 +70,13 @@ func TestCheck_GHAndInfraStillGuarded(t *testing.T) {
 		"env GIT_SSH_COMMAND=./x git fetch",
 		"git config core.hooksPath get",
 		"git ls-remote --upload-pack='terraform apply -auto-approve; #' .",
-		"git fetch -u ./x origin",
 		"git rebase -x 'gh pr merge 1' main",
 		"git push --receive-pack=./x origin",
 		"git difftool --extcmd=./x",
+		"git rebase -x'terraform apply -auto-approve' HEAD~1",
+		"git -C . rebase -x 'gh pr merge 1' main",
+		"git submodule foreach 'terraform apply -auto-approve'",
+		"git bisect run ./x.sh",
 	} {
 		require.Equal(t, []string{RuleOpaque}, rules(Check(cmd, false)), cmd)
 	}

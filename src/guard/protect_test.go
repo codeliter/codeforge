@@ -79,7 +79,11 @@ func TestCheckTool_ProtectsEnforcementFolders(t *testing.T) {
 
 	in := input(t, "Bash", map[string]any{"command": "git status"})
 	in.Paths = []string{"/repo/.git"}
-	require.Empty(t, rules(CheckTool(in, false)), "the .git folder itself is not off limits")
+	require.Empty(t, rules(CheckTool(in, false)), "the .git folder itself is not off limits to git")
+
+	in = input(t, "Bash", map[string]any{"command": "mv /repo/.git /tmp/g"})
+	in.Paths = []string{"/repo/.git", "/tmp/g"}
+	require.Equal(t, []string{RuleSelf}, rules(CheckTool(in, false)), "moving .git away would expose its hooks")
 
 	in = input(t, "Bash", map[string]any{"command": "ls ~/.empryo/agents"})
 	in.Paths = []string{filepath.Join(home, ".empryo", "agents")}

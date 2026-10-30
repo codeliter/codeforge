@@ -86,42 +86,49 @@ func configWrite(args []string) (string, bool) {
 	return "git config " + strings.Join(operands, " "), true
 }
 
-// gitExecFlag reports a git argument that makes git run a program: --upload-pack, --receive-pack, --exec,
-// rebase -x, a merge/diff tool, or an external diff.
+// gitExecFlag reports a git invocation that makes git run another program. Subcommands are found with the same
+// parser as everything else (gitGlobals skips -C and other global options), and flags are matched in attached
+// and separate forms.
 func gitExecFlag(raw []string) (string, bool) {
-	for i, a := range raw {
-		name, _, _ := strings.Cut(a, "=")
-		switch name {
-		case "--upload-pack", "-u", "--receive-pack", "--exec", "-x", "--extcmd", "--tool", "-t", "--ext-diff":
-			if name == "-u" || name == "-t" || name == "-x" {
-				if i == 0 || !gitSubcommandTakes(raw, name) {
-					continue
-				}
+	start := slices.IndexFunc(raw, func(a string) bool { return a[strings.LastIndex(a, "/")+1:] == "git" })
+	if start < 0 {
+		return "", false
+	}
+	rest := raw[start+1+len(gitGlobals(raw)):]
+	if len(rest) == 0 {
+		return "", false
+	}
+	sub, args := rest[0], rest[1:]
+
+	// These subcommands exist to run commands or scripts.
+	switch {
+	case sub == "submodule" && slices.Contains(args, "foreach"),
+		sub == "bisect" && slices.Contains(args, "run"),
+		sub == "filter-branch", sub == "filter-repo", sub == "difftool", sub == "mergetool":
+		return "git " + sub, true
+	}
+
+	runs := map[string][]string{
+		"rebase":    {"-x", "--exec"},
+		"ls-remote": {"-u", "--upload-pack"},
+		"fetch":     {"--upload-pack"},
+		"pull":      {"--upload-pack"},
+		"clone":     {"-u", "--upload-pack", "--template"},
+		"push":      {"--receive-pack", "--exec"},
+		"archive":   {"--exec"},
+		"diff":      {"--ext-diff"},
+		"log":       {"--ext-diff"},
+		"show":      {"--ext-diff"},
+		"init":      {"--template"},
+	}[sub]
+	for _, a := range args {
+		for _, flag := range runs {
+			if a == flag || strings.HasPrefix(a, flag+"=") || len(flag) == 2 && strings.HasPrefix(a, flag) {
+				return a, true
 			}
-			return a, true
 		}
 	}
 	return "", false
-}
-
-// gitSubcommandTakes limits short flags to the subcommands where they run a program.
-func gitSubcommandTakes(raw []string, flag string) bool {
-	sub := ""
-	for _, w := range raw {
-		if !strings.HasPrefix(w, "-") && w != "git" && !strings.HasSuffix(w, "/git") {
-			sub = w
-			break
-		}
-	}
-	switch flag {
-	case "-x":
-		return sub == "rebase"
-	case "-u":
-		return sub == "ls-remote" || sub == "fetch" || sub == "clone"
-	case "-t":
-		return sub == "difftool" || sub == "mergetool"
-	}
-	return false
 }
 
 // gitConfigEnv reports environment variables that inject git configuration or replace git's helper programs.
