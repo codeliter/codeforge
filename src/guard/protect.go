@@ -34,9 +34,6 @@ func protectedPath(p, cwd, home string) bool {
 	if home != "" && p == filepath.Join(home, ".empryo", "bin", "gh") {
 		return true
 	}
-	if filepath.Base(p) == "config" && filepath.Base(filepath.Dir(p)) == ".git" || strings.Contains(filepath.ToSlash(p), "/.git/hooks/") {
-		return true
-	}
 
 	dir := filepath.Base(filepath.Dir(p))
 	return slices.Contains(hookConfigDirs, dir) && slices.Contains(hookConfigFiles, filepath.Base(p)) ||
@@ -87,11 +84,11 @@ func protectedAncestor(p, cwd, home string) bool {
 
 	// Project-local folders that hold hook config or git hooks, wherever the repository is.
 	switch filepath.Base(p) {
-	case ".empryo", ".claude", ".codex", ".copilot", ".git", ".github":
+	case ".empryo", ".claude", ".codex", ".copilot", ".github":
 		return true
 	case "hooks":
 		parent := filepath.Base(filepath.Dir(p))
-		return parent == ".git" || parent == ".github" || parent == ".copilot"
+		return parent == ".github" || parent == ".copilot"
 	}
 
 	if home == "" {

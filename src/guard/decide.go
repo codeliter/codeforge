@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -19,7 +18,7 @@ type Decision struct {
 }
 
 // Decide combines the rules with the user's approvals and the review gate.
-// Gated actions (push, opening a PR) need a review gate pass on the current tree, or an explicit allow.
+// Opening a PR needs a review gate pass on the current tree, or an explicit allow.
 func Decide(ctx context.Context, st State, in Input, readOnly bool, now time.Time) Decision {
 	res := CheckTool(in, readOnly)
 	if len(res.Blocked) == 0 && res.Gate == gateNone {
@@ -31,10 +30,11 @@ func Decide(ctx context.Context, st State, in Input, readOnly bool, now time.Tim
 		return Decision{Reason: "codeforge blocked this: " + err.Error() + ". Run guarded commands from inside the repository they change."}
 	}
 
-	// The hook runs before the whole command, so a push must stand alone and cover only the reviewed HEAD;
-	// otherwise edits or commits earlier in the same command would be published unreviewed.
-	if res.Gate != gateNone {
-		res.Blocked = append(res.Blocked, pushScope(ctx, repo, res)...)
+	if res.Gate == GateOpenPR && res.OtherWrites {
+		res.Blocked = append(res.Blocked, Finding{RuleMixedPush, "the PR shares a command with other changes, so it would open on work the gate has not seen; open it on its own"})
+	}
+	if res.Gate == GateOpenPR && gitDirty(ctx, repo) {
+		res.Blocked = append(res.Blocked, Finding{RuleMixedPush, "the working tree has uncommitted changes, so the PR would not match what the gate reviewed; commit them and run `codeforge gate` again"})
 	}
 
 	if f := bypassesShim(res); f != nil {
@@ -78,8 +78,8 @@ func Decide(ctx context.Context, st State, in Input, readOnly bool, now time.Tim
 		return Decision{Reason: "codeforge blocked this: " + strings.Join(reasons, " ")}
 	}
 
-	// Push and gh approvals are spent by git's pre-push hook and the gh shim; spending them here too would
-	// leave nothing for the real check. Every other rule has no later boundary, so it is spent now.
+	// gh approvals are spent by the gh shim; spending them here too would leave nothing for the real check.
+	// Every other rule has no later boundary, so it is spent now.
 	consumed := false
 	for _, rule := range spend {
 		if !res.Deferred[rule] {
@@ -90,65 +90,8 @@ func Decide(ctx context.Context, st State, in Input, readOnly bool, now time.Tim
 	return Decision{Allow: true, Consumed: consumed}
 }
 
-// pushScope keeps a push or a new PR to exactly what the gate reviewed: the committed HEAD of the current branch.
-func pushScope(ctx context.Context, repo string, res Result) []Finding {
-	git := func(args ...string) string {
-		out, err := exec.CommandContext(ctx, "git", append([]string{"-C", repo}, args...)...).Output()
-		if err != nil {
-			return ""
-		}
-		return strings.TrimSpace(string(out))
-	}
-
-	var out []Finding
-	if res.OtherWrites {
-		out = append(out, Finding{RuleMixedPush, "the push shares a command with other changes, so it would publish work the gate has not seen; run the push on its own"})
-	}
-	if git("status", "--porcelain", "--", ".", ":(exclude).empryo") != "" {
-		out = append(out, Finding{RuleMixedPush, "the working tree has uncommitted changes, so the gate's review does not match what would be pushed; commit or discard them and run `codeforge gate` again"})
-	}
-
-	current := git("branch", "--show-current")
-	head := git("rev-parse", "HEAD")
-	for _, ref := range res.PushRefs {
-		if current != "" && pushesHead(ref, current) || pointsAtHead(git, ref, head) {
-			continue
-		}
-		out = append(out, Finding{RulePushScope, "pushes " + ref + ", but the gate reviewed only the current branch"})
-	}
-
-	if len(res.PushRefs) == 0 && implicitWidePush(git) {
-		out = append(out, Finding{RulePushScope, "git is configured to push more than the current branch (push.default=matching or a remote push refspec); name the branch explicitly, e.g. `git push origin HEAD`"})
-	}
-	return out
-}
-
-func implicitWidePush(git func(...string) string) bool {
-	return git("config", "--get", "push.default") == "matching" ||
-		git("config", "--get-regexp", `^remote\..*\.push$`) != "" ||
-		git("config", "--get-regexp", `^remote\..*\.mirror$`) != ""
-}
-
-// pointsAtHead accepts a ref, such as a release tag, whose commit is the reviewed HEAD, matching what
-// git's pre-push hook checks. Ref-wide flags like --all never qualify.
-func pointsAtHead(git func(...string) string, ref, head string) bool {
-	src, _, _ := strings.Cut(strings.TrimPrefix(ref, "+"), ":")
-	if head == "" || src == "" || strings.HasPrefix(src, "-") {
-		return false
-	}
-	return git("rev-parse", "--verify", "--quiet", src+"^{commit}") == head
-}
-
-// pushesHead accepts refspecs whose source is the checked-out branch.
-func pushesHead(ref, current string) bool {
-	src, _, _ := strings.Cut(strings.TrimPrefix(ref, "+"), ":")
-	return src == "HEAD" || src == current || src == "refs/heads/"+current
-}
-
 // AllowRules are the rules a user may approve once with `codeforge allow`.
-var AllowRules = []string{
-	RuleForcePush, RuleNoVerify, RuleMerge, RulePRComment, RuleInfra, RuleWholeTree, RuleDeleteBranch, GatePush, GateOpenPR,
-}
+var AllowRules = []string{RuleMerge, RulePRComment, RuleInfra, GateOpenPR}
 
 func Allowable(rule string) bool {
 	return slices.Contains(AllowRules, rule)

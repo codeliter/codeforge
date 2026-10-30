@@ -2,11 +2,23 @@ package guard
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"strings"
 	"time"
 )
+
+var ErrGHRefused = errors.New("codeforge refused this gh command")
+
+func gitOutput(ctx context.Context, repo string, args ...string) string {
+	out, err := exec.CommandContext(ctx, "git", append([]string{"-C", repo}, args...)...).Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
 
 // CheckGH decides a real gh invocation at the binary boundary. It reuses the command rules on the exact argv
 // gh received, so there is no shell text to misread: whatever built the call, these are the arguments that run.

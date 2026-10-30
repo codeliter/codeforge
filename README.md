@@ -22,7 +22,7 @@ Releases are built by GoReleaser when a `v*` tag is pushed.
 ## Get started
 ```
 cd your-repo
-codeforge init     # installs Empryo only if missing, signs in, checks git/gh, picks models, sets your persona and push guard
+codeforge init     # installs Empryo only if missing, signs in, checks git/gh, picks models, sets your persona
 codeforge          # pick a mode: ticket, chat or review
 ```
 
@@ -69,29 +69,28 @@ codeforge chat --headless "task"               # one-off run
 codeforge help                                 # all commands
 codeforge ticket --effort low "task"           # pick effort yourself (high is the ceiling)
 ```
-Any Empryo flag passes through. Nothing is pushed, posted or approved without your go.
+Any Empryo flag passes through. Nothing is posted, merged or approved on GitHub without your go.
 
 ## Guarantees
-Rules are enforced where the action happens, not by reading command text, so it doesn't matter how a command was built: shell, alias, script, interpreter or `code_script`.
+Git is yours: in ticket and chat mode codeforge never blocks a git command, including push, force push, branch deletion and `--no-verify`. Review mode is the one that cannot push or change anything.
 
 | Boundary | What it enforces | How |
 |---|---|---|
-| **git `pre-push` hook** | Only commits that passed `codeforge gate` on a clean tree can be pushed. Force pushes and branch deletions need `codeforge allow`. | Registered with git's hook config (`hook.codeforge.*`), so it runs next to husky or `core.hooksPath` hooks. `codeforge init` and every launch install it, and codeforge refuses to start in a repository where git doesn't list it. |
-| **`gh` shim** | `gh pr create` needs the reviewed commit on a clean tree and cannot target another head or repository. `gh pr merge`, PR comments and reviews, and `gh api` writes need `codeforge allow`. | A wrapper in `~/.empryo/bin`, which Empryo puts first on every shell's PATH. It checks the exact arguments and then runs the real `gh`. |
 | **OS sandbox** | Review mode and gate jurors cannot write to the repository. | macOS `sandbox-exec` denies every write inside the repository except Empryo's own `.empryo` state. |
-| **Empryo hook** | Early warnings, plus: the agent can't edit `~/.codeforge`, Empryo's hook config, or run `codeforge allow`. | A fail-closed `PreToolUse` hook. It never spends approvals; the boundaries above do. |
+| **`gh` shim** | `gh pr create` needs the reviewed commit on a clean tree and cannot target another head or repository. `gh pr merge`, PR comments and reviews, and `gh api` writes need `codeforge allow`. | A wrapper in `~/.empryo/bin`, which Empryo puts first on every shell's PATH. It checks the exact arguments and then runs the real `gh`. |
+| **Empryo hook** | Review mode is read-only; `terraform`/`kubectl` changes need approval; the agent can't edit `~/.codeforge` or Empryo's hook config, or run `codeforge allow`. | A fail-closed `PreToolUse` hook that inspects the commands the agent runs, never the text of its messages. |
 
 `codeforge allow <rule>` covers one action in one repository for 10 minutes. Approvals and gate passes live in `~/.codeforge/state.json`, outside every repository.
 
-Limits: `git push --no-verify` skips git hooks by design; the Empryo hook blocks the agent from using it, and you can still use it yourself. The sandbox is macOS-only for now. `terraform` and `kubectl` are only covered by the Empryo hook's warnings.
+Limits: the sandbox is macOS-only for now. `terraform` and `kubectl` are only covered by the Empryo hook.
 
 ## Review gate
-`codeforge gate` reviews your branch and uncommitted work before anything leaves your machine. Ticket mode runs it before reporting done; chat mode runs it when you ask for a review; a blocked push points the agent at it.
+`codeforge gate` reviews your branch and uncommitted work. Ticket mode runs it before reporting done and before opening a PR; chat mode runs it when you ask for a review.
 
 1. **Jury.** `review.model` and every `review.second_opinion` model review the same brief in parallel, each in its own read-only Empryo session. None of them is the model that wrote the code.
 2. **Verdicts.** Each ends with a structured verdict: blocking and non-blocking findings with `path:line`.
 3. **Grounding.** Findings that point at a file or line that doesn't exist are dropped and listed separately, so a hallucinated issue can't block you.
-4. **Decision.** One grounded Blocking finding from any reviewer fails the gate. Passing needs verdicts from at least two reviewers, and nothing may change while they review. On a clean tree the pass is recorded for the exact commit, which is what git's pre-push hook checks; with uncommitted changes, commit and run the gate again before pushing.
+4. **Decision.** One grounded Blocking finding from any reviewer fails the gate. Passing needs verdicts from at least two reviewers, and nothing may change while they review. On a clean tree the pass is recorded for the exact commit, which is what opening a PR checks.
 
 ### Fast by design
 A gate on a small change takes seconds, not minutes:
@@ -210,11 +209,9 @@ flowchart TD
 
     EMP[[Empryo TUI<br/>--profile codeforge-ticket / chat / review]] --> SK[Skills<br/>persona, voice, code,<br/>ticket-to-pr, review]
     EMP --> REPO[(Your repository)]
-    EMP -->|every tool call| HOOK{{Empryo hook<br/>early warnings}}
-    EMP -->|git push| PREPUSH{{git pre-push hook}}
+    EMP -->|every tool call| HOOK{{Empryo hook<br/>review read-only, infra, settings}}
     EMP -->|gh| SHIM{{gh shim}}
     GATE[codeforge gate<br/>triage, pack, sandboxed jury, cache] --> STATE[(~/.codeforge/state.json)]
-    STATE --> PREPUSH
     STATE --> SHIM
 ```
 
@@ -224,12 +221,12 @@ flowchart TD
 | `main.go` | Entry point; calls `src.Run` |
 | `src/run.go` | Routes `init`, `models`, `trust` and the three modes; syncs assets; starts Empryo |
 | `src/modes.go` | Mode names, profiles and the mode picker |
-| `src/guard/` | Pre-push and gh checks, approvals, gate state, tree fingerprint, early-warning rules |
-| `src/enforce.go`, `src/sandbox.go` | Installs the pre-push hook and gh shim; runs review mode and jurors in the OS sandbox |
+| `src/guard/` | gh checks, approvals, gate state, tree fingerprint, review-mode and infra rules |
+| `src/enforce.go`, `src/sandbox.go` | Installs the gh shim; runs review mode and jurors in the OS sandbox |
 | `src/help.go` | `codeforge help` |
 | `src/setup.go` | `codeforge setup`: first-run install, sign-in, checks and models |
 | `src/hooks.go`, `src/hookcmd.go` | Installs the guard hook; `codeforge hook` and `codeforge allow` |
-| `src/gate.go` | `codeforge gate`: the jury review that unlocks push and PR |
+| `src/gate.go` | `codeforge gate`: the jury review that unlocks opening a PR |
 | `src/config.go` | Reads `~/.codeforge/config.json` and the `CODEFORGE_*` overrides |
 | `src/models.go` | `codeforge models`: role table, recommendations, `apply` and `set` |
 | `src/initcmd.go`, `src/persona.go` | `codeforge init`: interactive setup, learns or picks a persona |

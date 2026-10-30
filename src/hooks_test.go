@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -43,25 +42,29 @@ func TestInstallHooks_KeepsUserHooks(t *testing.T) {
 
 func TestRunHook(t *testing.T) {
 	home := t.TempDir()
-	in := `{"hook_event_name":"PreToolUse","tool_name":"Bash","cwd":"/","tool_input":{"command":"git push --force"}}`
-
 	var stderr strings.Builder
-	require.Equal(t, hookExitBlock, runHook(t.Context(), home, strings.NewReader(in), &stderr))
-	require.Contains(t, stderr.String(), "force-push")
 
-	stderr.Reset()
-	ok := `{"hook_event_name":"PreToolUse","tool_name":"Bash","cwd":"/","tool_input":{"command":"git status"}}`
-	require.Equal(t, 0, runHook(t.Context(), home, strings.NewReader(ok), &stderr))
+	for _, cmd := range []string{"git push --force", "git status", "git reset --hard"} {
+		in := `{"hook_event_name":"PreToolUse","tool_name":"Bash","cwd":"/","tool_input":{"command":"` + cmd + `"}}`
+		require.Equal(t, 0, runHook(t.Context(), home, strings.NewReader(in), &stderr), cmd)
+	}
+
+	merge := `{"hook_event_name":"PreToolUse","tool_name":"Bash","cwd":"/","tool_input":{"command":"gh pr merge 1"}}`
+	require.Equal(t, hookExitBlock, runHook(t.Context(), home, strings.NewReader(merge), &stderr))
+	require.Contains(t, stderr.String(), "merge")
 
 	require.Equal(t, hookExitBlock, runHook(t.Context(), home, strings.NewReader("not json"), &stderr), "fail closed on garbage")
 }
 
 func TestRunHook_ReviewModeIsReadOnly(t *testing.T) {
 	t.Setenv("CODEFORGE_GUARD", "review")
-	in := `{"hook_event_name":"PreToolUse","tool_name":"edit_file","cwd":"/","tool_input":{"path":"a.go"}}`
-
 	var stderr strings.Builder
-	require.Equal(t, hookExitBlock, runHook(t.Context(), t.TempDir(), strings.NewReader(in), &stderr))
+	for _, in := range []string{
+		`{"hook_event_name":"PreToolUse","tool_name":"edit_file","cwd":"/","tool_input":{"path":"a.go"}}`,
+		`{"hook_event_name":"PreToolUse","tool_name":"Bash","cwd":"/","tool_input":{"command":"git push"}}`,
+	} {
+		require.Equal(t, hookExitBlock, runHook(t.Context(), t.TempDir(), strings.NewReader(in), &stderr), in)
+	}
 }
 
 func TestRunHook_DoesNotSpendApprovals(t *testing.T) {
@@ -84,27 +87,4 @@ func runAllowAt(home, repo, rule string) error {
 		return fmt.Errorf("saving: %w", err)
 	}
 	return nil
-}
-
-func TestRunHook_SpendsHookOnlyApprovals(t *testing.T) {
-	home := t.TempDir()
-	repo := t.TempDir()
-	cmd := exec.CommandContext(t.Context(), "git", "-C", repo, "init", "-q")
-	require.NoError(t, cmd.Run())
-	root, err := guard.RepoRoot(t.Context(), repo)
-	require.NoError(t, err)
-
-	for _, tt := range []struct{ rule, command string }{
-		{"whole-tree", "git reset --hard"},
-		{"infra", "terraform apply"},
-		{"no-verify", "git commit --no-verify -m x"},
-		{"delete-branch", "git branch -D old"},
-	} {
-		require.NoError(t, runAllowAt(home, root, tt.rule))
-		in := `{"hook_event_name":"PreToolUse","tool_name":"Bash","cwd":"` + root + `","tool_input":{"command":"` + tt.command + `"}}`
-
-		var stderr strings.Builder
-		require.Equal(t, 0, runHook(t.Context(), home, strings.NewReader(in), &stderr), tt.rule)
-		require.Equal(t, hookExitBlock, runHook(t.Context(), home, strings.NewReader(in), &stderr), tt.rule+" is spent after one use")
-	}
 }

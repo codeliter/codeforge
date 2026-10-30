@@ -10,51 +10,22 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestInstallPrePush_KeepsHuskyAndBlocksUnreviewedPush(t *testing.T) {
-	self := buildSelf(t)
-	t.Setenv("HOME", t.TempDir())
-
+func TestEnsureEnforced_RemovesOldPrePushHook(t *testing.T) {
 	dir := t.TempDir()
-	remote := t.TempDir()
-	git := func(args ...string) (string, error) {
-		cmd := exec.CommandContext(t.Context(), "git", append([]string{"-c", "user.email=t@t", "-c", "user.name=t", "-c", "commit.gpgsign=false"}, args...)...)
-		cmd.Dir = dir
+	git := func(args ...string) string {
+		cmd := exec.CommandContext(t.Context(), "git", append([]string{"-C", dir}, args...)...)
 		out, err := cmd.CombinedOutput()
-		return string(out), err
+		require.NoError(t, err, string(out))
+		return strings.TrimSpace(string(out))
 	}
-	for _, args := range [][]string{
-		{"init", "-q", "-b", "main"}, {"commit", "-q", "--allow-empty", "-m", "init"},
-		{"init", "-q", "--bare", remote}, {"remote", "add", "origin", remote}, {"config", "core.hooksPath", ".husky"},
-	} {
-		out, err := git(args...)
-		require.NoError(t, err, out)
-	}
-	require.NoError(t, os.MkdirAll(filepath.Join(dir, ".husky"), 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, ".husky", "pre-push"), []byte("#!/bin/sh\necho HUSKY-RAN\n"), 0o755))
+	git("init", "-q")
+	git("config", "--local", "hook.codeforge.event", "pre-push")
+	git("config", "--local", "hook.codeforge.command", "codeforge pre-push")
+	t.Chdir(dir)
 
-	require.NoError(t, installPrePush(t.Context(), dir, self))
-	require.NoError(t, installPrePush(t.Context(), dir, self), "idempotent")
-	require.True(t, prePushInstalled(t.Context(), dir))
-
-	out, err := git("push", "origin", "main")
-	require.Error(t, err, out)
-	require.Contains(t, out, "has not passed the review gate")
-
-	out, err = git("push", "origin", "HEAD:refs/heads/other")
-	require.Error(t, err, out)
-	require.Contains(t, out, "HUSKY-RAN", "husky's own hook still runs")
-}
-
-func buildSelf(t *testing.T) string {
-	t.Helper()
-	bin := filepath.Join(t.TempDir(), "codeforge")
-	cmd := exec.CommandContext(t.Context(), "go", "build", "-o", bin, "..")
-	wd, err := os.Getwd()
-	require.NoError(t, err)
-	cmd.Dir = wd
-	out, err := cmd.CombinedOutput()
-	require.NoError(t, err, string(out))
-	return bin
+	require.NoError(t, ensureEnforced(t.Context(), "codeforge"))
+	require.Empty(t, gitConfig(t.Context(), dir, "hook.codeforge.command"), "pushes are no longer gated")
+	require.NoError(t, ensureEnforced(t.Context(), "codeforge"), "running again is a no-op")
 }
 
 func TestInstallGHShim(t *testing.T) {

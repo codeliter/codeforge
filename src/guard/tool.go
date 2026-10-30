@@ -49,13 +49,17 @@ func CheckTool(in Input, readOnly bool) Result {
 		return Check(gitCommand(args), readOnly)
 	case in.Tool == "code_script":
 		return checkScript(str(args["code"]), readOnly)
+	case in.Tool == "run_tool" && slices.Contains(shellTools, str(args["name"])):
+		nested, ok := args["args"].(map[string]any)
+		if !ok {
+			return Result{}
+		}
+		return checkIn(str(nested["command"]), readOnly, in.Cwd)
 	}
 
-	// File content is data, not a command; only tools that can execute something are scanned.
-	if slices.Contains(editTools, in.Tool) || slices.Contains(readTools, in.Tool) {
-		return Result{}
-	}
-	return Check(strings.Join(commandStrings(args), "\n"), readOnly)
+	// Other tools (replies, steering answers, edits, searches, memory) carry text, not commands: a message
+	// that mentions `git push` must not be read as one. Real commands only run through the tools above.
+	return Result{}
 }
 
 // gitCommand rebuilds a shell command from Empryo's structured git tool.
@@ -86,35 +90,6 @@ func gitCommand(a map[string]any) string {
 }
 
 // commandStrings catches commands passed through script and meta tools, such as code_script's api.run("git push").
-func commandStrings(a map[string]any) []string {
-	var out []string
-	for _, v := range a {
-		switch t := v.(type) {
-		case string:
-			if strings.Contains(t, "git ") || strings.Contains(t, "gh ") || strings.Contains(t, "terraform ") || strings.Contains(t, "kubectl ") {
-				out = append(out, extractRunArgs(t)...)
-			}
-		case map[string]any:
-			out = append(out, commandStrings(t)...)
-		}
-	}
-	return out
-}
-
-// extractRunArgs keeps only quoted strings from script code, so prose that mentions git is not mistaken for a command.
-func extractRunArgs(code string) []string {
-	var out []string
-	for _, q := range []string{`"`, `'`, "`"} {
-		parts := strings.Split(code, q)
-		for i := 1; i < len(parts); i += 2 {
-			out = append(out, parts[i])
-		}
-	}
-	if len(out) == 0 {
-		return []string{code}
-	}
-	return out
-}
 
 func str(v any) string {
 	s, ok := v.(string)

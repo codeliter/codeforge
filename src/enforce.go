@@ -22,32 +22,9 @@ const (
 )
 
 var (
-	errNoRealGH     = errors.New("gh is not installed")
-	errForeignGH    = errors.New("exists and is not codeforge's; move it and run codeforge again")
-	errHookInactive = errors.New("git does not list codeforge as a pre-push hook; git 2.54 or newer is required")
+	errNoRealGH  = errors.New("gh is not installed")
+	errForeignGH = errors.New("exists and is not codeforge's; move it and run codeforge again")
 )
-
-// installPrePush registers codeforge as a git pre-push hook through git's hook config. Unlike a file in
-// .git/hooks it runs alongside husky and core.hooksPath setups instead of replacing them.
-func installPrePush(ctx context.Context, repo, self string) error {
-	want := shellQuote(self) + " pre-push"
-	if gitConfig(ctx, repo, "hook."+hookName+".command") == want && gitConfig(ctx, repo, "hook."+hookName+".event") == "pre-push" {
-		return nil
-	}
-
-	for _, kv := range [][2]string{{"hook." + hookName + ".event", "pre-push"}, {"hook." + hookName + ".command", want}} {
-		if err := exec.CommandContext(ctx, "git", "-C", repo, "config", "--local", kv[0], kv[1]).Run(); err != nil {
-			return fmt.Errorf("registering the pre-push hook: %w", err)
-		}
-	}
-	return nil
-}
-
-// prePushInstalled is true when git will run codeforge before a push in this repository.
-func prePushInstalled(ctx context.Context, repo string) bool {
-	out, err := exec.CommandContext(ctx, "git", "-C", repo, "hook", "list", "pre-push").Output()
-	return err == nil && strings.Contains(string(out), hookName)
-}
 
 func gitConfig(ctx context.Context, repo, key string) string {
 	out, err := exec.CommandContext(ctx, "git", "-C", repo, "config", "--get", key).Output()
@@ -91,22 +68,10 @@ func realGH(empryoDir string) (string, error) {
 	return "", errNoRealGH
 }
 
-// runPrePush is called by git with the push updates on stdin. A non-zero exit stops the push.
-func runPrePush(ctx context.Context, home string, stdin io.Reader, stderr io.Writer) int {
-	wd, err := os.Getwd()
-	if err != nil {
-		fmt.Fprintln(stderr, "codeforge:", err)
-		return 1
-	}
-	repo, err := guard.RepoRoot(ctx, wd)
-	if err != nil {
-		fmt.Fprintln(stderr, "codeforge:", err)
-		return 1
-	}
-
-	return withState(home, stderr, func(st guard.State) error {
-		return guard.CheckPush(ctx, st, repo, guard.ParsePushUpdates(stdin), time.Now())
-	})
+// runPrePush is kept so repositories that still register the old codeforge pre-push hook keep pushing:
+// pushes are never blocked.
+func runPrePush(_ context.Context, _ string, _ io.Reader, _ io.Writer) int {
+	return 0
 }
 
 // runGHShim checks the call and then replaces itself with the real gh, keeping gh's exit code and output.
@@ -162,24 +127,23 @@ func withState(home string, stderr io.Writer, check func(guard.State) error) int
 	return 0
 }
 
-// ensureEnforced installs the pre-push hook in the current repository and refuses to launch without it.
-func ensureEnforced(ctx context.Context, self string) error {
+// ensureEnforced removes the pre-push hook earlier versions registered, so pushes are never gated.
+func ensureEnforced(ctx context.Context, _ string) error {
 	wd, err := os.Getwd()
 	if err != nil {
 		return fmt.Errorf("finding working directory: %w", err)
 	}
 
-	// Outside a repository there is nothing to push, so there is nothing to enforce.
 	repo, rootErr := guard.RepoRoot(ctx, wd)
 	if rootErr != nil {
 		return nil //nolint:nilerr // not being in a repository is a valid state, not a failure
 	}
 
-	if err := installPrePush(ctx, repo, self); err != nil {
-		return err
+	if gitConfig(ctx, repo, "hook."+hookName+".command") == "" {
+		return nil
 	}
-	if !prePushInstalled(ctx, repo) {
-		return fmt.Errorf("%w (%s)", errHookInactive, repo)
+	if err := exec.CommandContext(ctx, "git", "-C", repo, "config", "--local", "--remove-section", "hook."+hookName).Run(); err != nil {
+		return fmt.Errorf("removing the old codeforge pre-push hook: %w", err)
 	}
 	return nil
 }

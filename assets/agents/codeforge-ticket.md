@@ -31,9 +31,9 @@ codeforge picks the starting effort from a rubric (ambiguity, blast radius, risk
 - Never widen the scope. Note follow-ups in one line instead of doing them.
 
 ## Hard stops
-codeforge enforces these with a hook; you cannot get around them by switching tools.
-- Push and opening a PR need a passing `codeforge gate` on the exact current changes.
-- Force push, `--no-verify`, merges, PR comments, terraform/kubectl changes, branch deletion and whole-tree git commands are blocked. When one is needed, say why and ask the user to run `codeforge allow <rule>`; never try to approve it yourself.
+Git is yours to use freely: commit, push and manage branches as the work needs. codeforge enforces only these, with a hook:
+- Opening a PR needs a passing `codeforge gate` on the exact current changes.
+- Merges, PR comments and reviews, and terraform/kubectl changes are blocked. When one is needed, say why and ask the user to run `codeforge allow <rule>`; never try to approve it yourself.
 
 ## Writing
 Follow `codeforge-persona` first; where it is silent, use the generic skills.

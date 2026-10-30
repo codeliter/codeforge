@@ -19,7 +19,7 @@ Modes:
 
 Setup:
   init [--yes]                       Set up everything: Empryo (installed only if missing), sign-in, checks,
-                                     models, your persona and the push guard in this repository
+                                     models and your persona
   init --repo [--persona NAME]       Add a repository persona (.codeforge/persona.md)
   init --persona NAME | init REPO... Use a starter persona, or learn from other repositories
   models [recommend|apply|set ROLE MODEL...]
@@ -27,14 +27,14 @@ Setup:
   trust                              Approve this repository's persona
 
 Review and approvals:
-  gate                               Review your branch with the jury; a pass unlocks push and PR
+  gate                               Review your branch with the jury; a pass unlocks opening a PR
   allow RULE                         Approve one blocked action for 10 minutes (you, not the agent)
 
 Help:
   help, -h, --help                   Show this help
   version                            Show the codeforge version
 
-Rules for allow: force-push, no-verify, merge, pr-comment, infra, whole-tree, delete-branch, push, open-pr
+Git is never blocked outside review mode. Rules for allow: merge, pr-comment, infra, open-pr
 
 Config: ~/.codeforge/config.json   Docs: https://github.com/codeliter/codeforge
 `

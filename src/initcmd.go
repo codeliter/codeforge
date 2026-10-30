@@ -11,8 +11,6 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/huh"
-
-	"github.com/codeliter/codeforge/src/guard"
 )
 
 const (
@@ -57,7 +55,6 @@ func runInit(ctx context.Context, home, bin string, cfg Config, args []string) e
 	// A second repository reuses the global persona; `init --persona` or naming repos replaces it on purpose.
 	if statErr == nil && len(args) == 0 {
 		fmt.Fprintln(os.Stderr, "codeforge: persona already set; run `codeforge init --persona NAME` or `codeforge init REPO...` to replace it.")
-		reportEnforcement(ctx)
 		return nil
 	}
 
@@ -75,19 +72,7 @@ func runInit(ctx context.Context, home, bin string, cfg Config, args []string) e
 	}
 
 	fmt.Fprintf(os.Stderr, "codeforge: global persona written to %s. It applies in every repository.\n", p)
-	reportEnforcement(ctx)
 	return nil
-}
-
-// reportEnforcement tells the user where push and PR rules are now enforced.
-func reportEnforcement(ctx context.Context) {
-	wd, err := os.Getwd()
-	if err != nil {
-		return
-	}
-	if repo, err := guard.RepoRoot(ctx, wd); err == nil && prePushInstalled(ctx, repo) {
-		fmt.Fprintf(os.Stderr, "codeforge: git pre-push hook active in %s; only commits that passed `codeforge gate` can be pushed.\n", repo)
-	}
 }
 
 // initRepo seeds team conventions from a starter or a blank template, never from personal history.
@@ -115,7 +100,6 @@ func initRepo(ctx context.Context, home string, ans initAnswers) error {
 	}
 
 	fmt.Fprintf(os.Stderr, "codeforge: repository persona written to %s. Edit it, then commit it to share with your team.\n", p)
-	reportEnforcement(ctx)
 	return nil
 }
 

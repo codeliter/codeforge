@@ -7,26 +7,22 @@ import (
 	"strings"
 )
 
-// Rule names double as the argument to `codeforge allow`.
+// Rule names double as the argument to `codeforge allow`. Git itself is never guarded: it is the user's tool,
+// and review mode keeps it read-only through the sandbox and the read-only check instead.
 const (
-	RuleForcePush    = "force-push"
-	RuleNoVerify     = "no-verify"
-	RuleMerge        = "merge"
-	RulePRComment    = "pr-comment"
-	RuleInfra        = "infra"
-	RuleWholeTree    = "whole-tree"
-	RuleDeleteBranch = "delete-branch"
-	RuleReadOnly     = "read-only"
-	RuleSelf         = "codeforge-config"
-	RuleOpaque       = "opaque"
-	RuleMixedPush    = "mixed-push"
-	RulePushScope    = "push-scope"
-	RuleScript       = "script"
+	RuleMerge     = "merge"
+	RulePRComment = "pr-comment"
+	RuleInfra     = "infra"
+	RuleReadOnly  = "read-only"
+	RuleSelf      = "codeforge-config"
+	RuleOpaque    = "opaque"
+	RuleMixedPush = "mixed-push"
+	RulePushScope = "push-scope"
+	RuleScript    = "script"
 )
 
-// Gated actions are allowed once the review gate has passed for the current work.
+// Opening a PR is allowed once the review gate has passed for the current work.
 const (
-	GatePush     = "push"
 	GateOpenPR   = "open-pr"
 	gateNone     = ""
 	minGitTokens = 2
@@ -42,17 +38,14 @@ type Result struct {
 	Gate    string
 	// Dirs are the directories the guarded actions run in, from `cd` and `git -C`, relative to the tool's cwd.
 	Dirs []string
-	// PushRefs are the refspecs and ref-wide flags (--all, --tags) a push names.
-	PushRefs []string
-	// OtherWrites is set when the command does more than read and push.
+	// OtherWrites is set when the command changes files besides the guarded action.
 	OtherWrites bool
-	// Deferred holds rules a later boundary (git's pre-push hook, the gh shim) enforces and spends.
+	// Deferred holds rules the gh shim enforces and spends later.
 	Deferred map[string]bool
 	// DirectGH is set when gh is called by path, which skips the shim on PATH.
 	DirectGH bool
 
-	gitEnv bool
-	cwd    string
+	cwd string
 }
 
 // Check classifies a shell command line. readOnly adds the rules for review mode.
@@ -84,11 +77,6 @@ func checkIn(command string, readOnly bool, cwd string) Result {
 			r.OtherWrites = true
 		}
 
-		if len(raw) > 0 && raw[0] == "export" && slices.ContainsFunc(raw[1:], gitEnv) {
-			r.gitEnv = true
-			continue
-		}
-
 		_, opaque := unwrap(raw)
 		words := commandWords(seg)
 		if len(words) == 0 {
@@ -106,8 +94,8 @@ func checkIn(command string, readOnly bool, cwd string) Result {
 			}
 		}
 
-		if words[0] == "git" && enforcementOverride(raw) {
-			r.Blocked = append(r.Blocked, Finding{RuleSelf, "git -c or --config-env sets hooks, hooksPath or aliases, which could switch off codeforge's push check"})
+		// Git is the user's own tool: outside review mode every git command is allowed as written.
+		if words[0] == "git" && !readOnly {
 			continue
 		}
 
@@ -149,33 +137,25 @@ func checkIn(command string, readOnly bool, cwd string) Result {
 			continue
 		}
 
+		found, gate := classify(words)
 		if f, writes := notReadOnly(words, raw, false); writes {
 			if readOnly {
 				r.Blocked = append(r.Blocked, f)
 				continue
 			}
-			r.OtherWrites = r.OtherWrites || !isPublish(words)
+			// The gated action itself is checked on its own, not counted as another write.
+			r.OtherWrites = r.OtherWrites || gate == gateNone
 		}
 
-		found, gate := classify(words)
 		deferTo(&r, words, raw, found, gate)
-		if gate == GatePush {
-			r.PushRefs = append(r.PushRefs, pushRefs(words)...)
-			if gitConfigOverride(raw) {
-				found = append(found, Finding{RulePushScope, "the push overrides git config, which can change what it publishes"})
-			}
-		}
 		if len(found) == 0 && gate == gateNone {
 			continue
 		}
 		r.Blocked = append(r.Blocked, found...)
 		r.Gate = cmpGate(r.Gate, gate)
-		r.Dirs = append(r.Dirs, joinDir(dir, gitDir(raw)))
+		r.Dirs = append(r.Dirs, dir)
 	}
 
-	if r.gitEnv && (r.Gate != gateNone || len(r.Blocked) > 0 || strings.Contains(command, "git")) {
-		r.Blocked = append(r.Blocked, Finding{RuleOpaque, "an exported git environment variable points git at another repository or config"})
-	}
 	return r
 }
 
@@ -203,80 +183,6 @@ func gitRepoOverride(raw []string) bool {
 		name, _, _ := strings.Cut(a, "=")
 		return name == "--git-dir" || name == "--work-tree" || name == "--namespace"
 	})
-}
-
-// enforcementOverride reports one-off git config that could replace or skip the pre-push hook.
-func enforcementOverride(raw []string) bool {
-	g := gitGlobals(raw)
-	for i, a := range g {
-		val := ""
-		switch {
-		case a == "-c" && i+1 < len(g):
-			val = g[i+1]
-		case strings.HasPrefix(a, "-c") && len(a) > len("-c"):
-			val = a[len("-c"):]
-		case strings.HasPrefix(a, "--config-env"):
-			return true
-		default:
-			continue
-		}
-		k := strings.ToLower(val)
-		if strings.HasPrefix(k, "hook.") || strings.HasPrefix(k, "core.hookspath") || strings.HasPrefix(k, "alias.") {
-			return true
-		}
-	}
-	return false
-}
-
-// gitConfigOverride spots -c and --config-env, which can define aliases, pagers and push behaviour.
-func gitConfigOverride(raw []string) bool {
-	return slices.ContainsFunc(gitGlobals(raw), func(a string) bool {
-		return strings.HasPrefix(a, "-c") || a == "--config-env" || strings.HasPrefix(a, "--config-env=")
-	})
-}
-
-// knownGit lists git's own subcommands. Anything else is an alias or an external git-<name> program,
-// which can expand into any command, so the guard refuses to guess.
-var knownGit = set(
-	"add", "am", "annotate", "apply", "archive", "bisect", "blame", "branch", "bundle", "cat-file", "check-attr",
-	"check-ignore", "check-mailmap", "check-ref-format", "checkout", "cherry", "cherry-pick", "citool", "clean",
-	"clone", "commit", "commit-graph", "commit-tree", "config", "count-objects", "describe", "diff", "diff-files",
-	"diff-index", "diff-tree", "difftool", "fetch", "for-each-ref", "format-patch", "fsck", "gc", "grep",
-	"hash-object", "help", "init", "log", "ls-files", "ls-remote", "ls-tree", "maintenance", "merge", "merge-base",
-	"merge-file", "merge-tree", "mergetool", "mv", "name-rev", "notes", "pull", "push", "range-diff", "rebase",
-	"reflog", "remote", "repack", "replace", "rerere", "reset", "restore", "rev-list", "rev-parse", "revert", "rm",
-	"shortlog", "show", "show-branch", "show-ref", "sparse-checkout", "stash", "status", "submodule",
-	"switch", "symbolic-ref", "tag", "update-index", "update-ref", "var", "verify-commit", "verify-tag",
-	"version", "whatchanged", "worktree", "write-tree",
-)
-
-// isPublish matches the gated actions themselves, which are checked separately from other writes in the same command.
-func isPublish(w []string) bool {
-	_, gate := classify(w)
-	return gate != gateNone
-}
-
-var pushValueFlags = map[string]bool{"--repo": true, "--receive-pack": true, "--exec": true, "-o": true, "--push-option": true}
-
-// pushRefs returns what a push publishes besides the remote name: refspecs, and --all, --tags or --branches.
-func pushRefs(w []string) []string {
-	var out, pos []string
-	for i := 2; i < len(w); i++ {
-		a := w[i]
-		switch {
-		case pushValueFlags[a]:
-			i++
-		case a == "--all" || a == "--tags" || a == "--branches" || a == "--follow-tags":
-			out = append(out, a)
-		case strings.HasPrefix(a, "-"):
-		default:
-			pos = append(pos, a)
-		}
-	}
-	if len(pos) > 1 {
-		out = append(out, pos[1:]...)
-	}
-	return out
 }
 
 // withoutRedirects removes unquoted redirections and, when an operator stands alone (`2>& 1`, `> log`),
@@ -351,25 +257,6 @@ func arg(w []string, i int) string {
 	return "~"
 }
 
-// gitDir returns the -C directory of a git command, if any.
-func gitDir(raw []string) string {
-	dir := ""
-	for i := 0; i+1 < len(raw); i++ {
-		base := raw[i][strings.LastIndex(raw[i], "/")+1:]
-		if base != "git" {
-			continue
-		}
-		for j := i + 1; j+1 < len(raw) && strings.HasPrefix(raw[j], "-"); j++ {
-			if raw[j] == "-C" {
-				dir = joinDir(dir, raw[j+1])
-				j++
-			}
-		}
-		return dir
-	}
-	return dir
-}
-
 var shells = map[string]bool{"sh": true, "bash": true, "zsh": true, "dash": true}
 
 func classify(w []string) ([]Finding, string) {
@@ -378,8 +265,6 @@ func classify(w []string) ([]Finding, string) {
 		if len(w) > 1 && hasAny(w[1:2], "allow", "trust", "init", "models") {
 			return []Finding{{RuleSelf, "only you can approve actions or change codeforge settings"}}, gateNone
 		}
-	case "git":
-		return classifyGit(w)
 	case "gh":
 		return classifyGH(w)
 	case "terraform", "tofu", "terragrunt":
@@ -392,69 +277,6 @@ func classify(w []string) ([]Finding, string) {
 		}
 	}
 	return nil, gateNone
-}
-
-func classifyGit(w []string) ([]Finding, string) {
-	if len(w) < minGitTokens {
-		return nil, gateNone
-	}
-
-	var out []Finding
-	sub, args := w[1], w[2:]
-	if !knownGit[sub] {
-		return []Finding{{RuleOpaque, "git " + sub + " is an alias or external command the guard cannot inspect; run the underlying git command instead"}}, gateNone
-	}
-	if has(args, "--no-verify") || (sub == "commit" && hasShortFlag(args, 'n')) {
-		out = append(out, Finding{RuleNoVerify, "skips the repository's hooks"})
-	}
-
-	if sub == "config" && slices.ContainsFunc(args, func(a string) bool {
-		k := strings.ToLower(a)
-		return strings.HasPrefix(k, "hook.") || strings.HasPrefix(k, "core.hookspath") || strings.HasPrefix(k, "alias.") ||
-			k == "--unset" || k == "--unset-all" || k == "--remove-section" || k == "--rename-section" || k == "--edit" || k == "-e"
-	}) {
-		return []Finding{{RuleSelf, "changes git hook, alias or config sections that codeforge's push check relies on"}}, gateNone
-	}
-
-	switch sub {
-	case "push":
-		if has(args, "--delete") || hasShortFlag(args, 'd') || slices.ContainsFunc(args, func(a string) bool { return strings.HasPrefix(a, ":") }) {
-			return append(out, Finding{RuleDeleteBranch, "deletes a remote branch"}), gateNone
-		}
-		if hasAny(args, "--force", "--mirror") || hasShortFlag(args, 'f') || slices.ContainsFunc(args, func(a string) bool { return strings.HasPrefix(a, "+") }) {
-			return append(out, Finding{RuleForcePush, "force push without --force-with-lease"}), gateNone
-		}
-		return out, GatePush
-	case "stash":
-		if len(args) == 0 || !hasAny(args[:1], "list", "show") {
-			out = append(out, Finding{RuleWholeTree, "git stash moves every uncommitted change in the checkout"})
-		}
-	case "reset":
-		if has(args, "--hard") {
-			out = append(out, Finding{RuleWholeTree, "git reset --hard discards uncommitted work"})
-		}
-	case "clean":
-		if hasShortFlag(args, 'f') || has(args, "--force") {
-			out = append(out, Finding{RuleWholeTree, "git clean deletes untracked files"})
-		}
-	case "checkout", "restore":
-		if has(args, ".") || has(args, ":/") {
-			out = append(out, Finding{RuleWholeTree, "discards changes across the whole tree"})
-		}
-	case "add":
-		if hasAny(args, "-A", "--all", ".", ":/") {
-			out = append(out, Finding{RuleWholeTree, "stages the whole tree; stage explicit paths"})
-		}
-	case "commit":
-		if hasShortFlag(args, 'a') || has(args, "--all") {
-			out = append(out, Finding{RuleWholeTree, "commits the whole tree; stage explicit paths"})
-		}
-	case "branch":
-		if hasShortFlag(args, 'd') || hasShortFlag(args, 'D') || has(args, "--delete") {
-			out = append(out, Finding{RuleDeleteBranch, "deletes a branch"})
-		}
-	}
-	return out, gateNone
 }
 
 // ghGlobalRepo removes gh's -R/--repo wherever it appears and reports whether it was there.
@@ -647,7 +469,7 @@ func readMethod(m string) bool {
 }
 
 // guardedTool spots guarded tools named anywhere in interpreter code, however the call is spelled.
-var guardedTool = regexp.MustCompile(`\b(git|gh|terraform|tofu|terragrunt|kubectl|codeforge)\b`)
+var guardedTool = regexp.MustCompile(`\b(gh|terraform|tofu|terragrunt|kubectl|codeforge)\b`)
 
 // readOnlyCommands is an allowlist: in review mode anything not listed here is treated as able to change files.
 var readOnlyCommands = map[string]bool{
@@ -679,7 +501,7 @@ func readOnlyArgs(w, raw []string) (string, bool) {
 		return "go option runs a custom program or writes files", false
 	case name == "jq" && slices.ContainsFunc(w, func(a string) bool { return a == "-L" || strings.HasPrefix(a, "--library") }):
 		return "jq -L loads modules from disk", false
-	case name == "git" && gitConfigOverride(raw):
+	case name == "git" && slices.ContainsFunc(gitGlobals(raw), func(a string) bool { return strings.HasPrefix(a, "-c") || strings.HasPrefix(a, "--config-env") }):
 		return "git -c can set a pager or diff driver that runs commands", false
 	case name == "git" && w[1] == "remote" && len(w) > minGitTokens && !hasAny(w[2:3], "-v", "--verbose", "show", "get-url"):
 		return "git remote " + w[2] + " changes the repository", false
@@ -1134,10 +956,8 @@ func scriptCallsGuarded(path, cwd string) (Finding, bool) {
 func (r *Result) merge(sub Result, dir string) {
 	r.Blocked = append(r.Blocked, sub.Blocked...)
 	r.Gate = cmpGate(r.Gate, sub.Gate)
-	r.PushRefs = append(r.PushRefs, sub.PushRefs...)
 	r.OtherWrites = r.OtherWrites || sub.OtherWrites
 	r.DirectGH = r.DirectGH || sub.DirectGH
-	r.gitEnv = r.gitEnv || sub.gitEnv
 	for _, d := range sub.Dirs {
 		r.Dirs = append(r.Dirs, joinDir(dir, d))
 	}
@@ -1149,8 +969,7 @@ func (r *Result) merge(sub Result, dir string) {
 	}
 }
 
-// deferTo marks rules that a later boundary will enforce for this command. Remote pushes, including deletions
-// and force pushes, are checked by git's pre-push hook; gh calls through PATH are checked by the shim.
+// deferTo marks rules the gh shim will enforce for this command; gh calls through PATH are checked there.
 func deferTo(r *Result, words, raw []string, found []Finding, gate string) {
 	mark := func(rule string) {
 		if r.Deferred == nil {
@@ -1159,27 +978,18 @@ func deferTo(r *Result, words, raw []string, found []Finding, gate string) {
 		r.Deferred[rule] = true
 	}
 
-	switch words[0] {
-	case "git":
-		if len(words) >= minGitTokens && words[1] == "push" {
-			mark(GatePush)
-			for _, f := range found {
-				if f.Rule == RuleForcePush || f.Rule == RuleDeleteBranch {
-					mark(f.Rule)
-				}
-			}
-		}
-	case "gh":
-		exe := unwrapped(raw)
-		if len(exe) > 0 && strings.Contains(exe[0], "/") {
-			r.DirectGH = true
-			return
-		}
-		if gate != gateNone {
-			mark(gate)
-		}
-		for _, f := range found {
-			mark(f.Rule)
-		}
+	if words[0] != "gh" {
+		return
+	}
+	exe := unwrapped(raw)
+	if len(exe) > 0 && strings.Contains(exe[0], "/") {
+		r.DirectGH = true
+		return
+	}
+	if gate != gateNone {
+		mark(gate)
+	}
+	for _, f := range found {
+		mark(f.Rule)
 	}
 }
