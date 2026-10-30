@@ -222,6 +222,10 @@ func TestCheck_PushRefsAndMixedWrites(t *testing.T) {
 	require.Empty(t, rules(Check("ls 3>&1-", true)), "moving a descriptor")
 	require.Equal(t, []string{RuleReadOnly}, rules(Check("echo x >&1abc", true)), ">&1abc writes the file 1abc")
 	require.Equal(t, []string{RuleReadOnly}, rules(Check("echo x &> out.log", true)))
+	require.Contains(t, rules(Check("git 2>&1>status -c core.hooksPath=/dev/null push origin main", false)), RuleSelf,
+		"chained redirects cannot turn a push into git status")
+	require.Equal(t, GatePush, Check("git 2>&1>status push origin main", false).Gate)
+	require.Equal(t, []string{"main"}, Check("git push origin main 2>&1>/dev/null", false).PushRefs)
 	require.False(t, Check("git push origin main 2>&1 | tail -1", false).OtherWrites, "tail after a push is not a write")
 	require.True(t, Check("echo x > a.go && git add a.go && git commit -m x && git push", false).OtherWrites)
 	require.False(t, Check("git push origin feat", false).OtherWrites)

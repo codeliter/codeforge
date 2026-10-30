@@ -972,6 +972,9 @@ func dropMessages(w []string) []string {
 func shellTokens(s string) (words []string, redirect []bool) {
 	var cur strings.Builder
 	inWord, quoted := false, false
+	// awaitingTarget is set after an operator: the next word is its target, never a descriptor prefix,
+	// so in `2>&1>status` the 1 is the first operator's target and status the second's.
+	awaitingTarget := false
 	var quote byte
 	emit := func(isRedir bool) {
 		if inWord {
@@ -979,6 +982,7 @@ func shellTokens(s string) (words []string, redirect []bool) {
 			redirect = append(redirect, isRedir)
 			cur.Reset()
 			inWord, quoted = false, false
+			awaitingTarget = isRedir
 		}
 	}
 
@@ -998,10 +1002,10 @@ func shellTokens(s string) (words []string, redirect []bool) {
 		case c == ' ' || c == '\t' || c == '(' || c == ')':
 			emit(false)
 		case c == '>' || c == '<' || c == '&' && i+1 < len(s) && s[i+1] == '>':
-			// An unquoted all-digit word right before the operator is its file descriptor (2>), anything else
-			// is a separate argument the operator ends.
+			// An unquoted all-digit word right before the operator is its descriptor (2>), unless that word is
+			// the previous operator's target; anything else is a separate word the operator ends.
 			fd := ""
-			if inWord && !quoted && strings.Trim(cur.String(), "0123456789") == "" {
+			if inWord && !quoted && !awaitingTarget && strings.Trim(cur.String(), "0123456789") == "" {
 				fd = cur.String()
 				cur.Reset()
 				inWord = false
