@@ -47,24 +47,32 @@ func (r EmpryoReviewer) Review(ctx context.Context, brief string) (string, error
 
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
-	out, err := cmd.Output()
-	if err != nil {
-		msg := stderr.String()
-		if len(msg) > maxStderrShown {
-			msg = msg[len(msg)-maxStderrShown:]
-		}
-		return "", fmt.Errorf("%w: %s: %w: %s", errEmpryoRun, r.Model, err, strings.TrimSpace(msg))
-	}
+	out, runErr := cmd.Output()
 
+	// Empryo exits non-zero when a run hits its step limit but still prints the JSON result,
+	// often with a complete verdict, so the result is read before the exit code is judged.
 	var res struct {
 		Output string `json:"output"`
 		Error  string `json:"error"`
 	}
 	if err := json.Unmarshal(out, &res); err != nil {
+		if runErr != nil {
+			msg := stderr.String()
+			if len(msg) > maxStderrShown {
+				msg = msg[len(msg)-maxStderrShown:]
+			}
+			return "", fmt.Errorf("%w: %s: %w: %s", errEmpryoRun, r.Model, runErr, strings.TrimSpace(msg))
+		}
 		return "", fmt.Errorf("decoding %s result: %w", r.Model, err)
+	}
+	if _, err := ParseVerdict(res.Output); err == nil {
+		return res.Output, nil
 	}
 	if res.Error != "" {
 		return res.Output, fmt.Errorf("%w: %s: %s", errEmpryoRun, r.Model, res.Error)
+	}
+	if runErr != nil {
+		return res.Output, fmt.Errorf("%w: %s: %w", errEmpryoRun, r.Model, runErr)
 	}
 	return res.Output, nil
 }
