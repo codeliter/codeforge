@@ -15,8 +15,9 @@ Or with Go: `go install github.com/codeliter/codeforge@latest`.
 
 Then run `codeforge init`.
 
+`codeforge init` installs Empryo if it is missing and checks for `git` 2.54+ and a signed-in `gh`.
+
 Releases are built by GoReleaser when a `v*` tag is pushed.
-Needs Empryo installed and signed in, plus `git` and `gh` for `init` and `review`.
 
 ## Get started
 ```

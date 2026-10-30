@@ -20,14 +20,9 @@ asset="codeforge_${os}_${arch}.tar.gz"
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 
-# A private repo needs the gh CLI signed in; a public one works with curl alone.
-if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
-  gh release download --repo "$repo" --pattern "$asset" --pattern checksums.txt --dir "$tmp"
-else
-  base="https://github.com/$repo/releases/latest/download"
-  curl -fsSL "$base/$asset" -o "$tmp/$asset"
-  curl -fsSL "$base/checksums.txt" -o "$tmp/checksums.txt"
-fi
+base="https://github.com/$repo/releases/latest/download"
+curl -fsSL "$base/$asset" -o "$tmp/$asset"
+curl -fsSL "$base/checksums.txt" -o "$tmp/checksums.txt"
 
 (cd "$tmp" && grep " $asset\$" checksums.txt | shasum -a 256 -c -) >/dev/null
 tar -xzf "$tmp/$asset" -C "$tmp" codeforge
