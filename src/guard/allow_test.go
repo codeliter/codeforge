@@ -47,7 +47,6 @@ func TestCheck_GHAndInfraStillGuarded(t *testing.T) {
 		"git diff -- src/guard/gh.go",
 		"git commit -m 'Handle gh pr merge errors'",
 		"git -c user.name=me commit -m x",
-		"git -c alias.co=checkout co main",
 		"git config user.email me@example.com",
 	} {
 		require.Empty(t, rules(Check(cmd, false)), cmd)
@@ -62,8 +61,18 @@ func TestCheck_GHAndInfraStillGuarded(t *testing.T) {
 		"git -ccore.sshCommand=x fetch",
 		"git --config-env=core.pager=X log",
 		"git config hook.x.command 'gh pr merge 1'",
+		"git config set alias.deploy '!terraform apply -auto-approve'",
+		"git config --add alias.x '!sh x.sh'",
+		"git config --edit",
+		"git config --file .git/config alias.x '!x'",
+		"GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.deploy GIT_CONFIG_VALUE_0='!./deploy.sh' git deploy",
+		"export GIT_CONFIG_PARAMETERS=x",
+		"env GIT_SSH_COMMAND=./x git fetch",
 	} {
 		require.Equal(t, []string{RuleOpaque}, rules(Check(cmd, false)), cmd)
+	}
+	for _, cmd := range []string{"git config get user.email", "git config --list", "git config set user.email me@x.com", "git config alias.co"} {
+		require.Empty(t, rules(Check(cmd, false)), cmd)
 	}
 
 	for _, cmd := range []string{"script -q /dev/null codeforge allow merge", "expect drive.exp", "tmux new -d 'codeforge allow infra'"} {

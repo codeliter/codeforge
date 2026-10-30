@@ -77,6 +77,13 @@ func checkIn(command string, readOnly bool, cwd string) Result {
 			r.OtherWrites = true
 		}
 
+		// Environment that injects git config or replaces git's helper programs runs code outside the guard,
+		// whether set inline (`GIT_CONFIG_KEY_0=… git x`), through env, or exported for later commands.
+		if name, ok := gitEnvOverride(raw); ok {
+			r.Blocked = append(r.Blocked, Finding{RuleOpaque, name + " changes what git runs; set it yourself if you need it"})
+			continue
+		}
+
 		_, opaque := unwrap(raw)
 		words := commandWords(seg)
 		if len(words) == 0 {
