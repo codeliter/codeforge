@@ -1005,7 +1005,7 @@ func shellTokens(s string) (words []string, redirect []bool) {
 			// An unquoted all-digit word right before the operator is its descriptor (2>), unless that word is
 			// the previous operator's target; anything else is a separate word the operator ends.
 			fd := ""
-			if inWord && !quoted && !awaitingTarget && strings.Trim(cur.String(), "0123456789") == "" {
+			if inWord && !quoted && !awaitingTarget && c != '&' && strings.Trim(cur.String(), "0123456789") == "" {
 				fd = cur.String()
 				cur.Reset()
 				inWord = false
