@@ -1,0 +1,39 @@
+version: 2
+
+project_name: codeforge
+
+builds:
+  - main: .
+    binary: codeforge
+    env:
+      - CGO_ENABLED=0
+    goos: [darwin, linux]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w -X github.com/codeliter/codeforge/src.Version={{.Version}}
+
+archives:
+  - formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
+    files: [README.md, LICENSE]
+
+checksum:
+  name_template: checksums.txt
+
+# A formula, not a cask: Homebrew does not quarantine formula installs, so the unsigned macOS binary runs
+# without a Gatekeeper prompt. Signing and notarising would allow a cask later.
+brews:
+  - name: codeforge
+    repository:
+      owner: codeliter
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    directory: Formula
+    homepage: https://github.com/codeliter/codeforge
+    description: A coding agent that works like you, on the Empryo TUI.
+    license: Apache-2.0
+    install: |
+      bin.install "codeforge"
+    test: |
+      assert_match version.to_s, shell_output("#{bin}/codeforge version")
