@@ -35,6 +35,12 @@ func pickMode(cfg Config, args []string) (string, error) {
 	if cfg.DefaultMode != "" {
 		return cfg.DefaultMode, nil
 	}
+	// Empryo restores the session; do not interrupt it with the new-session picker.
+	for _, flag := range []string{"--resume", "--session", "-s"} {
+		if hasFlag(args, flag) {
+			return modeChat, nil
+		}
+	}
 	if promptOf(args) != "" || !interactive() {
 		return modeChat, nil
 	}
