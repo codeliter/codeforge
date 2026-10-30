@@ -82,7 +82,7 @@ Git is yours: in ticket and chat mode codeforge never blocks a git command, incl
 
 `codeforge allow <rule>` covers one action in one repository for 10 minutes. Approvals and gate passes live in `~/.codeforge/state.json`, outside every repository.
 
-Limits: the sandbox is macOS-only for now. `terraform` and `kubectl` are only covered by the Empryo hook.
+Limits: the sandbox is macOS-only for now. In ticket and chat mode the hook catches direct `gh` merges, PR comments and infra changes, which stops mistakes; it reads commands, so it is not a wall against a program that deliberately launches them another way (through a script, git config or an interpreter). Review mode is the hard boundary: there the operating system refuses every write.
 
 ## Review gate
 `codeforge gate` reviews your branch and uncommitted work. Ticket mode runs it before reporting done and before opening a PR; chat mode runs it when you ask for a review.
