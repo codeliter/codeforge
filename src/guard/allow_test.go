@@ -42,6 +42,10 @@ func TestCheck_GHAndInfraStillGuarded(t *testing.T) {
 	require.Equal(t, GateOpenPR, Check("gh pr create --fill", false).Gate)
 	require.Equal(t, []string{RuleInfra}, rules(Check("terraform apply", false)))
 	require.Equal(t, []string{RuleSelf}, rules(Check("codeforge allow merge", false)))
+	require.Equal(t, []string{RuleOpaque}, rules(Check("git -c alias.approve='!codeforge allow merge' approve", false)),
+		"git cannot launch codeforge allow through an alias")
+	require.Equal(t, []string{RuleOpaque}, rules(Check("git -c alias.m='!gh pr merge 1' m", false)))
+	require.Empty(t, rules(Check("git -c user.name=me commit -m x", false)), "ordinary config is fine")
 }
 
 func TestCheckTool_MessagesAreNotCommands(t *testing.T) {
