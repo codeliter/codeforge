@@ -27,8 +27,8 @@ func TestProtectedPath(t *testing.T) {
 		{"README.md", false},
 		{"/Users/me/.codeforgex/a", false},
 		{"/Users/me/.empryo/bin/gh", true},
-		{".git/config", false},
-		{"/repo/.git/hooks/pre-push", false},
+		{".git/config", true},
+		{"/repo/.git/hooks/pre-push", true},
 	}
 
 	for _, tt := range tests {
@@ -71,15 +71,15 @@ func TestCheckTool_ProtectsEnforcementFolders(t *testing.T) {
 		require.Equal(t, []string{RuleSelf}, rules(CheckTool(in, false)), p)
 	}
 
-	for _, p := range []string{"/repo/.empryo", "/repo/.claude", "/repo/.github/hooks", "/repo/.github"} {
+	for _, p := range []string{"/repo/.empryo", "/repo/.claude", "/repo/.git/hooks", "/repo/.github/hooks", "/repo/.github"} {
 		in := input(t, "Bash", map[string]any{"command": "mv " + p + " /tmp/x"})
 		in.Paths = []string{p}
 		require.Equal(t, []string{RuleSelf}, rules(CheckTool(in, false)), p)
 	}
 
-	in := input(t, "Bash", map[string]any{"command": "rm -rf /repo/.git/hooks"})
-	in.Paths = []string{"/repo/.git/hooks"}
-	require.Empty(t, rules(CheckTool(in, false)), "git's own folders are the user's to manage")
+	in := input(t, "Bash", map[string]any{"command": "git status"})
+	in.Paths = []string{"/repo/.git"}
+	require.Empty(t, rules(CheckTool(in, false)), "the .git folder itself is not off limits")
 
 	in = input(t, "Bash", map[string]any{"command": "ls ~/.empryo/agents"})
 	in.Paths = []string{filepath.Join(home, ".empryo", "agents")}

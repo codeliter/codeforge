@@ -34,6 +34,10 @@ func protectedPath(p, cwd, home string) bool {
 	if home != "" && p == filepath.Join(home, ".empryo", "bin", "gh") {
 		return true
 	}
+	// Git hooks and repository config run code outside the agent's tool calls, so the agent may not write them.
+	if filepath.Base(p) == "config" && filepath.Base(filepath.Dir(p)) == ".git" || strings.Contains(filepath.ToSlash(p), "/.git/hooks/") {
+		return true
+	}
 
 	dir := filepath.Base(filepath.Dir(p))
 	return slices.Contains(hookConfigDirs, dir) && slices.Contains(hookConfigFiles, filepath.Base(p)) ||
@@ -88,7 +92,7 @@ func protectedAncestor(p, cwd, home string) bool {
 		return true
 	case "hooks":
 		parent := filepath.Base(filepath.Dir(p))
-		return parent == ".github" || parent == ".copilot"
+		return parent == ".git" || parent == ".github" || parent == ".copilot"
 	}
 
 	if home == "" {
