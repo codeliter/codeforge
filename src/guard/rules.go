@@ -273,36 +273,44 @@ func pushRefs(w []string) []string {
 }
 
 // withoutRedirects removes unquoted redirections and, when an operator stands alone (`2>& 1`, `> log`),
-// the target word after it. Operators are standalone tokens; `2>&1` carries its own target.
+// the target word after it. Every operator token is followed by its target word.
 func withoutRedirects(words []string, redirect []bool) []string {
 	out := make([]string, 0, len(words))
 	for i := 0; i < len(words); i++ {
-		if !redirect[i] {
-			out = append(out, words[i])
+		if redirect[i] {
+			i++
 			continue
 		}
-		if !strings.Contains(words[i], "&") || strings.HasSuffix(words[i], "&") || strings.HasPrefix(words[i], "&") {
-			i++
-		}
+		out = append(out, words[i])
 	}
 	return out
 }
 
-// writesFile reports an unquoted output redirection to anything but /dev/null or a file descriptor.
+// writesFile reports an output redirection to a real file. Duplicating or closing a descriptor (>&1, 2>&-)
+// and writing to /dev/null are not writes; `>&1abc` is, because its whole target is not a descriptor.
 func writesFile(words []string, redirect []bool) bool {
 	for i, w := range words {
 		op := strings.TrimLeft(w, "0123456789")
-		if !redirect[i] || !strings.ContainsRune(op, '>') {
+		if !redirect[i] || !strings.ContainsRune(op, '>') || i+1 >= len(words) {
 			continue
 		}
-		if strings.Contains(op, "&") && !strings.HasSuffix(op, "&") && !strings.HasPrefix(op, "&") {
+
+		target := words[i+1]
+		if target == "/dev/null" {
 			continue
 		}
-		if i+1 < len(words) && words[i+1] != "/dev/null" {
-			return true
+		if strings.HasSuffix(op, "&") && op != "&>" && isDescriptor(target) {
+			continue
 		}
+		return true
 	}
 	return false
+}
+
+// isDescriptor matches a duplication target: a descriptor number, optionally moved with a trailing -, or - to close.
+func isDescriptor(s string) bool {
+	n := strings.TrimSuffix(s, "-")
+	return s == "-" || n != "" && strings.Trim(n, "0123456789") == ""
 }
 
 // joinDir resolves next against base; an absolute next replaces base.
@@ -1003,12 +1011,6 @@ func shellTokens(s string) (words []string, redirect []bool) {
 			start := i
 			for i < len(s) && strings.IndexByte("<>&|", s[i]) >= 0 {
 				i++
-			}
-			// A descriptor target such as 1 in 2>&1 belongs to the operator.
-			if s[i-1] == '&' {
-				for i < len(s) && (s[i] >= '0' && s[i] <= '9' || s[i] == '-') {
-					i++
-				}
 			}
 			cur.WriteString(fd + s[start:i])
 			i--
