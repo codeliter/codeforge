@@ -248,6 +248,19 @@ func runCheck(ctx context.Context, argv []string, timeout time.Duration, stdout,
 }
 
 func killGroup(pid int) error {
+	if pid <= 0 {
+		return nil
+	}
+	pgid, err := syscall.Getpgid(pid)
+	if errors.Is(err, syscall.ESRCH) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("finding check process group: %w", err)
+	}
+	if pgid != pid || pgid == syscall.Getpgrp() {
+		return nil
+	}
 	if err := syscall.Kill(-pid, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
 		return fmt.Errorf("stopping check: %w", err)
 	}

@@ -137,6 +137,12 @@ func TestLearn_RunDispatchKeepsArgvAndSkipsSetup(t *testing.T) {
 	require.ErrorIs(t, err, os.ErrNotExist)
 }
 
+func TestKillGroup_LeavesCallerAndInvalidIDsAlone(t *testing.T) {
+	for _, pid := range []int{0, -1, os.Getpid()} {
+		require.NoError(t, killGroup(pid))
+	}
+}
+
 func TestRunCheck_TimeoutKillsDescendants(t *testing.T) {
 	pidFile := filepath.Join(t.TempDir(), "pid")
 	var discard bytes.Buffer
