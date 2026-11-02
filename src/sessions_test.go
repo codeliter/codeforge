@@ -150,6 +150,16 @@ func TestSessionFlags_InvalidAndConflicting(t *testing.T) {
 	require.False(t, resumed)
 }
 
+func TestResumeFlags_AreNotSystemValues(t *testing.T) {
+	args := []string{"--system", "--resume"}
+	mode, err := pickMode(Config{DefaultMode: modeChat}, args)
+	require.NoError(t, err)
+	require.Equal(t, modeChat, mode)
+	_, prepared, err := modeArgs(t.Context(), "/missing", Config{}, mode, args)
+	require.NoError(t, err)
+	require.Contains(t, prepared, "--effort")
+}
+
 func TestLaunch_PersistsBeforeExecAndKeepsReviewProtections(t *testing.T) {
 	wd, err := filepath.EvalSymlinks(t.TempDir())
 	require.NoError(t, err)

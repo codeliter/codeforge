@@ -32,10 +32,10 @@ func validMode(mode string) error {
 
 // pickMode asks for new launches only; the resume check defends this invariant for other callers.
 func pickMode(cfg Config, args []string) (string, error) {
-	for _, flag := range []string{"--resume", "--session", "-s"} {
-		if hasFlag(args, flag) {
-			return "", errSessionMode
-		}
+	if _, resume, err := sessionID(args); err != nil {
+		return "", err
+	} else if resume {
+		return "", errSessionMode
 	}
 	if cfg.DefaultMode != "" {
 		return cfg.DefaultMode, nil
