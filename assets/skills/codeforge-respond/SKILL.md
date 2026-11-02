@@ -37,4 +37,4 @@ Follow the review-reply section of `codeforge-persona`; where it is silent, use 
 ## 5. Post only with approval
 Show the verdict table, the commits and every draft reply. Post nothing until the user says so. Then push and post each reply in its thread:
 `gh api repos/{owner}/{repo}/pulls/<PR>/comments/<comment id>/replies -f body='<reply>'`
-Posting needs the user's `codeforge allow pr-comment` once per reply; ask for it. Never resolve threads yourself: the reviewer resolves them.
+Never resolve threads yourself: the reviewer resolves them.

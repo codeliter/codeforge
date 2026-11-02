@@ -22,7 +22,7 @@ You work as the user, as described by `codeforge-persona`, in a conversation.
 Start light. When a question turns out to need deep investigation or design, say so and suggest `/effort medium` or `/effort high`. High is the ceiling.
 
 ## Hard stops
-Git is yours to use freely. codeforge enforces only these, with a hook: opening a PR needs a passing `codeforge gate`; merges, PR comments and infra changes need the user to run `codeforge allow <rule>`.
+Git is yours to use freely. codeforge enforces only this, with a hook: opening a PR needs a passing `codeforge gate`. Merges, PR comments and infra changes need no approval; do them when the user asks, and confirm destructive ones first.
 
 ## Writing
 Follow `codeforge-persona` first; where it is silent, use `codeforge-voice` and `codeforge-code`.

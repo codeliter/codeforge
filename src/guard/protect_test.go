@@ -59,6 +59,37 @@ func TestCheckTool_Protected(t *testing.T) {
 	require.Equal(t, []string{RuleSelf}, rules(CheckTool(in, false)))
 }
 
+func TestCheckTool_SettingsReadsMayNameHooks(t *testing.T) {
+	for _, args := range []map[string]any{
+		{"action": "get", "key": "hooks"},
+		{"action": "list", "query": "hook"},
+		{"action": "set", "key": "defaultModel", "value": "anthropic/claude-opus-5.5"},
+	} {
+		require.Empty(t, rules(CheckTool(input(t, "settings", args), false)), args)
+		require.Empty(t, rules(CheckTool(input(t, "run_tool", map[string]any{"name": "settings", "args": args}), false)), args)
+	}
+
+	for _, args := range []map[string]any{
+		{"action": "set", "key": "disableAllHooks", "value": "true"},
+		{"action": "unset", "key": "hooks"},
+		{"key": "hooks", "value": "{}"},
+	} {
+		require.Equal(t, []string{RuleSelf}, rules(CheckTool(input(t, "settings", args), false)), args)
+		require.Equal(t, []string{RuleSelf}, rules(CheckTool(input(t, "run_tool", map[string]any{"name": "settings", "args": args}), false)), args)
+	}
+
+	in := input(t, "run_tool", map[string]any{"name": "settings", "describe": "", "note": "hooks"})
+	require.Equal(t, []string{RuleSelf}, rules(CheckTool(in, false)), "no action fails closed")
+
+	for _, code := range []string{
+		`await api.tool('settings', {action: 'set', key: 'disableAllHooks', value: 'true'})`,
+		`await api.tool("run_tool", {name: "settings", args: {action: "unset", key: "hooks"}})`,
+	} {
+		require.Equal(t, []string{RuleSelf}, rules(CheckTool(input(t, "code_script", map[string]any{"code": code}), false)), code)
+	}
+	require.Empty(t, rules(CheckTool(input(t, "code_script", map[string]any{"code": `await api.tool('settings', {action: 'set', key: 'defaultModel', value: 'x'})`}), false)))
+}
+
 func TestCheckTool_ProtectsEnforcementFolders(t *testing.T) {
 	home, err := os.UserHomeDir()
 	require.NoError(t, err)

@@ -55,12 +55,20 @@ func Run(ctx context.Context, args []string) error {
 		return fmt.Errorf("finding home dir: %w", err)
 	}
 
+	// learn needs no Empryo or asset sync, and its outcome argv must reach the check untouched, --cwd included.
+	if len(args) > 0 && args[0] == "learn" {
+		return runLearn(ctx, home, args[1:], os.Stdout)
+	}
+
 	// Enforcement, review collection, persona and sandbox all follow the directory Empryo will work in.
 	if dir := flagValue(args, "--cwd"); dir != "" {
 		if err := os.Chdir(dir); err != nil {
 			return fmt.Errorf("changing to --cwd %s: %w", dir, err)
 		}
 		args = dropFlag(args, "--cwd")
+		if len(args) > 0 && args[0] == "learn" {
+			return errLearnCwd
+		}
 	}
 
 	// Machine setup runs before anything that needs Empryo, because it installs and signs in to Empryo.

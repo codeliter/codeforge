@@ -48,9 +48,27 @@ Historical Empryo sessions not recorded by Codeforge need an explicit mode once,
 
 New launches receive an ID through Empryo's verified `--session-id` flag and record it before launch. Headless launches also save their Empryo session. Forking and profile overrides are rejected in this milestone; mode flags cannot weaken review or resumed launches. In-TUI profile changes do not change the original Codeforge mode or review protections.
 
-Identity lives in `~/.codeforge/sessions/sessions.db`, separate from approval state and jury cache. It stores only session ID, original mode/profile and canonical repository path (or workspace outside Git); conversation content stays in Empryo's workspace-local `.empryo/sessions/ID`. Embedded numbered migrations run transactionally; older binaries reject newer schemas. SQLite uses WAL, FULL synchronous durability, a 500 ms busy wait and a 2 second operation deadline, one connection per store, a private 0700 directory and 0600 database/sidecars. Interrupted transactions roll back. Session records never grant approvals or unlock the gate.
+Identity lives in `~/.codeforge/sessions/sessions.db`, separate from approval state and jury cache. For sessions it stores only session ID, original mode/profile and canonical repository path (or workspace outside Git); conversation content stays in Empryo's workspace-local `.empryo/sessions/ID`. The same database holds the learning evidence below. Embedded numbered migrations run transactionally; older binaries reject newer schemas. SQLite uses WAL, FULL synchronous durability, a 500 ms busy wait and a 2 second operation deadline, one connection per store, a private 0700 directory and 0600 database/sidecars. Interrupted transactions roll back. Session records never grant approvals or unlock the gate.
 
 The session-ID and missing-session behavior was probed against Empryo 3.12.3-beta in both TUI and headless launches; no session API is assumed.
+
+### Learning evidence
+
+`codeforge learn` records evidence and nothing else. No observation or proposal changes prompts, personas, skills, models or guard policy, and there is no approve or promote command yet.
+
+- `learn correct [--session ID] TEXT` records a correction: one line, at most 2000 characters, tied to this repository and, optionally, to a session codeforge launched here.
+- `learn outcome [--session ID] -- COMMAND [ARGS]` runs the check without a shell, in its own process group, for at most 10 minutes. It records the argv (at most 2000 characters) and `passed` (exit 0), `failed` (exit code) or `incomplete` (timeout, interrupt or signal). Output goes to your terminal and is never stored. A timeout or interrupt kills the whole process group; processes a check leaves behind after a normal exit are not touched. A passing check is evidence, not proof that a preference is right.
+- `learn list [--all]` shows observations with origin and session; `--all` includes reverted ones.
+- `learn propose` groups corrections with the same text, ignoring case and spacing, once one has been recorded at least twice. It cites the correction IDs and the pass, fail and incomplete counts of checks in the same sessions. It uses no model and is computed on read, so it is deterministic and stores nothing.
+- `learn revert ID` hides an observation from proposals and keeps the row, with its revert time, for provenance.
+
+Limits:
+
+- `learn` works on the repository of the current directory. Run it there: it does not read `--cwd`, so a check's own `--cwd` argument passes through unchanged.
+- Learning adds schema version 2 to `sessions.db`. An older codeforge binary refuses that database on every launch; to go back, upgrade again or move `~/.codeforge/sessions/sessions.db` aside, which also drops saved session modes.
+- Capture is CLI-only. `origin=cli` means the text was typed into the codeforge CLI. It does not authenticate a person. The guard blocks the agent's tools from `learn correct`, `outcome` and `revert`, the same way it blocks `allow` and `trust`; in ticket and chat mode `list` and `propose` stay open, and review mode's read-only guard blocks codeforge entirely. That is best effort, not identity.
+- Credential-shaped text (token prefixes, private-key headers, `password=` and similar) is refused so it never reaches disk. This is hygiene, not a security boundary.
+- Promotion stays disabled until there is an agreed human confirmation flow. The candidate route is Empryo's `UserPromptSubmit` hook, which receives the prompt the user submitted. Before codeforge trusts it, it must be shown that cross-tab, steering and injected messages cannot fire it with text the user did not type.
 
 ### Persona
 `codeforge init` asks where to learn how you work:
@@ -89,12 +107,12 @@ Git is yours: in ticket and chat mode codeforge never blocks a git command, incl
 | Boundary | What it enforces | How |
 |---|---|---|
 | **OS sandbox** | Review mode and gate jurors cannot write to the repository. | macOS `sandbox-exec` denies every write inside the repository except Empryo's own `.empryo` state. |
-| **`gh` shim** | `gh pr create` needs the reviewed commit on a clean tree and cannot target another head or repository. `gh pr merge`, PR comments and reviews, and `gh api` writes need `codeforge allow`. | A wrapper in `~/.empryo/bin`, which Empryo puts first on every shell's PATH. It checks the exact arguments and then runs the real `gh`. |
-| **Empryo hook** | Review mode is read-only; `terraform`/`kubectl` changes need approval; the agent can't edit `~/.codeforge` or Empryo's hook config, or run `codeforge allow`. | A fail-closed `PreToolUse` hook that inspects the commands the agent runs, never the text of its messages. |
+| **`gh` shim** | `gh pr create` needs the reviewed commit on a clean tree and cannot target another head or repository. Merges, PR comments and reviews need no approval. `gh api` writes are limited to REST endpoints under `repos/<owner>/<repo>/` and cannot open a PR around the gate; GraphQL mutations are refused, so use `gh pr` or REST for those. | A wrapper in `~/.empryo/bin`, which Empryo puts first on every shell's PATH. It checks the exact arguments and then runs the real `gh`. |
+| **Empryo hook** | Review mode is read-only; the agent can't edit `~/.codeforge` or Empryo's hook config, or run `codeforge allow`. It can still print `codeforge models` and read hook settings with `settings get` or `list`. | A fail-closed `PreToolUse` hook that inspects the commands the agent runs, never the text of its messages. |
 
-`codeforge allow <rule>` covers one action in one repository for 10 minutes. Approvals and gate passes live in `~/.codeforge/state.json`, outside every repository.
+Merges, PR comments and `terraform`/`kubectl` changes follow your requests in chat; no approval step. `codeforge allow open-pr` skips the review gate for one PR in one repository for 10 minutes. Approvals and gate passes live in `~/.codeforge/state.json`, outside every repository. Approval happens in your terminal, not in chat: Empryo treats a hook's `ask` as a block, so a chat reply can't grant one.
 
-Limits: the sandbox is macOS-only for now. In ticket and chat mode the hook catches direct `gh` merges, PR comments and infra changes, which stops mistakes; it reads commands, so it is not a wall against a program that deliberately launches them another way (through a script, git config or an interpreter). Review mode is the hard boundary: there the operating system refuses every write.
+Limits: the sandbox is macOS-only for now. In ticket and chat mode the hook catches direct `gh pr create` calls that skip the gate, which stops mistakes; it reads commands, so it is not a wall against a program that deliberately launches them another way (through a script, git config or an interpreter). Merges, comments and REST writes are not limited to the current repository. Review mode is the hard boundary: there the operating system refuses every write.
 
 ## Review gate
 `codeforge gate` reviews your branch and uncommitted work. Ticket mode runs it before reporting done and before opening a PR; chat mode runs it when you ask for a review.
@@ -221,7 +239,7 @@ flowchart TD
 
     EMP[[Empryo TUI<br/>--profile codeforge-ticket / chat / review]] --> SK[Skills<br/>persona, voice, code,<br/>ticket-to-pr, review]
     EMP --> REPO[(Your repository)]
-    EMP -->|every tool call| HOOK{{Empryo hook<br/>review read-only, infra, settings}}
+    EMP -->|every tool call| HOOK{{Empryo hook<br/>review read-only, settings}}
     EMP -->|gh| SHIM{{gh shim}}
     GATE[codeforge gate<br/>triage, pack, sandboxed jury, cache] --> STATE[(~/.codeforge/state.json)]
     STATE --> SHIM
@@ -233,7 +251,7 @@ flowchart TD
 | `main.go` | Entry point; calls `src.Run` |
 | `src/run.go` | Routes `init`, `models`, `trust` and the three modes; syncs assets; starts Empryo |
 | `src/modes.go` | Mode names, profiles and the mode picker |
-| `src/guard/` | gh checks, approvals, gate state, tree fingerprint, review-mode and infra rules |
+| `src/guard/` | gh checks, approvals, gate state, tree fingerprint, review-mode and self-protection rules |
 | `src/enforce.go`, `src/sandbox.go` | Installs the gh shim; runs review mode and jurors in the OS sandbox |
 | `src/help.go` | `codeforge help` |
 | `src/setup.go` | `codeforge setup`: first-run install, sign-in, checks and models |
@@ -244,6 +262,8 @@ flowchart TD
 | `src/initcmd.go`, `src/persona.go` | `codeforge init`: interactive setup, learns or picks a persona |
 | `src/repopersona.go`, `src/trust.go` | Per-repository persona, `codeforge trust`, approval by content hash |
 | `src/startcmd.go` | Ticket mode: collects the ticket and work details |
+| `src/learncmd.go` | `codeforge learn`: records corrections and check outcomes, lists, proposes, reverts; applies nothing |
+| `src/store/` | SQLite session identity and learning evidence, with embedded migrations |
 | `src/launch.go`, `src/reviewcmd.go`, `src/assets.go` | Task and review launches, effort ceiling, asset sync |
 | `src/effort/` | Judge panel, merge and decision rule, evals |
 | `src/review/` | Review briefs, triage tiers, context pack, verdict cache, the jury and grounding |

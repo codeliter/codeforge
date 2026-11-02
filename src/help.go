@@ -28,7 +28,16 @@ Setup:
 
 Review and approvals:
   gate                               Review your branch with the jury; a pass unlocks opening a PR
-  allow RULE                         Approve one blocked action for 10 minutes (you, not the agent)
+  allow RULE                         Skip the review gate for one PR, for 10 minutes (you, not the agent)
+
+Learning (evidence only; nothing is applied to prompts, personas or guards):
+  learn correct [--session ID] TEXT  Record a correction you typed into this CLI
+  learn outcome [--session ID] -- COMMAND [ARGS]
+                                     Run a check (no shell, 10 min limit) and record passed, failed or incomplete
+  learn list [--all]                 Show this repository's observations; --all includes reverted ones
+  learn propose                      Show corrections recorded 2+ times, with their evidence
+  learn revert ID                    Hide an observation from proposals; the record is kept
+                                     The agent cannot run correct, outcome or revert; there is no approve yet
 
 Resume:
   --resume ID, --session ID, -s ID    Restore the original mode without new-task preparation
@@ -40,7 +49,8 @@ Help:
   help, -h, --help                   Show this help
   version                            Show the codeforge version
 
-Git is never blocked outside review mode. Rules for allow: merge, pr-comment, infra, open-pr
+Git is never blocked outside review mode, and merges, PR comments and infra changes need no approval.
+Rules for allow: open-pr (skips the review gate once)
 
 Config: ~/.codeforge/config.json   Docs: https://github.com/codeliter/codeforge
 `

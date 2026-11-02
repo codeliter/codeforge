@@ -1,18 +1,17 @@
 package guard
 
 import (
+	"net/url"
 	"os"
+	urlpath "path"
 	"regexp"
 	"slices"
 	"strings"
 )
 
-// Rule names double as the argument to `codeforge allow`. Git itself is never guarded: it is the user's tool,
-// and review mode keeps it read-only through the sandbox and the read-only check instead.
+// Merges, PR comments and infra changes follow the user's requests, not approvals. Git itself is never guarded:
+// it is the user's tool, and review mode keeps it read-only through the sandbox and the read-only check instead.
 const (
-	RuleMerge     = "merge"
-	RulePRComment = "pr-comment"
-	RuleInfra     = "infra"
 	RuleReadOnly  = "read-only"
 	RuleSelf      = "codeforge-config"
 	RuleOpaque    = "opaque"
@@ -96,14 +95,14 @@ func checkIn(command string, readOnly bool, cwd string) Result {
 				continue
 			}
 			if guardedTool.MatchString(seg) {
-				r.Blocked = append(r.Blocked, Finding{RuleOpaque, "the command runs git, gh, terraform or kubectl through a wrapper, another directory or a git environment override the guard cannot follow"})
+				r.Blocked = append(r.Blocked, Finding{RuleOpaque, "the command runs gh or codeforge through a wrapper, another directory or a git environment override the guard cannot follow"})
 				continue
 			}
 		}
 
 		// Git is the user's own tool: outside review mode every git command is allowed as written, except setting
 		// config that makes git run another program (shell aliases, hooks, pagers, helpers). Those launch commands
-		// outside the agent's tool calls, so gh, terraform or codeforge could run unchecked through them.
+		// outside the agent's tool calls, so gh or codeforge could run unchecked through them.
 		if words[0] == "git" && !readOnly {
 			if key, ok := gitExecConfig(raw); ok {
 				r.Blocked = append(r.Blocked, Finding{RuleOpaque, "setting " + key + " makes git run another program outside the guard; set it yourself if you need it"})
@@ -146,7 +145,7 @@ func checkIn(command string, readOnly bool, cwd string) Result {
 				continue
 			}
 			if guardedTool.MatchString(inner) {
-				r.Blocked = append(r.Blocked, Finding{RuleOpaque, words[0] + " code calls git, gh, terraform or kubectl, which the guard cannot inspect inside an interpreter"})
+				r.Blocked = append(r.Blocked, Finding{RuleOpaque, words[0] + " code calls gh or codeforge, which the guard cannot inspect inside an interpreter"})
 			}
 			continue
 		}
@@ -279,21 +278,27 @@ func classify(w []string) ([]Finding, string) {
 		// These give a program a pseudo-terminal the agent controls, which could answer codeforge allow's prompt.
 		return []Finding{{RuleSelf, w[0] + " can drive a terminal prompt such as codeforge allow; run it yourself if you need it"}}, gateNone
 	case "codeforge":
-		if len(w) > 1 && hasAny(w[1:2], "allow", "trust", "init", "models") {
+		if len(w) > 1 && (hasAny(w[1:2], "allow", "trust", "init") || w[1] == "models" && !printsModels(w[2:])) {
 			return []Finding{{RuleSelf, "only you can approve actions or change codeforge settings"}}, gateNone
+		}
+		if len(w) > 1 && w[1] == "learn" && !readsLearning(w[2:]) {
+			return []Finding{{RuleSelf, "only you can record or revert codeforge learning evidence"}}, gateNone
 		}
 	case "gh":
 		return classifyGH(w)
-	case "terraform", "tofu", "terragrunt":
-		if hasAny(w, "apply", "destroy", "import") || (has(w, "state") && hasAny(w, "rm", "mv", "push")) {
-			return []Finding{{RuleInfra, "changes live infrastructure"}}, gateNone
-		}
-	case "kubectl":
-		if hasAny(w, "apply", "delete", "edit", "patch", "replace", "scale") || (has(w, "rollout") && hasAny(w, "undo", "restart", "pause", "resume")) {
-			return []Finding{{RuleInfra, "changes a live cluster"}}, gateNone
-		}
 	}
 	return nil, gateNone
+}
+
+// printsModels matches the forms of `codeforge models` that only print the roles: none, or recommend.
+func printsModels(args []string) bool {
+	return len(args) == 0 || args[0] == "recommend"
+}
+
+// readsLearning matches `codeforge learn list` and `propose`. Anything else, unknown forms included, may write
+// evidence or run a command through codeforge, so it is refused.
+func readsLearning(args []string) bool {
+	return len(args) > 0 && (args[0] == "list" || args[0] == "propose")
 }
 
 // ghGlobalRepo removes gh's -R/--repo wherever it appears and reports whether it was there.
@@ -333,28 +338,21 @@ func classifyGH(w []string) ([]Finding, string) {
 		return []Finding{{RuleSelf, "changes gh aliases, which could hide commands from codeforge"}}, gateNone
 	}
 	if len(w) < 3 || w[1] != "pr" {
-		if len(w) >= 2 && w[1] == "api" && graphQLRead(w[2:]) {
+		if len(w) < minGitTokens || w[1] != "api" || graphQLRead(w[2:]) {
 			return nil, gateNone
 		}
-		if len(w) >= 2 && w[1] == "api" && apiWrites(w[2:]) {
-			if otherRepo || !apiTargetsThisRepo(w[2:]) {
-				return []Finding{{RulePushScope, "gh api writes must use the {owner}/{repo} placeholders so they stay in this repository"}}, gateNone
-			}
-			return []Finding{{RulePRComment, "writes to GitHub through the API"}}, gateNone
+		// Unreadable flags fail closed: clustered flags such as -if can hide both the write and the endpoint.
+		endpoint, ok := apiEndpoint(w[2:])
+		if !ok {
+			return []Finding{{RuleOpaque, "gh api uses clustered or unknown flags, or an endpoint the guard cannot read; spell each flag separately"}}, gateNone
+		}
+		if apiWrites(w[2:]) {
+			return apiWriteFindings(endpoint), gateNone
 		}
 		return nil, gateNone
 	}
 
-	crossRepo := otherRepo || slices.ContainsFunc(w[3:], func(a string) bool { return strings.Contains(a, "github.com/") })
 	switch w[2] {
-	case "merge", "comment", "review", "close", "edit":
-		if crossRepo {
-			return []Finding{{RulePushScope, "the command targets another repository than this one, where approvals do not apply"}}, gateNone
-		}
-		if w[2] == "merge" {
-			return []Finding{{RuleMerge, "merges a PR"}}, gateNone
-		}
-		return []Finding{{RulePRComment, "posts or changes a PR"}}, gateNone
 	case "create", "ready":
 		if otherRepo || slices.ContainsFunc(w[3:], func(a string) bool {
 			name, _, _ := strings.Cut(a, "=")
@@ -374,21 +372,56 @@ var knownAPIFlags = set("-f", "-F", "--field", "--raw-field", "-X", "--method", 
 
 var apiValueFlags = set("-X", "--method", "-f", "-F", "--field", "--raw-field", "-H", "--header", "--input", "-q", "--jq", "-t", "--template", "--hostname", "--cache")
 
-// apiTargetsThisRepo accepts only endpoints under repos/{owner}/{repo}, which gh fills in from the current repository.
-func apiTargetsThisRepo(args []string) bool {
+// apiWriteFindings allows REST writes under repos/<owner>/<repo>/ except opening a PR, which must go through
+// `gh pr create` and the review gate. Every other endpoint, GraphQL mutations included, could open a PR the
+// guard cannot see, so it is refused.
+func apiWriteFindings(endpoint string) []Finding {
+	parts := strings.Split(endpoint, "/")
+	if len(parts) < 4 || !strings.EqualFold(parts[0], "repos") {
+		return []Finding{{RulePushScope, "gh api writes are limited to REST endpoints under repos/<owner>/<repo>/, because GraphQL mutations and other endpoints could open a PR around the review gate"}}
+	}
+	if len(parts) == 4 && strings.EqualFold(parts[3], "pulls") {
+		return []Finding{{RulePushScope, "opening a PR through gh api skips the review gate; use `gh pr create`"}}
+	}
+	return nil
+}
+
+// apiEndpoint returns gh api's endpoint as the server resolves it: unescaped, without query or fragment,
+// and with dot segments and repeated slashes removed, so "repos/o/a/../../b/pulls" is read as "repos/b/pulls".
+// ok is false when a clustered or unknown flag could take the next word as its value, or the endpoint cannot be
+// unescaped: then the guard cannot tell which endpoint gh calls, or whether it writes.
+func apiEndpoint(args []string) (string, bool) {
+	endpoint := ""
 	for i := 0; i < len(args); i++ {
 		a := args[i]
-		if apiValueFlags[a] {
-			i++
-			continue
+		name, _, attached := strings.Cut(a, "=")
+		switch {
+		case !strings.HasPrefix(a, "-"):
+			if endpoint != "" {
+				return "", false
+			}
+			p, _, _ := strings.Cut(a, "?")
+			p, _, _ = strings.Cut(p, "#")
+			p, err := url.PathUnescape(p)
+			if err != nil {
+				return "", false
+			}
+			endpoint = strings.TrimPrefix(urlpath.Clean("/"+p), "/")
+		case strings.HasPrefix(a, "--") && knownAPIFlags[name]:
+			if apiValueFlags[name] && !attached {
+				i++
+			}
+		case len(a) == len("-X") && knownAPIFlags[a]:
+			if apiValueFlags[a] {
+				i++
+			}
+		case len(a) > len("-X") && a[1] != '-' && apiValueFlags[a[:2]]:
+			// A short value flag with its value attached, such as -XPOST or -fbody=x.
+		default:
+			return "", false
 		}
-		if strings.HasPrefix(a, "-") {
-			continue
-		}
-		a = strings.TrimPrefix(a, "/")
-		return strings.HasPrefix(a, "repos/{owner}/{repo}/")
 	}
-	return false
+	return endpoint, endpoint != ""
 }
 
 // graphQLRead accepts `gh api graphql` whose only fields are a query and variables, with no mutation.
@@ -486,7 +519,7 @@ func readMethod(m string) bool {
 }
 
 // guardedTool spots guarded tools named anywhere in interpreter code, however the call is spelled.
-var guardedTool = regexp.MustCompile(`\b(gh|terraform|tofu|terragrunt|kubectl|codeforge)\b`)
+var guardedTool = regexp.MustCompile(`\b(gh|codeforge)\b`)
 
 // readOnlyCommands is an allowlist: in review mode anything not listed here is treated as able to change files.
 var readOnlyCommands = map[string]bool{
@@ -934,7 +967,7 @@ func scriptPath(w []string) (string, bool) {
 	return "", false
 }
 
-// knownBinary is a command the guard already classifies by name, wherever it is installed.
+// knownBinary is a command the guard knows by name, wherever it is installed, so it is never read as a script.
 func knownBinary(name string) bool {
 	switch name {
 	case "git", "gh", "terraform", "tofu", "terragrunt", "kubectl", "codeforge":
@@ -964,7 +997,7 @@ func scriptCallsGuarded(path, cwd string) (Finding, bool) {
 	}
 
 	if guardedTool.Match(data) {
-		return Finding{RuleScript, path + " runs git, gh, terraform, kubectl or codeforge, which the guard cannot check inside a script; run those commands directly"}, true
+		return Finding{RuleScript, path + " runs gh or codeforge, which the guard cannot check inside a script; run those commands directly"}, true
 	}
 	return Finding{}, false
 }

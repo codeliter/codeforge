@@ -57,8 +57,8 @@ func TestCheckTool(t *testing.T) {
 		require.Empty(t, rules(CheckTool(input(t, "Git", args), false)), "git actions are allowed")
 	}
 
-	got := CheckTool(input(t, "Bash", map[string]any{"command": "gh pr merge 3"}), false)
-	require.Equal(t, []string{RuleMerge}, rules(got))
+	got := CheckTool(input(t, "Bash", map[string]any{"command": "codeforge allow open-pr"}), false)
+	require.Equal(t, []string{RuleSelf}, rules(got))
 
 	got = CheckTool(input(t, "code_script", map[string]any{"code": `await api.run("git push --force")`}), false)
 	require.Empty(t, rules(got))
@@ -69,8 +69,8 @@ func TestCheckTool(t *testing.T) {
 	got = CheckTool(input(t, "code_script", map[string]any{"code": "const b='x'; await api.run(`gh pr merge ${b}`)"}), false)
 	require.Equal(t, []string{RuleOpaque}, rules(got), "template with substitution")
 
-	got = CheckTool(input(t, "code_script", map[string]any{"code": `await api.tool('shell', {command: "gh pr merge 1"})`}), false)
-	require.Equal(t, []string{RuleMerge}, rules(got))
+	got = CheckTool(input(t, "code_script", map[string]any{"code": `await api.tool('shell', {command: "codeforge allow open-pr"})`}), false)
+	require.Equal(t, []string{RuleSelf}, rules(got))
 
 	got = CheckTool(input(t, "code_script", map[string]any{"code": `const r = await api.run('go test ./...'); return r`}), false)
 	require.Empty(t, rules(got))
@@ -146,9 +146,9 @@ func TestCheckScript_Structural(t *testing.T) {
 		code  string
 		rules []string
 	}{
-		{`await api.run ("gh pr merge 1")`, []string{RuleMerge}},
-		{"await api . run(\n 'gh pr merge 1')", []string{RuleMerge}},
-		{`await api.run(/* c */ "gh pr merge 1")`, []string{RuleMerge}},
+		{`await api.run ("codeforge allow open-pr")`, []string{RuleSelf}},
+		{"await api . run(\n 'codeforge allow open-pr')", []string{RuleSelf}},
+		{`await api.run(/* c */ "codeforge allow open-pr")`, []string{RuleSelf}},
 		{`await api.run("git push --force")`, nil},
 		{`const { run } = api; await run("git push --force")`, []string{RuleOpaque}},
 		{`const r = api.run; await r("git push --force")`, []string{RuleOpaque}},
@@ -183,20 +183,16 @@ return api.read("a.go")`, nil},
 }
 
 func TestCheck_GHAttachedRepoFlag(t *testing.T) {
-	require.Equal(t, []string{RulePushScope}, rules(Check("gh -Rowner/repo pr merge 1", false)))
-	require.Equal(t, []string{RulePushScope}, rules(Check("gh pr merge https://github.com/o/b/pull/1", false)))
-	for _, cmd := range []string{"gh pr merge 1 --repo owner/B", "gh pr comment 1 -R owner/B -b x", "gh pr review 1 --repo=owner/B", "gh pr close 1 -Rowner/B"} {
-		require.Equal(t, []string{RulePushScope}, rules(Check(cmd, false)), cmd)
-	}
-	require.Equal(t, []string{RulePushScope}, rules(Check("gh -Rowner/repo api repos/{owner}/{repo}/issues/1/comments -fbody=x", false)))
 	require.Equal(t, []string{RulePushScope}, rules(Check("gh -Rowner/repo pr create --fill", false)))
 	require.Equal(t, []string{RulePushScope}, rules(Check("gh pr create -Hother", false)))
+	require.Equal(t, []string{RulePushScope}, rules(Check("gh pr create --fill -Rowner/B", false)))
+	require.Equal(t, []string{RulePushScope}, rules(Check("gh -Rowner/repo api repos/{owner}/{repo}/pulls -fbody=x", false)))
 }
 
 func TestCheck_NestedResultsKeepDeferral(t *testing.T) {
-	require.True(t, checkScript(`await api.run('gh pr merge 1')`, false).Deferred[RuleMerge])
-	require.True(t, Check(`sh -c 'gh pr merge 1'`, false).Deferred[RuleMerge])
-	require.True(t, Check(`sh -c '/opt/homebrew/bin/gh pr merge 1'`, false).DirectGH)
+	require.True(t, checkScript(`await api.run('gh pr create --fill')`, false).Deferred[GateOpenPR])
+	require.True(t, Check(`sh -c 'gh pr create --fill'`, false).Deferred[GateOpenPR])
+	require.True(t, Check(`sh -c '/opt/homebrew/bin/gh pr create --fill'`, false).DirectGH)
 }
 
 func TestAPIWrites_ValuesAreNotFlags(t *testing.T) {
@@ -215,6 +211,6 @@ func TestGraphQLRead(t *testing.T) {
 	require.Equal(t, []string{RulePushScope}, rules(Check(`gh api graphql -f query='query{a} mutation{b}'`, false)))
 	require.Equal(t, []string{RulePushScope}, rules(Check(`gh api graphql -F 'query={owner}{addComment(input:{subjectId:"ID",body:"x"}){commentEdge{node{id}}}}'`, false)), "-F expands placeholders")
 	require.Equal(t, []string{RulePushScope}, rules(Check(`gh api graphql -Fquery=@q.graphql`, false)))
-	require.Equal(t, []string{RulePushScope}, rules(Check(`gh api -it graphql repos/{owner}/{repo}/issues/1/comments -f body=x -f 'query={viewer{login}}'`, false)), "clustered flags")
-	require.Equal(t, []string{RulePushScope}, rules(Check(`gh api --preview x graphql -f 'query={viewer{login}}'`, false)), "unknown flag")
+	require.Equal(t, []string{RuleOpaque}, rules(Check(`gh api -it graphql repos/{owner}/{repo}/issues/1/comments -f body=x -f 'query={viewer{login}}'`, false)), "clustered flags")
+	require.Equal(t, []string{RuleOpaque}, rules(Check(`gh api --preview x graphql -f 'query={viewer{login}}'`, false)), "unknown flag")
 }

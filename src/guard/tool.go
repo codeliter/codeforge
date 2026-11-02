@@ -38,7 +38,7 @@ func CheckTool(in Input, readOnly bool) Result {
 		return Result{}
 	}
 
-	if in.Tool == "settings" && strings.Contains(strings.ToLower(string(in.Args)), "hook") {
+	if changesHooks(in.Tool, args, in.Args) {
 		return Result{Blocked: []Finding{{RuleSelf, "changing Empryo's hook settings can switch the guard off"}}}
 	}
 
@@ -60,6 +60,20 @@ func CheckTool(in Input, readOnly bool) Result {
 	// Other tools (replies, steering answers, edits, searches, memory) carry text, not commands: a message
 	// that mentions `git push` must not be read as one. Real commands only run through the tools above.
 	return Result{}
+}
+
+// settingsReads only report values, so they may name hooks.
+var settingsReads = set("list", "get")
+
+// changesHooks reports a settings call, direct or through run_tool, that names hooks and is not a read.
+// A missing or unknown action counts as a write, so the check fails closed.
+func changesHooks(tool string, args map[string]any, raw json.RawMessage) bool {
+	mentions := strings.Contains(strings.ToLower(string(raw)), "hook")
+	if tool == "run_tool" && str(args["name"]) == "settings" {
+		nested, ok := args["args"].(map[string]any)
+		return mentions && (!ok || !settingsReads[str(nested["action"])])
+	}
+	return tool == "settings" && mentions && !settingsReads[str(args["action"])]
 }
 
 // gitCommand rebuilds a shell command from Empryo's structured git tool.
@@ -143,6 +157,10 @@ func checkScript(code string, readOnly bool) Result {
 
 	nocomments := stripComments(code)
 	for _, c := range calls {
+		if blocksHooks(nocomments, plain[c[2]:c[3]], c[1]) {
+			r.Blocked = append(r.Blocked, Finding{RuleSelf, "changing Empryo's hook settings can switch the guard off"})
+			continue
+		}
 		cmd, ok := scriptCommand(nocomments, plain[c[2]:c[3]], c[1])
 		if !ok {
 			r.Blocked = append(r.Blocked, Finding{RuleOpaque, opaqueScript})
@@ -155,6 +173,16 @@ func checkScript(code string, readOnly bool) Result {
 		r.merge(Check(cmd, readOnly), "")
 	}
 	return r
+}
+
+// blocksHooks refuses api.tool calls to settings, direct or through run_tool, in a script that names hooks.
+// A script's arguments are source, not JSON, so reads are not told apart: the check fails closed.
+func blocksHooks(code, kind string, args int) bool {
+	if kind != "tool" {
+		return false
+	}
+	name, ok := literalArg(code[args:])
+	return ok && (name == "settings" || name == "run_tool") && strings.Contains(strings.ToLower(code), "hook")
 }
 
 // scriptCommand returns the shell command a call runs, "" for a tool that runs none, or false when unreadable.
