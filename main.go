@@ -21,6 +21,8 @@ func main() {
 			code = src.PrePush(ctx)
 		case "gh-shim":
 			code = src.GHShim(ctx, os.Args[2:])
+		case "session-end":
+			code = src.SessionEnd()
 		default:
 			code = -1
 		}

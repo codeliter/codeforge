@@ -26,9 +26,9 @@ Setup:
                                      See, apply or set the models for each role
   trust                              Approve this repository's persona
 
-Review and approvals:
-  gate                               Review your branch with the jury; a pass unlocks opening a PR
-  allow RULE                         Skip the review gate for one PR, for 10 minutes (you, not the agent)
+Review:
+  gate                               Review your branch: one reviewer for simple changes, the jury for
+                                     complicated or high-risk ones. Voluntary; nothing waits for it
 
 Learning (evidence only; nothing is applied to prompts, personas or guards):
   learn correct [--session ID] TEXT  Record a correction you typed into this CLI
@@ -43,14 +43,13 @@ Resume:
   --resume ID, --session ID, -s ID    Restore the original mode without new-task preparation
   review --resume ID                Explicit mode required once for historical sessions
                                      Missing or wrong-workspace sessions fail; review stays read-only
-  Storage: ~/.codeforge/sessions/sessions.db (private SQLite WAL; separate from approvals)
+  Storage: ~/.codeforge/sessions/sessions.db (private SQLite WAL)
 
 Help:
   help, -h, --help                   Show this help
   version                            Show the codeforge version
 
-Git is never blocked outside review mode, and merges, PR comments and infra changes need no approval.
-Rules for allow: open-pr (skips the review gate once)
+Git is never blocked outside review mode. Pushing, opening PRs, merges, PR comments and infra changes need no approval.
 
 Config: ~/.codeforge/config.json   Docs: https://github.com/codeliter/codeforge
 `

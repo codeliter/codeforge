@@ -170,7 +170,7 @@ func checkScript(code string, readOnly bool) Result {
 			continue
 		}
 
-		r.merge(Check(cmd, readOnly), "")
+		r.merge(Check(cmd, readOnly))
 	}
 	return r
 }

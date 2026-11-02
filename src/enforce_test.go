@@ -44,7 +44,7 @@ func TestHelp(t *testing.T) {
 		require.True(t, isHelp(a))
 	}
 	require.Contains(t, helpText, "gate ")
-	require.Contains(t, helpText, "allow RULE")
+	require.NotContains(t, helpText, "allow RULE")
 }
 
 func TestSandboxProfile(t *testing.T) {

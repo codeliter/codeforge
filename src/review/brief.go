@@ -75,6 +75,15 @@ type Brief struct {
 	HeadRef string
 }
 
+// Files lists the PR's changed paths for triage.
+func (b Brief) Files() []string {
+	out := make([]string, 0, len(b.PR.Files))
+	for _, f := range b.PR.Files {
+		out = append(out, f.Path)
+	}
+	return out
+}
+
 const maxDiffBytes = 400_000
 
 // Load collects everything a reviewer reads before the diff: intent, history, CI and prior reviews.

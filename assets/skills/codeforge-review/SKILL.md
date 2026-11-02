@@ -1,6 +1,6 @@
 ---
 name: codeforge-review
-description: Review a PR or local work like a senior colleague, to industry standards: Google's review criteria, Conventional Comments, OWASP/CWE for security, DORA-aware rollout checks, and an independent multi-model jury with grounded findings. Use for any review.
+description: Review a PR or local work like a senior colleague, to industry standards: Google's review criteria, Conventional Comments, OWASP/CWE for security, DORA-aware rollout checks, and an independent multi-model jury with grounded findings for complicated or high-risk changes. Use for any review.
 ---
 
 # Review a PR or local work
@@ -44,7 +44,7 @@ Each finding: `path:line`, a label, the reason with evidence (the caller, the in
 Keep at most eight findings; drop the weakest. Never invent a file or line: every `path:line` must exist, or the finding is discarded.
 
 ## 6. Jury
-Always get independent second opinions. The brief names the models; dispatch one read-only subagent per model, in parallel, with the same brief, and ask each for its top three risks with `path:line`. If none are named, use a model from a different family than yours. Re-check every finding they return against the code; keep what holds, drop what you can disprove, and say which model raised each kept finding.
+The brief states the triage tier. A simple change (`docs`, `small`; the brief says to skip the jury) is reviewed by you alone. A complicated or high-risk change (`standard`, `risky`) goes to the jury: dispatch one read-only subagent per named model, in parallel, with the same brief, and ask each for its top three risks with `path:line`. If a complicated or high-risk brief names no models, use one model from a different family than yours. Re-check every finding they return against the code; keep what holds, drop what you can disprove, and say which model raised each kept finding. Approve only when no kept jury finding is blocking.
 
 ## 7. Output
 1. **Verdict:** Approve, Comment or Request changes, with the main reason, in two or three sentences.

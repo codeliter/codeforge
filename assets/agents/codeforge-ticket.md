@@ -18,7 +18,7 @@ You work as the user, as described by `codeforge-persona`. Take the ticket and f
 2. Plan when the change touches 3+ files or crosses packages: steps, files, risks, how to verify. Then execute without asking.
 3. Make the smallest change that solves the ticket. Follow the patterns already in the package.
 4. Verify: build, lint, tests. Add or update tests for every behaviour change. Fix failures before reporting.
-5. Review gate: run `codeforge gate` in the shell. It reviews your branch and uncommitted work with a jury of models that did not write the code. Fix every Blocking finding, then run it again until it passes. Never report the work as done while the gate fails.
+5. Review gate: run `codeforge gate` in the shell. It reviews your branch and uncommitted work with models that did not write the code: one reviewer for simple changes, a jury for complicated or high-risk ones. Fix every Blocking finding, then run it again until it passes. Never report the work as done while the gate fails. This is your quality bar, not a lock: pushing and opening a PR never wait for it.
 6. Draft the PR text with `codeforge-voice`, show it, and stop.
 
 ## Effort
@@ -31,9 +31,9 @@ codeforge picks the starting effort from a rubric (ambiguity, blast radius, risk
 - Never widen the scope. Note follow-ups in one line instead of doing them.
 
 ## Hard stops
-Git is yours to use freely: commit, push and manage branches as the work needs. codeforge enforces only this, with a hook: opening a PR needs a passing `codeforge gate` on the exact current changes.
+Git is yours to use freely: commit, push and manage branches as the work needs. codeforge enforces only this, with a hook: only the user changes codeforge's own settings.
 
-Merges, PR comments and reviews, and terraform/kubectl changes need no approval. Do them when the user asks, and confirm destructive ones first.
+Pushing, opening PRs, merges, PR comments and reviews, and terraform/kubectl changes need no approval or gate. Do them when the user asks, and confirm destructive ones first.
 
 ## Writing
 Follow `codeforge-persona` first; where it is silent, use the generic skills.

@@ -57,7 +57,7 @@ func TestCheckTool(t *testing.T) {
 		require.Empty(t, rules(CheckTool(input(t, "Git", args), false)), "git actions are allowed")
 	}
 
-	got := CheckTool(input(t, "Bash", map[string]any{"command": "codeforge allow open-pr"}), false)
+	got := CheckTool(input(t, "Bash", map[string]any{"command": "codeforge trust"}), false)
 	require.Equal(t, []string{RuleSelf}, rules(got))
 
 	got = CheckTool(input(t, "code_script", map[string]any{"code": `await api.run("git push --force")`}), false)
@@ -69,7 +69,7 @@ func TestCheckTool(t *testing.T) {
 	got = CheckTool(input(t, "code_script", map[string]any{"code": "const b='x'; await api.run(`gh pr merge ${b}`)"}), false)
 	require.Equal(t, []string{RuleOpaque}, rules(got), "template with substitution")
 
-	got = CheckTool(input(t, "code_script", map[string]any{"code": `await api.tool('shell', {command: "codeforge allow open-pr"})`}), false)
+	got = CheckTool(input(t, "code_script", map[string]any{"code": `await api.tool('shell', {command: "codeforge trust"})`}), false)
 	require.Equal(t, []string{RuleSelf}, rules(got))
 
 	got = CheckTool(input(t, "code_script", map[string]any{"code": `const r = await api.run('go test ./...'); return r`}), false)
@@ -119,8 +119,8 @@ func TestCheckTool_FileContentIsNotACommand(t *testing.T) {
 }
 
 func TestCheck_PRTarget(t *testing.T) {
-	require.Equal(t, []string{RulePushScope}, rules(Check("gh pr create --head other --repo owner/x", false)))
-	require.Equal(t, []string{RulePushScope}, rules(Check("gh -R owner/x pr create --fill", false)))
+	require.Empty(t, rules(Check("gh pr create --head other --repo owner/x", false)))
+	require.Empty(t, rules(Check("gh -R owner/x pr create --fill", false)))
 	require.Empty(t, rules(Check("gh pr create --fill --base main", false)))
 }
 
@@ -130,7 +130,7 @@ func TestCheck_ScriptsAreInspected(t *testing.T) {
 		require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte(body), 0o700))
 	}
 	write("publish.sh", "#!/bin/sh\ngh pr merge 1\n")
-	write("allow.sh", "codeforge allow merge\n")
+	write("allow.sh", "codeforge trust\n")
 	write("build.sh", "#!/bin/sh\ngo build ./...\ngit push\n")
 	write("bin", "\x00\x01binary")
 
@@ -146,9 +146,9 @@ func TestCheckScript_Structural(t *testing.T) {
 		code  string
 		rules []string
 	}{
-		{`await api.run ("codeforge allow open-pr")`, []string{RuleSelf}},
-		{"await api . run(\n 'codeforge allow open-pr')", []string{RuleSelf}},
-		{`await api.run(/* c */ "codeforge allow open-pr")`, []string{RuleSelf}},
+		{`await api.run ("codeforge trust")`, []string{RuleSelf}},
+		{"await api . run(\n 'codeforge trust')", []string{RuleSelf}},
+		{`await api.run(/* c */ "codeforge trust")`, []string{RuleSelf}},
 		{`await api.run("git push --force")`, nil},
 		{`const { run } = api; await run("git push --force")`, []string{RuleOpaque}},
 		{`const r = api.run; await r("git push --force")`, []string{RuleOpaque}},
@@ -183,16 +183,8 @@ return api.read("a.go")`, nil},
 }
 
 func TestCheck_GHAttachedRepoFlag(t *testing.T) {
-	require.Equal(t, []string{RulePushScope}, rules(Check("gh -Rowner/repo pr create --fill", false)))
-	require.Equal(t, []string{RulePushScope}, rules(Check("gh pr create -Hother", false)))
-	require.Equal(t, []string{RulePushScope}, rules(Check("gh pr create --fill -Rowner/B", false)))
-	require.Equal(t, []string{RulePushScope}, rules(Check("gh -Rowner/repo api repos/{owner}/{repo}/pulls -fbody=x", false)))
-}
-
-func TestCheck_NestedResultsKeepDeferral(t *testing.T) {
-	require.True(t, checkScript(`await api.run('gh pr create --fill')`, false).Deferred[GateOpenPR])
-	require.True(t, Check(`sh -c 'gh pr create --fill'`, false).Deferred[GateOpenPR])
-	require.True(t, Check(`sh -c '/opt/homebrew/bin/gh pr create --fill'`, false).DirectGH)
+	require.Empty(t, rules(Check("gh -Rowner/repo pr create --fill", false)))
+	require.Equal(t, []string{RuleOpaque}, rules(Check("gh -Rowner/repo land 1", false)), "aliases stay opaque after -R")
 }
 
 func TestAPIWrites_ValuesAreNotFlags(t *testing.T) {
@@ -202,15 +194,4 @@ func TestAPIWrites_ValuesAreNotFlags(t *testing.T) {
 	require.False(t, apiWrites([]string{"-X", "GET", "search/issues", "-f", "q=x"}))
 	require.False(t, apiWrites([]string{"repos/{owner}/{repo}/pulls", "-H", "Accept: x"}))
 	require.Equal(t, []string{RuleReadOnly}, rules(Check(`gh api -X POST repos/{owner}/{repo}/issues/1/comments -f body=x -f '--method=GET'`, true)))
-}
-
-func TestGraphQLRead(t *testing.T) {
-	require.Empty(t, rules(Check(`gh api graphql -f query='query{viewer{login}}'`, false)))
-	require.Empty(t, rules(Check(`gh api graphql -f query='{ viewer { login } }' -F n=3`, false)))
-	require.Equal(t, []string{RulePushScope}, rules(Check(`gh api graphql -f query='mutation{addComment(input:{}){clientMutationId}}'`, false)))
-	require.Equal(t, []string{RulePushScope}, rules(Check(`gh api graphql -f query='query{a} mutation{b}'`, false)))
-	require.Equal(t, []string{RulePushScope}, rules(Check(`gh api graphql -F 'query={owner}{addComment(input:{subjectId:"ID",body:"x"}){commentEdge{node{id}}}}'`, false)), "-F expands placeholders")
-	require.Equal(t, []string{RulePushScope}, rules(Check(`gh api graphql -Fquery=@q.graphql`, false)))
-	require.Equal(t, []string{RuleOpaque}, rules(Check(`gh api -it graphql repos/{owner}/{repo}/issues/1/comments -f body=x -f 'query={viewer{login}}'`, false)), "clustered flags")
-	require.Equal(t, []string{RuleOpaque}, rules(Check(`gh api --preview x graphql -f 'query={viewer{login}}'`, false)), "unknown flag")
 }

@@ -73,7 +73,7 @@ func checkProtected(in Input) []Finding {
 
 	for _, p := range in.Paths {
 		if protectedPath(p, in.Cwd, home) || protectedAncestor(p, in.Cwd, home) {
-			return []Finding{{RuleSelf, "touches " + p + ", which controls codeforge's approvals or the guard itself"}}
+			return []Finding{{RuleSelf, "touches " + p + ", which controls codeforge's settings or the guard itself"}}
 		}
 		// Moving .git away would leave its config and hooks unprotected, so file-level commands may not move,
 		// copy over or remove it. Git commands themselves are unaffected.

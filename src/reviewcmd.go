@@ -44,7 +44,8 @@ func reviewArgs(ctx context.Context, rc ReviewConfig, args []string) ([]string, 
 		if err != nil {
 			return nil, fmt.Errorf("loading local work: %w", err)
 		}
-		return append(rest, review.PromptLocal(l, rc.SecondOpinion)), nil
+		tier := review.Triage(l.Diff, l.Files)
+		return append(rest, review.PromptLocal(l, tier, review.JuryFor(tier, rc.SecondOpinion))), nil
 	}
 
 	number, err := review.ParseRef(ref)
@@ -59,7 +60,8 @@ func reviewArgs(ctx context.Context, rc ReviewConfig, args []string) ([]string, 
 	if err != nil {
 		return nil, fmt.Errorf("loading PR %s: %w", number, err)
 	}
-	return append(rest, review.Prompt(b, rc.SecondOpinion)), nil
+	tier := review.Triage(b.Diff, b.Files())
+	return append(rest, review.Prompt(b, tier, review.JuryFor(tier, rc.SecondOpinion))), nil
 }
 
 func repoFromURL(ref string) string {

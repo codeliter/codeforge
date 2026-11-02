@@ -1,7 +1,6 @@
 package src
 
 import (
-	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -11,20 +10,10 @@ func TestHelpListsRespond(t *testing.T) {
 	require.Contains(t, helpText, "respond [PR] [--watch]")
 }
 
-func TestRunAllow_NeedsATerminal(t *testing.T) {
-	err := runAllow(t.Context(), t.TempDir(), []string{"open-pr"})
-	require.True(t, errors.Is(err, errAllowNeedsTerminal) || errors.Is(err, errAllowNotConfirmed),
-		"without a person typing the code, nothing is approved: %v", err)
-}
-
-func TestRunAllow_RetiredRulesAreUnknown(t *testing.T) {
-	for _, rule := range []string{"merge", "pr-comment", "infra"} {
-		require.ErrorIs(t, runAllow(t.Context(), t.TempDir(), []string{rule}), errAllowUsage, rule)
+func TestAllow_IsRemoved(t *testing.T) {
+	for _, rule := range []string{"open-pr", "merge"} {
+		require.ErrorIs(t, Run(t.Context(), []string{"allow", rule}), errAllowRemoved, rule)
 	}
-}
-
-func TestOneTimeCode(t *testing.T) {
-	a, err := oneTimeCode()
-	require.NoError(t, err)
-	require.Len(t, a, codeDigits)
+	require.NotContains(t, helpText, "allow RULE")
+	require.Contains(t, helpText, "Pushing, opening PRs")
 }

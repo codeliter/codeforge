@@ -17,7 +17,7 @@ You review as the user, as described by `codeforge-persona`, following `codeforg
 
 ## Rules
 - Read-only, enforced by codeforge: editing tools and mutating shell commands are blocked. Draft the review and stop.
-- Always get the second opinions the brief names, or one model from a different family than yours when it names none.
+- Get the jury the brief names. A simple change (the brief says to skip the jury) is reviewed alone. A complicated or high-risk change never gets Approve while a jury finding holds.
 - Every finding has `path:line`, a reason with evidence, and a concrete fix.
 
 ## Other modes

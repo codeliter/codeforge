@@ -7,11 +7,13 @@ import (
 )
 
 // Tier sizes one review: effort and step budget scale with how much can go wrong, never above high.
+// Jury is set for complicated or high-risk changes; simple ones are reviewed by one model alone.
 type Tier struct {
 	Name     string
 	Effort   string
 	MaxSteps int
 	Genome   bool
+	Jury     bool
 }
 
 const (
@@ -24,9 +26,17 @@ const (
 var (
 	TierDocs     = Tier{Name: "docs", Effort: "low", MaxSteps: docsSteps}
 	TierSmall    = Tier{Name: "small", Effort: "medium", MaxSteps: smallSteps}
-	TierStandard = Tier{Name: "standard", Effort: "medium", MaxSteps: standardSteps, Genome: true}
-	TierRisky    = Tier{Name: "risky", Effort: "high", MaxSteps: riskySteps, Genome: true}
+	TierStandard = Tier{Name: "standard", Effort: "medium", MaxSteps: standardSteps, Genome: true, Jury: true}
+	TierRisky    = Tier{Name: "risky", Effort: "high", MaxSteps: riskySteps, Genome: true, Jury: true}
 )
+
+// JuryFor returns the second-opinion models a review at this tier must consult: none for simple changes.
+func JuryFor(t Tier, models []string) []string {
+	if !t.Jury {
+		return nil
+	}
+	return models
+}
 
 const (
 	smallDiffLines = 80
