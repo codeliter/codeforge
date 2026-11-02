@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -9,6 +10,14 @@ import (
 
 	"github.com/codeliter/codeforge/src"
 )
+
+func engineExitCode(err error) (int, bool) {
+	var exit *src.EngineExitError
+	if errors.As(err, &exit) {
+		return exit.Code, true
+	}
+	return 0, false
+}
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -36,6 +45,9 @@ func main() {
 	stop()
 
 	if err != nil {
+		if code, ok := engineExitCode(err); ok {
+			os.Exit(code)
+		}
 		fmt.Fprintln(os.Stderr, "codeforge:", err)
 		os.Exit(1)
 	}

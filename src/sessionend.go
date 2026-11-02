@@ -21,6 +21,9 @@ const (
 
 // SessionEnd prints how to resume the session that just ended. It always exits 0, so a shutdown never waits on it.
 func SessionEnd() int {
+	if os.Getenv("CODEFORGE_RESUME_HINT") == "launcher" {
+		return 0
+	}
 	runSessionEnd(os.Stdin, os.Stderr, os.Getenv(launchMarker) == "1")
 	return 0
 }
