@@ -28,6 +28,7 @@ func TestRunSessionEnd(t *testing.T) {
 	require.Contains(t, out.String(), "codeforge --resume 1f15c107\n")
 	require.Contains(t, out.String(), "codeforge --cwd '"+cwd+"' --resume '"+id+"'\n")
 	require.NotContains(t, out.String(), "secret-transcript", "the transcript path is never printed")
+	require.NotContains(t, out.String(), "\x1b", "redirected hook output stays plain")
 }
 
 func TestRunSessionEnd_SkipsWithoutHint(t *testing.T) {
@@ -56,8 +57,31 @@ func TestRunSessionEnd_SkipsWithoutHint(t *testing.T) {
 }
 
 func TestResumeHint_QuotesCwd(t *testing.T) {
-	hint := resumeHint("/tmp/it's here", "abcdef1234")
+	hint := resumeHint("/tmp/it's here", "abcdef1234", false)
 	require.Contains(t, hint, `codeforge --cwd '/tmp/it'\''s here' --resume 'abcdef1234'`)
+}
+
+func TestResumeHint_Layout(t *testing.T) {
+	const id = "1f15c107-959c-44ea-b03b-b27add189453"
+	cwd := sessionDirs(t, id)
+	want := "\n  Resume this session\n    codeforge --resume 1f15c107\n\n  From another directory\n    codeforge --cwd " + shellQuote(cwd) + " --resume " + shellQuote(id) + "\n\n"
+	require.Equal(t, want, resumeHint(cwd, id, false))
+}
+
+func TestResumeHint_Colors(t *testing.T) {
+	const cwd = "/tmp/it's here"
+	const id = "abcdef1234"
+	plain := resumeHint(cwd, id, false)
+	colored := resumeHint(cwd, id, true)
+	require.NotContains(t, plain, "\x1b")
+	require.Contains(t, colored, "\x1b[2mResume this session\x1b[0m")
+	require.Contains(t, colored, "\x1b[2mFrom another directory\x1b[0m")
+	require.Contains(t, colored, "\x1b[1;38;2;203;166;247mcodeforge --resume "+id+"\x1b[0m")
+	require.Contains(t, colored, "\x1b[1;38;2;203;166;247mcodeforge --cwd '/tmp/it'\\''s here' --resume 'abcdef1234'\x1b[0m")
+	stripped := strings.NewReplacer("\x1b[2m", "", "\x1b[1;38;2;203;166;247m", "", "\x1b[0m", "").Replace(colored)
+	require.Equal(t, plain, stripped, "color must not alter either copyable command")
+	var out strings.Builder
+	require.False(t, resumeHintColors(&out), "non-terminal writers must stay plain")
 }
 
 func TestShortestPrefix(t *testing.T) {

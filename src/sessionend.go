@@ -9,6 +9,8 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"golang.org/x/term"
 )
 
 const (
@@ -44,12 +46,27 @@ func runSessionEnd(stdin io.Reader, w io.Writer, launched bool) {
 	if !safeSessionID(in.SessionID) || !printablePath(in.Cwd) || !filepath.IsAbs(in.Cwd) {
 		return
 	}
-	fmt.Fprint(w, resumeHint(in.Cwd, in.SessionID))
+	fmt.Fprint(w, resumeHint(in.Cwd, in.SessionID, resumeHintColors(w)))
 }
 
-func resumeHint(cwd, id string) string {
-	return fmt.Sprintf("codeforge: resume this session from %s with:\n  codeforge --resume %s\nor from anywhere with:\n  codeforge --cwd %s --resume %s\n",
-		cwd, shortestPrefix(cwd, id), shellQuote(cwd), shellQuote(id))
+func resumeHint(cwd, id string, color bool) string {
+	title := "Resume this session"
+	other := "From another directory"
+	command := "codeforge --resume " + shortestPrefix(cwd, id)
+	anywhere := fmt.Sprintf("codeforge --cwd %s --resume %s", shellQuote(cwd), shellQuote(id))
+	if color {
+		title = "\x1b[2m" + title + "\x1b[0m"
+		other = "\x1b[2m" + other + "\x1b[0m"
+		// Match the mauve accent of Empryo's default Catppuccin terminal theme.
+		command = "\x1b[1;38;2;203;166;247m" + command + "\x1b[0m"
+		anywhere = "\x1b[1;38;2;203;166;247m" + anywhere + "\x1b[0m"
+	}
+	return fmt.Sprintf("\n  %s\n    %s\n\n  %s\n    %s\n\n", title, command, other, anywhere)
+}
+
+func resumeHintColors(w io.Writer) bool {
+	f, ok := w.(*os.File)
+	return ok && term.IsTerminal(int(f.Fd())) && os.Getenv("TERM") != "dumb" && os.Getenv("NO_COLOR") == ""
 }
 
 // shortestPrefix is the shortest prefix of id, at least minResumePrefix long, that no other session in the

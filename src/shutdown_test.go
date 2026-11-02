@@ -56,6 +56,57 @@ func TestLaunchExitHint(t *testing.T) {
 	}
 }
 
+func TestExitHintColors(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("uses macOS script argument syntax")
+	}
+	script, err := exec.LookPath("script")
+	require.NoError(t, err)
+	wd, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	t.Chdir(wd)
+	home := t.TempDir()
+	_, err = persistSession(t.Context(), home, modeChat, []string{"--session-id", "saved-session"})
+	require.NoError(t, err)
+	historicalSession(t, wd, "saved-session")
+	engine := filepath.Join(t.TempDir(), "engine")
+	require.NoError(t, os.WriteFile(engine, []byte("#!/bin/sh\necho engine-exited\n"), execPerm))
+	for _, tt := range []struct {
+		name    string
+		tty     bool
+		term    string
+		noColor string
+		colored bool
+	}{
+		{name: "terminal", tty: true, term: "xterm-256color", colored: true},
+		{name: "redirected", term: "xterm-256color"},
+		{name: "no color", tty: true, term: "xterm-256color", noColor: "1"},
+		{name: "dumb terminal", tty: true, term: "dumb"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+			defer cancel()
+			argv := []string{os.Args[0], "-test.run=^TestLaunchExitHint$"}
+			if tt.tty {
+				argv = append([]string{script, "-q", "/dev/null"}, argv...)
+			}
+			cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+			cmd.Env = append(os.Environ(), "HOME="+home, "CODEFORGE_SHUTDOWN_TEST=1", "CODEFORGE_TEST_ENGINE="+engine, "CODEFORGE_HEADLESS_TEST=0", "TERM="+tt.term, "NO_COLOR="+tt.noColor)
+			out, err := cmd.CombinedOutput()
+			require.NoError(t, err, string(out))
+			require.Contains(t, string(out), "engine-exited")
+			hint := string(out)[strings.Index(string(out), "engine-exited")+len("engine-exited"):]
+			require.Contains(t, hint, "codeforge --resume saved-se")
+			if tt.colored {
+				require.Contains(t, hint, "\x1b[1;38;2;203;166;247mcodeforge --resume saved-se\x1b[0m")
+				require.Contains(t, hint, "\x1b[1;38;2;203;166;247mcodeforge --cwd ")
+			} else {
+				require.NotContains(t, hint, "\x1b[")
+			}
+		})
+	}
+}
+
 //nolint:revive // Exit codes are observed by the parent test process.
 func TestInteractiveSignals(t *testing.T) {
 	if os.Getenv("CODEFORGE_SIGNAL_TEST") == "1" {
