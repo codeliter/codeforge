@@ -39,7 +39,9 @@ codeforge runs in one of four modes. Each is an Empryo profile, so `/profile cod
 
 Plain `codeforge` asks which mode you want. With a question on the command line (`codeforge "why is this slow"`) it goes to chat. Set `"default_mode": "work"` in `~/.codeforge/config.json`, or `CODEFORGE_MODE` for one run, to skip the question. `codeforge start` still works as another name for `ticket`.
 
-Review mode runs on a different model from the one that writes code, and its file-editing tools are switched off. The initial review runs immediately and streams its output in the terminal, then opens that saved conversation in the TUI for follow-up. This avoids Empryo 3.12.3-beta's TUI ignoring startup prompts. Both phases retain the review guard and read-only OS sandbox. A failed or interrupted initial review does not open an empty TUI. Add `--headless` to run only the review without opening the TUI; resuming an existing review goes straight to its TUI.
+With `codeforge <mode> <details>`, the initial task runs immediately and streams its output in the terminal, then opens that saved conversation in the TUI for follow-up. This applies to ticket, chat, work, review and respond (and the `start` alias), avoiding Empryo 3.12.3-beta's TUI ignoring startup prompts. A failed or interrupted initial task does not open an empty TUI. Add `--headless` to run only the task without opening the TUI; resuming an existing session goes straight to its TUI without resubmitting the task. Chat and work without details open an idle TUI for you to type into.
+
+Review mode runs on a different model from the one that writes code, and its file-editing tools are switched off. Both launch phases retain the review guard and read-only OS sandbox.
 
 ### Resume and session storage
 

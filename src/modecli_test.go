@@ -1,0 +1,146 @@
+package src
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"testing"
+
+	"github.com/stretchr/testify/require"
+)
+
+// The engine fixture models Empryo's contract: only headless runs submit a
+// positional prompt; the TUI must reopen the conversation saved by that run.
+const modeCLIEngine = `#!/bin/sh
+printf 'BEGIN\n' >> "$CODEFORGE_CLI_CAPTURE"
+printf '%s\n' "$@" >> "$CODEFORGE_CLI_CAPTURE"
+headless=0
+id=
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --headless) headless=1 ;;
+    --session-id) shift; id="$1" ;;
+  esac
+  shift
+done
+if [ "$headless" = 1 ]; then
+  if [ "$CODEFORGE_CLI_FAIL" != 0 ]; then exit "$CODEFORGE_CLI_FAIL"; fi
+  mkdir -p ".empryo/sessions/$id"
+  printf '{"id":"%s","cwd":"%s"}\n' "$id" "$PWD" > ".empryo/sessions/$id/meta.json"
+  printf 'submitted\n' > ".empryo/sessions/$id/session.jsonl"
+fi
+`
+
+const modeCLIGH = `#!/bin/sh
+case "$1 $2" in
+  'pr view') printf '%s\n' '{"number":42,"url":"https://github.com/o/r/pull/42","title":"CLI review fixture","headRefName":"main","state":"OPEN","files":[]}' ;;
+  'pr diff') printf 'diff --git a/example.go b/example.go\n' ;;
+  'api user') printf 'author\n' ;;
+  'api --paginate') printf '%s\n' '[[{"user":{"login":"reviewer"},"state":"CHANGES_REQUESTED","body":"CLI feedback fixture"}]]' ;;
+  'api graphql') printf '%s\n' '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[]}}}}}' ;;
+  *) printf 'unexpected gh call: %s\n' "$*" >&2; exit 99 ;;
+esac
+`
+
+//nolint:revive // Run may replace this subprocess with the headless engine.
+func TestModesCLI(t *testing.T) {
+	if raw := os.Getenv("CODEFORGE_CLI_ARGS"); raw != "" {
+		var args []string
+		if err := json.Unmarshal([]byte(raw), &args); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		err := Run(t.Context(), args)
+		var exit *EngineExitError
+		if errors.As(err, &exit) {
+			os.Exit(exit.Code)
+		}
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
+	for _, tc := range []struct {
+		name, mode, detail string
+		args               []string
+	}{
+		{"work", modeWork, "finish this change", []string{"work", "finish this change"}},
+		{"unquoted work", modeWork, "finish\nthis\nchange", []string{"work", "finish", "this", "change"}},
+		{"chat", modeChat, "explain this code", []string{"chat", "explain this code"}},
+		{"ticket", modeTicket, "fix this bug", []string{"ticket", "--ticket", "ABC-1", "fix this bug"}},
+		{"start", modeTicket, "fix this bug", []string{"start", "fix this bug"}},
+		{"implicit chat", modeChat, "explain this code", []string{"explain this code"}},
+		{"review", modeReview, "CLI review fixture", []string{"review", "42", "--repo", "o/r"}},
+		{"respond", modeTicket, "CLI feedback fixture", []string{"respond", "42"}},
+	} {
+		for _, variant := range []string{"tui", "headless", "failure"} {
+			t.Run(tc.name+"/"+variant, func(t *testing.T) {
+				if tc.mode == modeReview && runtime.GOOS != "darwin" {
+					t.Skip("review requires macOS sandbox-exec")
+				}
+				home, wd, bins := t.TempDir(), t.TempDir(), t.TempDir()
+				capture := filepath.Join(home, "launches")
+				require.NoError(t, os.WriteFile(filepath.Join(bins, "empryo"), []byte(modeCLIEngine), execPerm))
+				require.NoError(t, os.WriteFile(filepath.Join(bins, "gh"), []byte(modeCLIGH), execPerm))
+				git := exec.CommandContext(t.Context(), "git", "init", "-b", "main", wd)
+				out, err := git.CombinedOutput()
+				require.NoError(t, err, string(out))
+				args := append(append([]string(nil), tc.args...), "--effort", "low", "--model", "fixture/model", "--session-id", "cli-session")
+				code := "0"
+				switch variant {
+				case "headless":
+					args = append(args, "--headless")
+				case "failure":
+					code = "7"
+				}
+				raw, err := json.Marshal(args)
+				require.NoError(t, err)
+				cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestModesCLI$")
+				cmd.Dir = wd
+				cmd.Env = append(os.Environ(), "HOME="+home, "PATH="+bins+string(os.PathListSeparator)+os.Getenv("PATH"), "CODEFORGE_MODE=chat", "CODEFORGE_CLI_ARGS="+string(raw), "CODEFORGE_CLI_CAPTURE="+capture, "CODEFORGE_CLI_FAIL="+code)
+				out, err = cmd.CombinedOutput()
+				if variant == "failure" {
+					var exit *exec.ExitError
+					require.ErrorAs(t, err, &exit, string(out))
+					require.Equal(t, 7, exit.ExitCode(), string(out))
+				} else {
+					require.NoError(t, err, string(out))
+				}
+				data, err := os.ReadFile(capture)
+				require.NoError(t, err)
+				calls := strings.Split(string(data), "BEGIN\n")[1:]
+				wantCalls := 1
+				if variant == "tui" {
+					wantCalls = 2
+				}
+				require.Len(t, calls, wantCalls, "submit exactly once, then reopen only after success")
+				require.Contains(t, calls[0], "--headless\n")
+				require.Contains(t, calls[0], "--save-session\n")
+				require.Contains(t, calls[0], tc.detail)
+				require.Contains(t, calls[0], "--session-id\ncli-session\n")
+				require.Contains(t, calls[0], "--model\nfixture/model\n")
+				require.Contains(t, calls[0], "--effort\nlow\n")
+				for _, call := range calls {
+					require.Contains(t, call, "--profile\n"+profileFor(tc.mode)+"\n")
+					if tc.mode == modeReview {
+						require.Contains(t, call, "--mode\nplan\n")
+					}
+				}
+				if variant == "tui" {
+					require.Contains(t, calls[1], "--session\ncli-session")
+					require.NotContains(t, calls[1], "--headless")
+					require.NotContains(t, calls[1], tc.detail)
+					wd, err = filepath.EvalSymlinks(wd)
+					require.NoError(t, err)
+					require.NoError(t, verifyEmpryoSession(wd, "cli-session"))
+				}
+			})
+		}
+	}
+}
