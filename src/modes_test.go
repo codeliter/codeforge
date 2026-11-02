@@ -32,21 +32,10 @@ func TestPickMode(t *testing.T) {
 }
 
 func TestPickMode_ResumeSkipsInitialization(t *testing.T) {
-	for _, args := range [][]string{
-		{"--resume", "session-123"},
-		{"--resume=session-123"},
-		{"--session", "session-123"},
-		{"--session=session-123"},
-		{"-s", "session-123"},
-	} {
+	for _, args := range [][]string{{"--resume", "session-123"}, {"--resume=session-123"}, {"--session", "session-123"}, {"--session=session-123"}, {"-s", "session-123"}} {
 		for _, defaultMode := range []string{"", modeTicket, modeReview} {
-			mode, err := pickMode(Config{DefaultMode: defaultMode}, args)
-			require.NoError(t, err)
-			want := defaultMode
-			if want == "" {
-				want = modeChat
-			}
-			require.Equal(t, want, mode)
+			_, err := pickMode(Config{DefaultMode: defaultMode}, args)
+			require.ErrorIs(t, err, errSessionMode)
 		}
 	}
 }

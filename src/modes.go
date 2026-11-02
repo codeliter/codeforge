@@ -30,21 +30,19 @@ func validMode(mode string) error {
 	return fmt.Errorf("%w %q; use %v", errUnknownMode, mode, modes)
 }
 
-// pickMode asks only when there is no default and no task on the command line to infer from.
+// pickMode asks for new launches only; the resume check defends this invariant for other callers.
 func pickMode(cfg Config, args []string) (string, error) {
-	if cfg.DefaultMode != "" {
-		return cfg.DefaultMode, nil
-	}
-	// Empryo restores the session; do not interrupt it with the new-session picker.
 	for _, flag := range []string{"--resume", "--session", "-s"} {
 		if hasFlag(args, flag) {
-			return modeChat, nil
+			return "", errSessionMode
 		}
+	}
+	if cfg.DefaultMode != "" {
+		return cfg.DefaultMode, nil
 	}
 	if promptOf(args) != "" || !interactive() {
 		return modeChat, nil
 	}
-
 	mode := modeTicket
 	err := runForm("mode picker", huh.NewSelect[string]().
 		Title("What are we doing?").
@@ -52,7 +50,6 @@ func pickMode(cfg Config, args []string) (string, error) {
 			huh.NewOption("Ticket: take a task to a verified change and draft PR", modeTicket),
 			huh.NewOption("Chat: questions, explanations, small edits", modeChat),
 			huh.NewOption("Review: a PR or my local work", modeReview),
-		).
-		Value(&mode))
+		).Value(&mode))
 	return mode, err
 }

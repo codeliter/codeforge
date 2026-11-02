@@ -30,6 +30,12 @@ Review and approvals:
   gate                               Review your branch with the jury; a pass unlocks opening a PR
   allow RULE                         Approve one blocked action for 10 minutes (you, not the agent)
 
+Resume:
+  --resume ID, --session ID, -s ID    Restore the original mode without new-task preparation
+  review --resume ID                Explicit mode required once for historical sessions
+                                     Missing or wrong-workspace sessions fail; review stays read-only
+  Storage: ~/.codeforge/sessions/sessions.db (private SQLite WAL; separate from approvals)
+
 Help:
   help, -h, --help                   Show this help
   version                            Show the codeforge version

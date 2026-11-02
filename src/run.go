@@ -136,12 +136,18 @@ func Run(ctx context.Context, args []string) error {
 		return launch(ctx, home, bin, modeTicket, args)
 	case modeTicket, "start", modeChat, modeReview:
 	default:
-		if cmd, err = pickMode(cfg, args); err != nil {
-			return err
-		}
-		rest = args
+		cmd, rest = "", args
 	}
 
+	cmd, resumed, err := restoreMode(ctx, home, cmd, rest)
+	if err != nil {
+		return err
+	}
+	if !resumed && cmd == "" {
+		if cmd, err = pickMode(cfg, rest); err != nil {
+			return err
+		}
+	}
 	mode, args, err := modeArgs(ctx, bin, cfg, cmd, rest)
 	if err != nil {
 		return err
@@ -151,25 +157,52 @@ func Run(ctx context.Context, args []string) error {
 
 // launch adds the repository persona and replaces this process with Empryo in the given mode.
 func launch(ctx context.Context, home, bin, mode string, args []string) error {
-	var err error
-	if args, err = withRepoPersona(ctx, home, args); err != nil {
+	argv, env, err := launchCommand(ctx, home, bin, mode, args)
+	if err != nil {
 		return err
 	}
+	if err := syscall.Exec(argv[0], argv, env); err != nil {
+		return fmt.Errorf("starting empryo: %w", err)
+	}
+	return nil
+}
 
+func launchCommand(ctx context.Context, home, bin, mode string, args []string) (command []string, environment []string, result error) {
+	if mode == "" || validMode(mode) != nil {
+		return nil, nil, errUnknownMode
+	}
+	_, resume, err := sessionID(args)
+	if err != nil {
+		return nil, nil, err
+	}
+	forbidden := []string{"--profile", "--agent", "--no-profile"}
+	if resume || mode == modeReview {
+		forbidden = append(forbidden, "--mode", "--plan", "--auto", "--lite")
+	}
+	for _, flag := range forbidden {
+		if hasFlag(args, flag) {
+			return nil, nil, errSessionOverride
+		}
+	}
+	if args, err = withRepoPersona(ctx, home, args); err != nil {
+		return nil, nil, err
+	}
 	env := append(os.Environ(), "EMPRYO_HOOK_ENV=CODEFORGE_*")
 	argv := append([]string{bin, "--profile", profileFor(mode)}, args...)
 	if mode == modeReview {
 		env = append(env, "CODEFORGE_GUARD=review")
 		argv = append([]string{bin, "--profile", profileFor(mode), "--mode", "plan"}, args...)
 		if argv, err = readOnlyRepo(ctx, argv); err != nil {
-			return err
+			return nil, nil, err
 		}
 	}
-
-	if err := syscall.Exec(argv[0], argv, env); err != nil {
-		return fmt.Errorf("starting empryo: %w", err)
+	// Commit and close storage before exec, including before entering review's read-only sandbox.
+	savedArgs, err := persistSession(ctx, home, mode, args)
+	if err != nil {
+		return nil, nil, err
 	}
-	return nil
+	argv = append(argv[:len(argv)-len(args)], savedArgs...)
+	return argv, env, nil
 }
 
 func modeArgs(ctx context.Context, bin string, cfg Config, cmd string, args []string) (string, []string, error) {

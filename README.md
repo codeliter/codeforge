@@ -40,6 +40,18 @@ Plain `codeforge` asks which mode you want. With a question on the command line 
 
 Review mode runs on a different model from the one that writes code, and its file-editing tools are switched off.
 
+### Resume and session storage
+
+Resume with `codeforge --resume ID`, `--session ID` or `-s ID` (also `--flag=ID`). The saved original mode/profile wins over configured defaults: no mode picker, ticket form, effort classification or new review preparation. Review resumes retain plan mode, the review guard and read-only OS sandbox. An explicit conflicting mode or profile override is rejected.
+
+Historical Empryo sessions not recorded by Codeforge need an explicit mode once, for example `codeforge review --resume ID`. Codeforge verifies the workspace-local Empryo metadata and log before recording that identity. A missing, unreadable or wrong-workspace session fails; it never becomes a fresh chat. Resume from the original workspace, using `--cwd` when needed. IDs are required; these flags do not open a session picker.
+
+New launches receive an ID through Empryo's verified `--session-id` flag and record it before launch. Headless launches also save their Empryo session. Forking and profile overrides are rejected in this milestone; mode flags cannot weaken review or resumed launches. In-TUI profile changes do not change the original Codeforge mode or review protections.
+
+Identity lives in `~/.codeforge/sessions/sessions.db`, separate from approval state and jury cache. It stores only session ID, original mode/profile and canonical repository path (or workspace outside Git); conversation content stays in Empryo's workspace-local `.empryo/sessions/ID`. Embedded numbered migrations run transactionally; older binaries reject newer schemas. SQLite uses WAL, FULL synchronous durability, a 500 ms busy wait and a 2 second operation deadline, one connection per store, a private 0700 directory and 0600 database/sidecars. Interrupted transactions roll back. Session records never grant approvals or unlock the gate.
+
+The session-ID and missing-session behavior was probed against Empryo 3.12.3-beta in both TUI and headless launches; no session API is assumed.
+
 ### Persona
 `codeforge init` asks where to learn how you work:
 - **Your history:** reads your commits, diffs, PRs and review comments in one or more repositories. For a brand-new repo, point it at another repo you have worked in.
