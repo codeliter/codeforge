@@ -391,18 +391,22 @@ func apiWriteFindings(endpoint string) []Finding {
 // ok is false when a clustered or unknown flag could take the next word as its value, or the endpoint cannot be
 // unescaped: then the guard cannot tell which endpoint gh calls, or whether it writes.
 func apiEndpoint(args []string) (string, bool) {
+	endpoint := ""
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		name, _, attached := strings.Cut(a, "=")
 		switch {
 		case !strings.HasPrefix(a, "-"):
+			if endpoint != "" {
+				return "", false
+			}
 			p, _, _ := strings.Cut(a, "?")
 			p, _, _ = strings.Cut(p, "#")
 			p, err := url.PathUnescape(p)
 			if err != nil {
 				return "", false
 			}
-			return strings.TrimPrefix(urlpath.Clean("/"+p), "/"), true
+			endpoint = strings.TrimPrefix(urlpath.Clean("/"+p), "/")
 		case strings.HasPrefix(a, "--") && knownAPIFlags[name]:
 			if apiValueFlags[name] && !attached {
 				i++
@@ -417,7 +421,7 @@ func apiEndpoint(args []string) (string, bool) {
 			return "", false
 		}
 	}
-	return "", false
+	return endpoint, endpoint != ""
 }
 
 // graphQLRead accepts `gh api graphql` whose only fields are a query and variables, with no mutation.
