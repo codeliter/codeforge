@@ -60,7 +60,7 @@ func runInteractive(ctx context.Context, argv, env []string) error {
 			return errors.Join(result, forwardErr, fmt.Errorf("restoring terminal: %w", err))
 		}
 	}
-	if showExitHint(result) {
+	if !hasFlag(argv, "--headless") && showExitHint(result) {
 		id, _, err := sessionID(argv)
 		cwd, cwdErr := os.Getwd()
 		if cwdErr == nil {

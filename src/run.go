@@ -176,6 +176,24 @@ func launch(ctx context.Context, home, bin, mode string, args []string) error {
 		return err
 	}
 	if !hasFlag(args, "--headless") {
+		_, resume, err := sessionID(args)
+		if err != nil {
+			return err
+		}
+		if mode == modeReview && !resume && promptOf(args) != "" {
+			// Empryo's TUI does not submit positional prompts. Run the initial
+			// review through its headless API, then reopen the saved conversation.
+			fmt.Fprintln(os.Stderr, "codeforge: running the review; opening its TUI when it finishes")
+			initial := append(append([]string(nil), argv...), "--headless", "--save-session")
+			if err := runInteractive(ctx, initial, env); err != nil {
+				return err
+			}
+			id := flagValue(argv, "--session-id")
+			argv, env, err = launchCommand(ctx, home, bin, mode, []string{"--session", id})
+			if err != nil {
+				return err
+			}
+		}
 		return runInteractive(ctx, argv, env)
 	}
 	if err := syscall.Exec(argv[0], argv, env); err != nil {
