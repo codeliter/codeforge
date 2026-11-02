@@ -68,12 +68,12 @@ func TestResumeCLI(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, s.Put(t.Context(), store.Session{ID: "review-saved", Mode: modeReview, Profile: profileFor(modeReview), Repository: wd}))
 	require.NoError(t, s.Close())
-	for _, args := range [][]string{{"--resume", "review-saved"}, {"--session=review-saved"}, {"-s", "review-saved"}, {"--resume", "unknown"}, {"chat", "--resume", "unknown"}, {"chat", "--resume", "review-saved"}} {
+	for _, args := range [][]string{{"--resume", "review-saved"}, {"--session=review-saved"}, {"-s", "review-saved"}, {"--resume", "unknown"}, {"chat", "--resume", "unknown"}, {"chat", "--resume", "review-saved"}, {"respond", "--resume", "review-saved"}, {"ticket", "--fork", "review-saved"}} {
 		cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestResumeCLI$")
 		cmd.Dir = wd
 		cmd.Env = append(os.Environ(), "HOME="+home, "PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"), "CODEFORGE_MODE=chat", "CODEFORGE_RESUME_TEST=1", "CODEFORGE_RESUME_ARGS="+strings.Join(args, "|"))
 		out, err := cmd.CombinedOutput()
-		if args[0] == "chat" || args[len(args)-1] == "unknown" {
+		if args[0] == "chat" || args[0] == "respond" || args[0] == "ticket" || args[len(args)-1] == "unknown" {
 			require.Error(t, err)
 			require.NotContains(t, string(out), "guard=")
 			continue

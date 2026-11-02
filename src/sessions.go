@@ -32,7 +32,9 @@ func sessionID(args []string) (string, bool, error) {
 		a := args[i]
 		name, value, equal := strings.Cut(a, "=")
 		switch name {
-		case "--resume", "--session", "-s", "--session-id", "--fork":
+		case "--fork":
+			return "", false, errSessionArgs
+		case "--resume", "--session", "-s", "--session-id":
 			count++
 			resume = name == "--resume" || name == "--session" || name == "-s"
 			if !equal {

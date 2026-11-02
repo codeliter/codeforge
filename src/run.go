@@ -126,6 +126,11 @@ func Run(ctx context.Context, args []string) error {
 	case "allow":
 		return runAllow(ctx, home, rest)
 	case "respond":
+		if _, resume, err := sessionID(rest); err != nil {
+			return err
+		} else if resume {
+			return errSessionArgs
+		}
 		var done bool
 		if args, done, err = respondArgs(ctx, rest); err != nil || done {
 			return err
