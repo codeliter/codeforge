@@ -31,6 +31,15 @@ func TestPickMode(t *testing.T) {
 	require.Equal(t, modeChat, got, "no terminal and no default falls back to chat")
 }
 
+func TestPickMode_ResumeSkipsInitialization(t *testing.T) {
+	for _, args := range [][]string{{"--resume", "session-123"}, {"--resume=session-123"}, {"--session", "session-123"}, {"--session=session-123"}, {"-s", "session-123"}} {
+		for _, defaultMode := range []string{"", modeTicket, modeReview} {
+			_, err := pickMode(Config{DefaultMode: defaultMode}, args)
+			require.ErrorIs(t, err, errSessionMode)
+		}
+	}
+}
+
 func TestLoadConfig_DefaultMode(t *testing.T) {
 	home := t.TempDir()
 	writeConfig(t, home, `{"default_mode":"ticket"}`)
