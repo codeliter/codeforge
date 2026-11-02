@@ -23,20 +23,21 @@ Releases are built by GoReleaser when a `v*` tag is pushed.
 ```
 cd your-repo
 codeforge init     # installs Empryo only if missing, signs in, checks git/gh, picks models, sets your persona
-codeforge          # pick a mode: ticket, chat or review
+codeforge          # pick a mode: ticket, chat, work or review
 ```
 
 ## Modes
-codeforge runs in one of three modes. Each is an Empryo profile, so `/profile codeforge-ticket` and `/profile codeforge-chat` switch between ticket and chat inside the TUI without losing the conversation. Review mode's read-only guard is set when the session starts, so start it with `codeforge review`; a review session stays read-only even if its profile is switched.
+codeforge runs in one of four modes. Each is an Empryo profile, so `/profile codeforge-ticket`, `/profile codeforge-chat` and `/profile codeforge-work` switch between ticket, chat and work inside the TUI without losing the conversation. Review mode's read-only guard is set when the session starts, so start it with `codeforge review`; a review session stays read-only even if its profile is switched.
 
 | Mode | Start it with | What it does | Model |
 |---|---|---|---|
 | Ticket | `codeforge ticket [--ticket ABC-12] ["summary"]` | Asks for the ticket, summary, details, done-when and out of scope, then takes it to a verified change and draft PR. Auto mode. | `model` |
-| Chat | `codeforge chat ["question"]` | Questions, explanations and small edits. No branches or PRs unless asked; suggests ticket mode for bigger work. Starts at low effort. | `model` |
+| Chat | `codeforge chat ["question"]` | Questions, explanations and small edits. No branches or PRs unless asked; suggests work mode for bigger implementation tasks. Starts at low effort. | `model` |
+| Work | `codeforge work ["task"]` | Conversational help that completes implementation across files and verifies it. Questions stay conversational; actionable requests run through to completion or a genuine blocker. No ticket form, mandatory review gate or Git/PR workflow; branches, commits, pushes and PRs only when asked. Auto mode; medium effort by default with no startup effort-judge calls. Batches lookups, uses scoped checks and avoids routine model panels. | `model` |
 | Respond | `codeforge respond [--watch]` | Picks up unresolved review comments on your PR, judges each on evidence (valid, partly, not valid, question, out of scope), fixes what holds, pushes back on what doesn't, and drafts replies in your review voice. `--watch` waits for new comments. In ticket mode, just say "check reviews". | `model` |
 | Review | `codeforge review [PR number or URL]` | Read-only review of a PR, or of your current branch and uncommitted work against its base when no PR is given. Drafts comments, posts nothing. | `review.model`, plus the `review.second_opinion` jury for complicated or high-risk changes |
 
-Plain `codeforge` asks which mode you want. With a question on the command line (`codeforge "why is this slow"`) it goes to chat. Set `"default_mode": "ticket"` in `~/.codeforge/config.json`, or `CODEFORGE_MODE` for one run, to skip the question. `codeforge start` still works as another name for `ticket`.
+Plain `codeforge` asks which mode you want. With a question on the command line (`codeforge "why is this slow"`) it goes to chat. Set `"default_mode": "work"` in `~/.codeforge/config.json`, or `CODEFORGE_MODE` for one run, to skip the question. `codeforge start` still works as another name for `ticket`.
 
 Review mode runs on a different model from the one that writes code, and its file-editing tools are switched off.
 
@@ -67,8 +68,8 @@ After the terminal UI exits, codeforge restores the terminal and prints how to r
 Limits:
 
 - `learn` works on the repository of the current directory. Run it there: it does not read `--cwd`, so a check's own `--cwd` argument passes through unchanged.
-- Learning adds schema version 2 to `sessions.db`. An older codeforge binary refuses that database on every launch; to go back, upgrade again or move `~/.codeforge/sessions/sessions.db` aside, which also drops saved session modes.
-- Capture is CLI-only. `origin=cli` means the text was typed into the codeforge CLI. It does not authenticate a person. The guard blocks the agent's tools from `learn correct`, `outcome` and `revert`, the same way it blocks `trust` and `init`; in ticket and chat mode `list` and `propose` stay open, and review mode's read-only guard blocks codeforge entirely. That is best effort, not identity.
+- Learning was introduced in schema version 2; work mode upgrades `sessions.db` to version 3 while preserving saved sessions and observations. Older codeforge binaries refuse the upgraded database. Before downgrading, back it up; moving it aside loses access to saved session modes and learning evidence.
+- Capture is CLI-only. `origin=cli` means the text was typed into the codeforge CLI. It does not authenticate a person. The guard blocks the agent's tools from `learn correct`, `outcome` and `revert`, the same way it blocks `trust` and `init`; in ticket, chat and work mode `list` and `propose` stay open, and review mode's read-only guard blocks codeforge entirely. That is best effort, not identity.
 - Credential-shaped text (token prefixes, private-key headers, `password=` and similar) is refused so it never reaches disk. This is hygiene, not a security boundary.
 - Promotion stays disabled until there is an agreed human confirmation flow. The candidate route is Empryo's `UserPromptSubmit` hook, which receives the prompt the user submitted. Before codeforge trusts it, it must be shown that cross-tab, steering and injected messages cannot fire it with text the user did not type.
 
@@ -240,7 +241,7 @@ flowchart TD
     J2 -. headless call .-> EMP
     DISTIL -. headless call .-> EMP
 
-    EMP[[Empryo TUI<br/>--profile codeforge-ticket / chat / review]] --> SK[Skills<br/>persona, voice, code,<br/>ticket-to-pr, review]
+    EMP[[Empryo TUI<br/>--profile codeforge-ticket / chat / work / review]] --> SK[Skills<br/>persona, voice, code,<br/>ticket-to-pr, review]
     EMP --> REPO[(Your repository)]
     EMP -->|every tool call| HOOK{{Empryo hook<br/>review read-only, settings}}
     EMP -->|gh| SHIM{{gh shim<br/>aliases, extensions}}
@@ -251,7 +252,7 @@ flowchart TD
 | Path | What it does |
 |---|---|
 | `main.go` | Entry point; calls `src.Run` |
-| `src/run.go` | Routes `init`, `models`, `trust` and the three modes; syncs assets; starts Empryo |
+| `src/run.go` | Routes `init`, `models`, `trust` and the four modes; syncs assets; starts Empryo |
 | `src/modes.go` | Mode names, profiles and the mode picker |
 | `src/guard/` | gh alias checks, gate state, tree fingerprint, review-mode and self-protection rules |
 | `src/enforce.go`, `src/sandbox.go` | Installs the gh shim; runs review mode and jurors in the OS sandbox |
@@ -269,7 +270,7 @@ flowchart TD
 | `src/launch.go`, `src/reviewcmd.go`, `src/assets.go` | Task and review launches, effort ceiling, asset sync |
 | `src/effort/` | Judge panel, merge and decision rule, evals |
 | `src/review/` | Review briefs, triage tiers, context pack, verdict cache, the jury and grounding |
-| `assets/agents/` | One Empryo profile per mode (`codeforge-ticket`, `codeforge-chat`, `codeforge-review`) and `codeforge-gate` for jurors |
+| `assets/agents/` | One Empryo profile per mode (`codeforge-ticket`, `codeforge-chat`, `codeforge-work`, `codeforge-review`) and `codeforge-gate` for jurors |
 | `assets/skills/` | Generic voice, code bar, ticket-to-PR and review playbooks; your persona overrides them |
 | `assets/personas/` | Starter personas for new repos or no history |
 | `assets/prompts/` | `init.md` (persona distiller), `rubric.md` (effort judges), `repo-persona.md` (repository template) |

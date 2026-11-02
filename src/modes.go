@@ -11,11 +11,12 @@ import (
 const (
 	modeTicket = "ticket"
 	modeChat   = "chat"
+	modeWork   = "work"
 	modeReview = "review"
 )
 
 var (
-	modes          = []string{modeTicket, modeChat, modeReview}
+	modes          = []string{modeTicket, modeChat, modeWork, modeReview}
 	errUnknownMode = errors.New("unknown mode")
 )
 
@@ -49,6 +50,7 @@ func pickMode(cfg Config, args []string) (string, error) {
 		Options(
 			huh.NewOption("Ticket: take a task to a verified change and draft PR", modeTicket),
 			huh.NewOption("Chat: questions, explanations, small edits", modeChat),
+			huh.NewOption("Work: conversational tasks through implementation and verification", modeWork),
 			huh.NewOption("Review: a PR or my local work", modeReview),
 		).Value(&mode))
 	return mode, err

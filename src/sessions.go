@@ -17,7 +17,7 @@ import (
 )
 
 var (
-	errSessionMode     = errors.New("unknown historical session: specify ticket, chat or review explicitly once")
+	errSessionMode     = errors.New("unknown historical session: specify ticket, chat, work or review explicitly once")
 	errSessionArgs     = errors.New("invalid session flags: supply one session ID and do not combine resume, session-id or fork")
 	errSessionRepo     = errors.New("session belongs to a different repository or workspace")
 	errSessionMissing  = errors.New("empryo session is missing or unreadable; refusing to start a fresh session")

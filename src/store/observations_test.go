@@ -87,7 +87,7 @@ func TestMigration_UpgradesSessionsDatabase(t *testing.T) {
 	require.Equal(t, "chat", got.Mode)
 	var version int
 	require.NoError(t, s.db.QueryRowContext(t.Context(), "PRAGMA user_version").Scan(&version))
-	require.Equal(t, 2, version)
+	require.Equal(t, 3, version)
 	_, err = s.Observations(t.Context(), "/repo", true)
 	require.NoError(t, err)
 }

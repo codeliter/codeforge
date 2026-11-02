@@ -37,5 +37,11 @@ Good: `// MULTI/EXEC so INCR never lands without its EXPIRE`
 - Decide fail-open vs fail-closed explicitly and state it in a one-line comment.
 - Bound everything: timeouts, retries with limits, sizes, label cardinality.
 
+## Efficient by default
+- Batch independent lookups, read only the relevant code, and reuse results instead of repeating searches or checks. Stop investigating when there is enough evidence to act.
+- Prefer direct tools and local checks over extra model calls. Delegate only when it saves meaningful time or context; use low effort for helper searches. No routine panels or speculative parallel agents unless the selected workflow requires them.
+- Run scoped verification first; broaden checks when the affected code or risk calls for it. Never skip necessary quality or security checks just to save tokens.
+- Keep plans and responses short. Complete the requested scope without speculative extras.
+
 ## Done means
 Build, lint and tests pass locally, and the diff contains only what the task needs.

@@ -148,7 +148,7 @@ func Run(ctx context.Context, args []string) error {
 			args = append([]string{"--model", cfg.Model}, args...)
 		}
 		return launch(ctx, home, bin, modeTicket, args)
-	case modeTicket, "start", modeChat, modeReview:
+	case modeTicket, "start", modeChat, modeWork, modeReview:
 	default:
 		cmd, rest = "", args
 	}
@@ -243,12 +243,19 @@ func modeArgs(ctx context.Context, bin string, cfg Config, cmd string, args []st
 	case modeReview:
 		args, err = reviewArgs(ctx, cfg.Review, args)
 		return modeReview, args, err
+	case modeWork:
+		// Skip effort judges for conversational work; explicit effort still wins.
+		if !hasEffort(args) {
+			args = append([]string{"--effort", "medium"}, args...)
+		}
+		args, err = taskArgs(ctx, bin, cfg, args)
+		return modeWork, args, err
 	case modeChat:
 		if promptOf(args) == "" && !hasEffort(args) {
 			args = append([]string{"--effort", "low"}, args...)
 		}
 		args, err = taskArgs(ctx, bin, cfg, args)
-		return modeChat, args, err
+		return cmd, args, err
 	}
 
 	if args, err = startArgs(args); err != nil {

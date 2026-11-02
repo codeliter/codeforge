@@ -13,6 +13,7 @@ Usage:
 Modes:
   ticket [--ticket ID] ["summary"]   Take a ticket to a verified change and draft PR
   chat ["question"]                  Questions, explanations and small edits
+  work ["task"]                      Conversational tasks through implementation and verification; no ticket or PR flow
   review [PR number or URL]          Read-only review of a PR, or of your branch when no PR is given
   respond [PR] [--watch]             Address new review comments on your PR: judge, fix, push back, draft replies
   (none)                             Ask which mode; a question on the command line goes to chat

@@ -11,7 +11,7 @@ import (
 )
 
 func TestValidMode(t *testing.T) {
-	for _, m := range []string{"", modeTicket, modeChat, modeReview} {
+	for _, m := range []string{"", modeTicket, modeChat, modeWork, modeReview} {
 		require.NoError(t, validMode(m), m)
 	}
 	require.ErrorIs(t, validMode("pair"), errUnknownMode)
@@ -33,7 +33,7 @@ func TestPickMode(t *testing.T) {
 
 func TestPickMode_ResumeSkipsInitialization(t *testing.T) {
 	for _, args := range [][]string{{"--resume", "session-123"}, {"--resume=session-123"}, {"--session", "session-123"}, {"--session=session-123"}, {"-s", "session-123"}} {
-		for _, defaultMode := range []string{"", modeTicket, modeReview} {
+		for _, defaultMode := range []string{"", modeTicket, modeWork, modeReview} {
 			_, err := pickMode(Config{DefaultMode: defaultMode}, args)
 			require.ErrorIs(t, err, errSessionMode)
 		}
@@ -91,7 +91,7 @@ func TestSyncAssets_FillsModels(t *testing.T) {
 	cfg := Config{Model: "a/coder", Review: ReviewConfig{Model: "b/reviewer"}}
 	require.NoError(t, syncAssets(dir, cfg))
 
-	for mode, want := range map[string]string{modeTicket: "a/coder", modeChat: "a/coder", modeReview: "b/reviewer"} {
+	for mode, want := range map[string]string{modeTicket: "a/coder", modeChat: "a/coder", modeWork: "a/coder", modeReview: "b/reviewer"} {
 		data, err := os.ReadFile(filepath.Join(dir, "agents", profileFor(mode)+".md"))
 		require.NoError(t, err, mode)
 		require.Contains(t, string(data), "\nmodel: "+want+"\n", mode)

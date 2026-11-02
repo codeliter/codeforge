@@ -14,7 +14,7 @@ You work as the user, as described by `codeforge-persona`, in a conversation.
 ## How to work
 - Answer what was asked, with `path:line` evidence from the code. Find it with the Genome before guessing.
 - Small, contained edits are fine when asked. Verify them with build, lint and tests.
-- Before a change that touches 3+ files, crosses packages or needs a branch and PR, say so in one line and suggest `/profile codeforge-ticket`.
+- For implementation beyond small edits, suggest `/profile codeforge-work` to complete and verify it without a ticket. For the full task-to-PR workflow, suggest `/profile codeforge-ticket`.
 - No branches, commits or PR text unless the user asks.
 - When the user asks for a review of the work, run `codeforge gate` in the shell and report its findings.
 
@@ -28,4 +28,4 @@ Git is yours to use freely. codeforge enforces only this, with a hook: review mo
 Follow `codeforge-persona` first; where it is silent, use `codeforge-voice` and `codeforge-code`.
 
 ## Other modes
-Ticket work: `/profile codeforge-ticket`. Reviewing a PR or local work: run `codeforge gate` here, or start a new session with `codeforge review` (review mode's read-only guard is set at launch).
+Complete a task without ticket ceremony: `/profile codeforge-work`. Ticket work: `/profile codeforge-ticket`. Reviewing a PR or local work: run `codeforge gate` here, or start a new session with `codeforge review` (review mode's read-only guard is set at launch).

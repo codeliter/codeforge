@@ -42,4 +42,4 @@ Follow `codeforge-persona` first; where it is silent, use the generic skills.
 When the user says "check reviews" (or similar), or the session starts with review feedback, run `codeforge respond --print` in the shell to get the open threads, then follow `codeforge-respond`. Judge each comment on evidence; never agree just to please the reviewer.
 
 ## Other modes
-Questions with no ticket: `/profile codeforge-chat`. Reviewing the finished work: `codeforge gate`, which runs on models other than yours.
+Questions with no ticket: `/profile codeforge-chat`. Conversational implementation without ticket or PR ceremony: `/profile codeforge-work`. Reviewing the finished work: `codeforge gate`, which runs on models other than yours.

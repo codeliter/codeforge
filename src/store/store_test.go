@@ -58,12 +58,13 @@ func TestMigration_RollbackAndNewerSchema(t *testing.T) {
 	scripts := fstest.MapFS{
 		"migrations/001_sessions.sql":     {Data: []byte("unused")},
 		"migrations/002_observations.sql": {Data: []byte("unused")},
-		"migrations/003_broken.sql":       {Data: []byte("CREATE TABLE partial (id TEXT); INSERT INTO absent VALUES (1);")},
+		"migrations/003_work_mode.sql":    {Data: []byte("unused")},
+		"migrations/004_broken.sql":       {Data: []byte("CREATE TABLE partial (id TEXT); INSERT INTO absent VALUES (1);")},
 	}
 	require.Error(t, s.initialize(t.Context(), scripts))
 	var version, tables int
 	require.NoError(t, s.db.QueryRowContext(t.Context(), "PRAGMA user_version").Scan(&version))
-	require.Equal(t, 2, version)
+	require.Equal(t, 3, version)
 	require.NoError(t, s.db.QueryRowContext(t.Context(), "SELECT count(*) FROM sqlite_master WHERE name='partial'").Scan(&tables))
 	require.Zero(t, tables)
 	_, err := s.db.ExecContext(t.Context(), "PRAGMA user_version = 99")
@@ -158,5 +159,5 @@ func TestMigration_InterruptedContext(t *testing.T) {
 	require.ErrorIs(t, s.initialize(ctx, migrations), context.Canceled)
 	var version int
 	require.NoError(t, s.db.QueryRowContext(t.Context(), "PRAGMA user_version").Scan(&version))
-	require.Equal(t, 2, version)
+	require.Equal(t, 3, version)
 }
