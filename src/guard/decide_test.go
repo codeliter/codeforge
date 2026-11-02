@@ -39,7 +39,7 @@ func TestState_PruneExpired(t *testing.T) {
 	require.NoError(t, err)
 	now := time.Now()
 
-	st.Allow("/r", RuleMerge, now)
+	st.Allow("/r", GateOpenPR, now)
 	require.False(t, st.PruneExpired(now))
 	require.True(t, st.PruneExpired(now.Add(ApprovalTTL+time.Second)))
 	require.Empty(t, st.Approvals)
@@ -51,14 +51,14 @@ func TestState_SaveLoad(t *testing.T) {
 	require.NoError(t, err)
 
 	now := time.Now()
-	st.Allow("/r", RuleMerge, now)
+	st.Allow("/r", GateOpenPR, now)
 	st.PassGate("/r", "abc", "", "ok", now)
 	require.NoError(t, st.Save(dir))
 
 	got, err := Load(dir)
 	require.NoError(t, err)
 	require.True(t, got.GatePassed("/r", "abc"))
-	require.True(t, got.Consume("/r", RuleMerge, now))
+	require.True(t, got.Consume("/r", GateOpenPR, now))
 }
 
 func TestDecide_ReadOnlyOffersNoAllow(t *testing.T) {
@@ -85,16 +85,22 @@ func TestState_ParallelSaves(t *testing.T) {
 	}
 }
 
-func TestDecide_OneApprovalCoversOneAction(t *testing.T) {
+func TestDecide_MergeCommentAndInfraNeedNoApproval(t *testing.T) {
 	repo := gitRepo(t)
 	st, err := Load(t.TempDir())
 	require.NoError(t, err)
 	now := time.Now()
 
-	st.Allow(repo, RuleMerge, now)
-	require.False(t, Decide(t.Context(), st, shell(t, repo, "gh pr merge 1 && gh pr merge 2"), false, now).Allow)
-	require.True(t, st.Approved(repo, RuleMerge, now), "the rejected batch spends nothing")
-	require.True(t, Decide(t.Context(), st, shell(t, repo, "gh pr merge 1"), false, now).Allow)
+	for _, cmd := range []string{"gh pr merge 1 && gh pr merge 2", "gh pr comment 1 -b x", "terraform apply", "kubectl delete pod x"} {
+		d := Decide(t.Context(), st, shell(t, repo, cmd), false, now)
+		require.True(t, d.Allow, cmd)
+		require.False(t, d.Consumed, cmd)
+	}
+	for _, cmd := range []string{"gh pr merge 1", "terraform apply"} {
+		d := Decide(t.Context(), st, shell(t, repo, cmd), true, now)
+		require.False(t, d.Allow, cmd)
+		require.NotContains(t, d.Reason, "codeforge allow", cmd)
+	}
 }
 
 func TestTreeID_RedistributedBytesChangeFingerprint(t *testing.T) {
@@ -155,10 +161,10 @@ func TestDecide_DirectGHPathIsRefused(t *testing.T) {
 	require.NoError(t, err)
 	now := time.Now()
 
-	st.Allow(repo, RuleMerge, now)
-	require.False(t, Decide(t.Context(), st, shell(t, repo, "/opt/homebrew/bin/gh pr merge 1"), false, now).Allow)
+	st.Allow(repo, GateOpenPR, now)
+	require.False(t, Decide(t.Context(), st, shell(t, repo, "/opt/homebrew/bin/gh pr create --fill"), false, now).Allow)
 	require.True(t, Decide(t.Context(), st, shell(t, repo, "/opt/homebrew/bin/gh pr view 1"), false, now).Allow, "reads are fine")
-	require.True(t, Decide(t.Context(), st, shell(t, repo, "gh pr merge 1"), false, now).Allow)
+	require.True(t, Decide(t.Context(), st, shell(t, repo, "gh pr create --fill"), false, now).Allow)
 }
 
 func TestDecide_ScriptGHApprovalSurvivesForShim(t *testing.T) {
@@ -166,13 +172,13 @@ func TestDecide_ScriptGHApprovalSurvivesForShim(t *testing.T) {
 	st, err := Load(t.TempDir())
 	require.NoError(t, err)
 	now := time.Now()
-	st.Allow(repo, RuleMerge, now)
+	st.Allow(repo, GateOpenPR, now)
 
-	in := input(t, "code_script", map[string]any{"code": `await api.run('gh pr merge 1')`})
+	in := input(t, "code_script", map[string]any{"code": `await api.run('gh pr create --fill')`})
 	in.Cwd = repo
 	require.True(t, Decide(t.Context(), st, in, false, now).Allow)
-	require.True(t, st.Approved(repo, RuleMerge, now))
+	require.True(t, st.Approved(repo, GateOpenPR, now))
 
-	require.NoError(t, CheckGH(t.Context(), st, repo, []string{"pr", "merge", "1"}, now))
-	require.False(t, st.Approved(repo, RuleMerge, now), "spent exactly once, by the shim")
+	require.NoError(t, CheckGH(t.Context(), st, repo, []string{"pr", "create", "--fill"}, now))
+	require.False(t, st.Approved(repo, GateOpenPR, now), "spent exactly once, by the shim")
 }

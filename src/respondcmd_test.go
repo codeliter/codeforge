@@ -12,9 +12,15 @@ func TestHelpListsRespond(t *testing.T) {
 }
 
 func TestRunAllow_NeedsATerminal(t *testing.T) {
-	err := runAllow(t.Context(), t.TempDir(), []string{"merge"})
+	err := runAllow(t.Context(), t.TempDir(), []string{"open-pr"})
 	require.True(t, errors.Is(err, errAllowNeedsTerminal) || errors.Is(err, errAllowNotConfirmed),
 		"without a person typing the code, nothing is approved: %v", err)
+}
+
+func TestRunAllow_RetiredRulesAreUnknown(t *testing.T) {
+	for _, rule := range []string{"merge", "pr-comment", "infra"} {
+		require.ErrorIs(t, runAllow(t.Context(), t.TempDir(), []string{rule}), errAllowUsage, rule)
+	}
 }
 
 func TestOneTimeCode(t *testing.T) {

@@ -1,4 +1,4 @@
-// Package store persists launch identity, never approvals or review verdicts.
+// Package store persists launch identity and inert learning evidence, never approvals or review verdicts.
 package store
 
 import (

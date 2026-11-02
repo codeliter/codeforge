@@ -39,14 +39,7 @@ func CheckGH(ctx context.Context, st State, cwd string, argv []string, now time.
 
 	var problems, spend []string
 	for _, f := range found {
-		switch {
-		case Allowable(f.Rule) && st.Approved(repo, f.Rule, now):
-			spend = append(spend, f.Rule)
-		case Allowable(f.Rule):
-			problems = append(problems, fmt.Sprintf("%s; approve once with `codeforge allow %s`", f.Reason, f.Rule))
-		default:
-			problems = append(problems, f.Reason)
-		}
+		problems = append(problems, f.Reason)
 	}
 
 	if gate == GateOpenPR && len(found) == 0 {

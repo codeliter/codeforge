@@ -49,9 +49,14 @@ func TestRunHook(t *testing.T) {
 		require.Equal(t, 0, runHook(t.Context(), home, strings.NewReader(in), &stderr), cmd)
 	}
 
-	merge := `{"hook_event_name":"PreToolUse","tool_name":"Bash","cwd":"/","tool_input":{"command":"gh pr merge 1"}}`
-	require.Equal(t, hookExitBlock, runHook(t.Context(), home, strings.NewReader(merge), &stderr))
-	require.Contains(t, stderr.String(), "merge")
+	for _, cmd := range []string{"gh pr merge 1", "gh pr comment 1 -b x", "terraform apply"} {
+		in := `{"hook_event_name":"PreToolUse","tool_name":"Bash","cwd":"/","tool_input":{"command":"` + cmd + `"}}`
+		require.Equal(t, 0, runHook(t.Context(), home, strings.NewReader(in), &stderr), "needs no approval: "+cmd)
+	}
+
+	allow := `{"hook_event_name":"PreToolUse","tool_name":"Bash","cwd":"/","tool_input":{"command":"codeforge allow open-pr"}}`
+	require.Equal(t, hookExitBlock, runHook(t.Context(), home, strings.NewReader(allow), &stderr))
+	require.Contains(t, stderr.String(), "Only the user")
 
 	require.Equal(t, hookExitBlock, runHook(t.Context(), home, strings.NewReader("not json"), &stderr), "fail closed on garbage")
 }
@@ -69,9 +74,9 @@ func TestRunHook_ReviewModeIsReadOnly(t *testing.T) {
 
 func TestRunHook_DoesNotSpendApprovals(t *testing.T) {
 	home := t.TempDir()
-	require.NoError(t, runAllowAt(home, "/", "merge"))
+	require.NoError(t, runAllowAt(home, "/", "open-pr"))
 
-	in := `{"hook_event_name":"PreToolUse","tool_name":"Bash","cwd":"/","tool_input":{"command":"gh pr merge 1"}}`
+	in := `{"hook_event_name":"PreToolUse","tool_name":"Bash","cwd":"/","tool_input":{"command":"gh pr create --fill"}}`
 	var stderr strings.Builder
 	require.Equal(t, 0, runHook(t.Context(), home, strings.NewReader(in), &stderr))
 	require.Equal(t, 0, runHook(t.Context(), home, strings.NewReader(in), &stderr), "still approved for the gh shim to spend")

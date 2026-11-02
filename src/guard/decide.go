@@ -41,25 +41,16 @@ func Decide(ctx context.Context, st State, in Input, readOnly bool, now time.Tim
 		return Decision{Reason: "codeforge blocked this: " + f.Reason + "."}
 	}
 
-	// Approvals are only spent when the whole action goes through, and each one covers a single action,
-	// so `gh pr merge 1 && gh pr merge 2` needs two approvals.
+	// Findings are never approvable; only the PR gate can be skipped, and only by the user in a terminal.
 	var reasons, spend []string
-	seen := map[string]int{}
 	for _, f := range res.Blocked {
-		seen[f.Rule]++
-		switch {
-		case f.Rule == RuleReadOnly:
+		switch f.Rule {
+		case RuleReadOnly:
 			reasons = append(reasons, f.Reason+": review mode is read-only. Switch to ticket or chat mode to change files.")
-		case f.Rule == RuleSelf:
+		case RuleSelf:
 			reasons = append(reasons, f.Reason+". Only the user can do this, outside the agent.")
-		case seen[f.Rule] == 1 && st.Approved(repo, f.Rule, now):
-			spend = append(spend, f.Rule)
-		case seen[f.Rule] > 1:
-			reasons = append(reasons, fmt.Sprintf("%s (%s) appears more than once in one command; one approval covers one action. Run them separately.", f.Reason, f.Rule))
-		case !Allowable(f.Rule):
-			reasons = append(reasons, fmt.Sprintf("%s (%s).", f.Reason, f.Rule))
 		default:
-			reasons = append(reasons, fmt.Sprintf("%s (%s). The user can approve one with `codeforge allow %s`.", f.Reason, f.Rule, f.Rule))
+			reasons = append(reasons, fmt.Sprintf("%s (%s).", f.Reason, f.Rule))
 		}
 	}
 
@@ -90,8 +81,9 @@ func Decide(ctx context.Context, st State, in Input, readOnly bool, now time.Tim
 	return Decision{Allow: true, Consumed: consumed}
 }
 
-// AllowRules are the rules a user may approve once with `codeforge allow`.
-var AllowRules = []string{RuleMerge, RulePRComment, RuleInfra, GateOpenPR}
+// AllowRules are the rules a user may approve once with `codeforge allow`. Merges, PR comments and infra
+// changes need no approval: the user's own requests govern them.
+var AllowRules = []string{GateOpenPR}
 
 func Allowable(rule string) bool {
 	return slices.Contains(AllowRules, rule)
