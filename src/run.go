@@ -39,7 +39,7 @@ func GHShim(ctx context.Context, args []string) int {
 	return runGHShim(ctx, home, args)
 }
 
-// Run dispatches a codeforge command and, for launches, replaces the process with Empryo.
+// Run dispatches a codeforge command and launches Empryo.
 func Run(ctx context.Context, args []string) error {
 	if len(args) > 0 && isHelp(args[0]) {
 		printHelp(os.Stdout)
@@ -169,11 +169,14 @@ func Run(ctx context.Context, args []string) error {
 	return launch(ctx, home, bin, mode, args)
 }
 
-// launch adds the repository persona and replaces this process with Empryo in the given mode.
+// launch supervises the terminal UI so the resume hint appears after it closes.
 func launch(ctx context.Context, home, bin, mode string, args []string) error {
 	argv, env, err := launchCommand(ctx, home, bin, mode, args)
 	if err != nil {
 		return err
+	}
+	if !hasFlag(args, "--headless") {
+		return runInteractive(ctx, argv, env)
 	}
 	if err := syscall.Exec(argv[0], argv, env); err != nil {
 		return fmt.Errorf("starting empryo: %w", err)
@@ -201,7 +204,7 @@ func launchCommand(ctx context.Context, home, bin, mode string, args []string) (
 	if args, err = withRepoPersona(ctx, home, args); err != nil {
 		return nil, nil, err
 	}
-	env := append(os.Environ(), "EMPRYO_HOOK_ENV=CODEFORGE_*", launchMarker+"=1")
+	env := append(os.Environ(), "EMPRYO_HOOK_ENV=CODEFORGE_*", launchMarker+"=1", "CODEFORGE_RESUME_HINT=launcher")
 	argv := append([]string{bin, "--profile", profileFor(mode)}, args...)
 	if mode == modeReview {
 		env = append(env, "CODEFORGE_GUARD=review")
@@ -210,7 +213,10 @@ func launchCommand(ctx context.Context, home, bin, mode string, args []string) (
 			return nil, nil, err
 		}
 	}
-	// Commit and close storage before exec, including before entering review's read-only sandbox.
+	if err := ctx.Err(); err != nil {
+		return nil, nil, fmt.Errorf("launch cancelled: %w", err)
+	}
+	// Close storage before starting Empryo, including review's read-only sandbox.
 	savedArgs, err := persistSession(ctx, home, mode, args)
 	if err != nil {
 		return nil, nil, err
