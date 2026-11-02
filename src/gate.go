@@ -25,8 +25,8 @@ func stateDir(home string) string {
 	return configDir(home)
 }
 
-// runGate reviews the current branch and uncommitted work with every configured reviewer and records a pass.
-// Ticket and chat mode run it through the shell; a blocked push points the agent at it.
+// runGate reviews the current branch and uncommitted work and records a pass. It is voluntary: nothing,
+// pushing and opening a PR included, waits for it.
 func runGate(ctx context.Context, home, bin string, cfg Config, w io.Writer) error {
 	ctx, cancel := context.WithTimeout(ctx, gateTimeout)
 	defer cancel()
@@ -52,14 +52,15 @@ func runGate(ctx context.Context, home, bin string, cfg Config, w io.Writer) err
 		return fmt.Errorf("collecting changes: %w", err)
 	}
 
+	// Simple changes get one reviewer; complicated or high-risk ones get the whole jury.
 	tier := review.Triage(local.Diff, local.Files)
-	models := slices.Concat([]string{cfg.Review.Model}, cfg.Review.SecondOpinion)
+	models := slices.Concat([]string{cfg.Review.Model}, review.JuryFor(tier, cfg.Review.SecondOpinion))
 	reviewers := make([]review.Reviewer, len(models))
 	for i, m := range models {
 		reviewers[i] = review.EmpryoReviewer{Bin: bin, Model: m, Dir: repo, Tier: tier, Wrap: sandboxCommand}
 	}
 
-	brief := review.PromptLocal(local, nil) + review.Pack(ctx, review.ExecRunner{}, repo, local)
+	brief := review.PromptLocal(local, tier, nil) + review.Pack(ctx, review.ExecRunner{}, repo, local)
 	rubric := review.CacheKey(assets.Gate, review.VerdictInstructions, tier.Name)
 	opts := review.JuryOptions{
 		Cache:     &review.Cache{Dir: filepath.Join(configDir(home), "review-cache")},
@@ -111,10 +112,10 @@ func runGate(ctx context.Context, home, bin string, cfg Config, w io.Writer) err
 	}
 
 	if commit == "" {
-		fmt.Fprintln(w, "codeforge gate: PASS for your uncommitted changes. Commit them and run `codeforge gate` again before pushing; git only lets reviewed commits out.")
+		fmt.Fprintln(w, "codeforge gate: PASS for your uncommitted changes.")
 		return nil
 	}
-	fmt.Fprintf(w, "codeforge gate: PASS. Commit %.8s may be pushed and opened as a PR.\n", commit)
+	fmt.Fprintf(w, "codeforge gate: PASS for commit %.8s.\n", commit)
 	return nil
 }
 

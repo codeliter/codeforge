@@ -59,6 +59,9 @@ func Run(ctx context.Context, args []string) error {
 	if len(args) > 0 && args[0] == "learn" {
 		return runLearn(ctx, home, args[1:], os.Stdout)
 	}
+	if len(args) > 0 && args[0] == "allow" {
+		return errAllowRemoved
+	}
 
 	// Enforcement, review collection, persona and sandbox all follow the directory Empryo will work in.
 	if dir := flagValue(args, "--cwd"); dir != "" {
@@ -117,7 +120,7 @@ func Run(ctx context.Context, args []string) error {
 		cmd, rest = args[0], args[1:]
 	}
 
-	// Push and PR rules are enforced by git and the gh shim, so codeforge never starts without them.
+	// Removes the retired pre-push hook from repositories that still register it.
 	if err := ensureEnforced(ctx, self); err != nil {
 		return err
 	}
@@ -131,8 +134,6 @@ func Run(ctx context.Context, args []string) error {
 		return runTrust(ctx, home)
 	case "gate":
 		return runGate(ctx, home, bin, cfg, os.Stdout)
-	case "allow":
-		return runAllow(ctx, home, rest)
 	case "respond":
 		if _, resume, err := sessionID(rest); err != nil {
 			return err
@@ -200,7 +201,7 @@ func launchCommand(ctx context.Context, home, bin, mode string, args []string) (
 	if args, err = withRepoPersona(ctx, home, args); err != nil {
 		return nil, nil, err
 	}
-	env := append(os.Environ(), "EMPRYO_HOOK_ENV=CODEFORGE_*")
+	env := append(os.Environ(), "EMPRYO_HOOK_ENV=CODEFORGE_*", launchMarker+"=1")
 	argv := append([]string{bin, "--profile", profileFor(mode)}, args...)
 	if mode == modeReview {
 		env = append(env, "CODEFORGE_GUARD=review")

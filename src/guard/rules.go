@@ -1,31 +1,22 @@
 package guard
 
 import (
-	"net/url"
 	"os"
-	urlpath "path"
 	"regexp"
 	"slices"
 	"strings"
 )
 
-// Merges, PR comments and infra changes follow the user's requests, not approvals. Git itself is never guarded:
-// it is the user's tool, and review mode keeps it read-only through the sandbox and the read-only check instead.
+// Merges, PR creation, PR comments and infra changes follow the user's requests, not approvals. Git itself is never
+// guarded: it is the user's tool, and review mode keeps it read-only through the sandbox and the read-only check instead.
 const (
-	RuleReadOnly  = "read-only"
-	RuleSelf      = "codeforge-config"
-	RuleOpaque    = "opaque"
-	RuleMixedPush = "mixed-push"
-	RulePushScope = "push-scope"
-	RuleScript    = "script"
+	RuleReadOnly = "read-only"
+	RuleSelf     = "codeforge-config"
+	RuleOpaque   = "opaque"
+	RuleScript   = "script"
 )
 
-// Opening a PR is allowed once the review gate has passed for the current work.
-const (
-	GateOpenPR   = "open-pr"
-	gateNone     = ""
-	minGitTokens = 2
-)
+const minGitTokens = 2
 
 type Finding struct {
 	Rule   string
@@ -34,15 +25,6 @@ type Finding struct {
 
 type Result struct {
 	Blocked []Finding
-	Gate    string
-	// Dirs are the directories the guarded actions run in, from `cd` and `git -C`, relative to the tool's cwd.
-	Dirs []string
-	// OtherWrites is set when the command changes files besides the guarded action.
-	OtherWrites bool
-	// Deferred holds rules the gh shim enforces and spends later.
-	Deferred map[string]bool
-	// DirectGH is set when gh is called by path, which skips the shim on PATH.
-	DirectGH bool
 
 	cwd string
 }
@@ -67,13 +49,9 @@ func checkIn(command string, readOnly bool, cwd string) Result {
 		raw := withoutRedirects(tokens, redirect)
 
 		// A file write through a redirect counts before any other check, whatever the command is.
-		fileWrite := writesFile(tokens, redirect)
-		if fileWrite {
-			if readOnly {
-				r.Blocked = append(r.Blocked, Finding{RuleReadOnly, "redirects output into a file"})
-				continue
-			}
-			r.OtherWrites = true
+		if readOnly && writesFile(tokens, redirect) {
+			r.Blocked = append(r.Blocked, Finding{RuleReadOnly, "redirects output into a file"})
+			continue
 		}
 
 		// Environment that injects git config or replaces git's helper programs runs code outside the guard,
@@ -127,7 +105,7 @@ func checkIn(command string, readOnly bool, cwd string) Result {
 		}
 
 		if inner, ok := shellScript(words); ok {
-			r.merge(checkIn(inner, readOnly, cwd), dir)
+			r.merge(checkIn(inner, readOnly, cwd))
 			continue
 		}
 
@@ -150,23 +128,11 @@ func checkIn(command string, readOnly bool, cwd string) Result {
 			continue
 		}
 
-		found, gate := classify(words)
-		if f, writes := notReadOnly(words, raw, false); writes {
-			if readOnly {
-				r.Blocked = append(r.Blocked, f)
-				continue
-			}
-			// The gated action itself is checked on its own, not counted as another write.
-			r.OtherWrites = r.OtherWrites || gate == gateNone
-		}
-
-		deferTo(&r, words, raw, found, gate)
-		if len(found) == 0 && gate == gateNone {
+		if f, writes := notReadOnly(words, raw, false); writes && readOnly {
+			r.Blocked = append(r.Blocked, f)
 			continue
 		}
-		r.Blocked = append(r.Blocked, found...)
-		r.Gate = cmpGate(r.Gate, gate)
-		r.Dirs = append(r.Dirs, dir)
+		r.Blocked = append(r.Blocked, classify(words)...)
 	}
 
 	return r
@@ -272,22 +238,22 @@ func arg(w []string, i int) string {
 
 var shells = map[string]bool{"sh": true, "bash": true, "zsh": true, "dash": true}
 
-func classify(w []string) ([]Finding, string) {
+func classify(w []string) []Finding {
 	switch w[0] {
 	case "script", "expect", "unbuffer", "socat", "tmux", "screen", "zpty":
-		// These give a program a pseudo-terminal the agent controls, which could answer codeforge allow's prompt.
-		return []Finding{{RuleSelf, w[0] + " can drive a terminal prompt such as codeforge allow; run it yourself if you need it"}}, gateNone
+		// These give a program a pseudo-terminal the agent controls, which could answer codeforge trust's prompt.
+		return []Finding{{RuleSelf, w[0] + " can drive a terminal prompt such as codeforge trust; run it yourself if you need it"}}
 	case "codeforge":
-		if len(w) > 1 && (hasAny(w[1:2], "allow", "trust", "init") || w[1] == "models" && !printsModels(w[2:])) {
-			return []Finding{{RuleSelf, "only you can approve actions or change codeforge settings"}}, gateNone
+		if len(w) > 1 && (hasAny(w[1:2], "trust", "init") || w[1] == "models" && !printsModels(w[2:])) {
+			return []Finding{{RuleSelf, "only you can change codeforge settings"}}
 		}
 		if len(w) > 1 && w[1] == "learn" && !readsLearning(w[2:]) {
-			return []Finding{{RuleSelf, "only you can record or revert codeforge learning evidence"}}, gateNone
+			return []Finding{{RuleSelf, "only you can record or revert codeforge learning evidence"}}
 		}
 	case "gh":
 		return classifyGH(w)
 	}
-	return nil, gateNone
+	return nil
 }
 
 // printsModels matches the forms of `codeforge models` that only print the roles: none, or recommend.
@@ -301,15 +267,13 @@ func readsLearning(args []string) bool {
 	return len(args) > 0 && (args[0] == "list" || args[0] == "propose")
 }
 
-// ghGlobalRepo removes gh's -R/--repo wherever it appears and reports whether it was there.
-func ghGlobalRepo(w []string) ([]string, bool) {
+// ghGlobalRepo removes gh's -R/--repo wherever it appears, so the subcommand is always w[1].
+func ghGlobalRepo(w []string) []string {
 	out := []string{w[0]}
-	found := false
 	for i := 1; i < len(w); i++ {
 		name, _, hasValue := strings.Cut(w[i], "=")
 		attached := strings.HasPrefix(w[i], "-R") && len(w[i]) > len("-R")
 		if name == "-R" || name == "--repo" || attached {
-			found = true
 			if !hasValue && !attached {
 				i++
 			}
@@ -317,7 +281,7 @@ func ghGlobalRepo(w []string) ([]string, bool) {
 		}
 		out = append(out, w[i])
 	}
-	return out, found
+	return out
 }
 
 // knownGH lists gh's built-in commands. Anything else may be a user alias, which gh expands into any
@@ -329,145 +293,20 @@ var knownGH = set(
 	"--version", "--help", "-h",
 )
 
-func classifyGH(w []string) ([]Finding, string) {
-	w, otherRepo := ghGlobalRepo(w)
+// classifyGH refuses only gh aliases and extensions, which can run any command unseen. Opening, merging and
+// commenting on PRs, and every gh api call, need no approval.
+func classifyGH(w []string) []Finding {
+	w = ghGlobalRepo(w)
 	if len(w) >= minGitTokens && !knownGH[w[1]] {
-		return []Finding{{RuleOpaque, "gh " + w[1] + " is an alias or extension the guard cannot inspect; run the underlying gh command instead"}}, gateNone
+		return []Finding{{RuleOpaque, "gh " + w[1] + " is an alias or extension the guard cannot inspect; run the underlying gh command instead"}}
 	}
 	if len(w) >= minGitTokens && w[1] == "alias" && len(w) > 2 && w[2] != "list" {
-		return []Finding{{RuleSelf, "changes gh aliases, which could hide commands from codeforge"}}, gateNone
-	}
-	if len(w) < 3 || w[1] != "pr" {
-		if len(w) < minGitTokens || w[1] != "api" || graphQLRead(w[2:]) {
-			return nil, gateNone
-		}
-		// Unreadable flags fail closed: clustered flags such as -if can hide both the write and the endpoint.
-		endpoint, ok := apiEndpoint(w[2:])
-		if !ok {
-			return []Finding{{RuleOpaque, "gh api uses clustered or unknown flags, or an endpoint the guard cannot read; spell each flag separately"}}, gateNone
-		}
-		if apiWrites(w[2:]) {
-			return apiWriteFindings(endpoint), gateNone
-		}
-		return nil, gateNone
-	}
-
-	switch w[2] {
-	case "create", "ready":
-		if otherRepo || slices.ContainsFunc(w[3:], func(a string) bool {
-			name, _, _ := strings.Cut(a, "=")
-			return name == "--head" || name == "-H" || name == "--repo" || name == "-R" ||
-				len(a) > 2 && (strings.HasPrefix(a, "-H") || strings.HasPrefix(a, "-R"))
-		}) {
-			return []Finding{{RulePushScope, "the PR names another head branch or repository than the one the gate reviewed"}}, GateOpenPR
-		}
-		return nil, GateOpenPR
-	}
-	return nil, gateNone
-}
-
-// knownAPIFlags are the gh api flags graphQLRead understands; anything else makes the call opaque.
-var knownAPIFlags = set("-f", "-F", "--field", "--raw-field", "-X", "--method", "--input",
-	"-H", "--header", "-q", "--jq", "-t", "--template", "--hostname", "--cache", "--paginate", "--slurp", "-i", "--include", "--silent", "--verbose")
-
-var apiValueFlags = set("-X", "--method", "-f", "-F", "--field", "--raw-field", "-H", "--header", "--input", "-q", "--jq", "-t", "--template", "--hostname", "--cache")
-
-// apiWriteFindings allows REST writes under repos/<owner>/<repo>/ except opening a PR, which must go through
-// `gh pr create` and the review gate. Every other endpoint, GraphQL mutations included, could open a PR the
-// guard cannot see, so it is refused.
-func apiWriteFindings(endpoint string) []Finding {
-	parts := strings.Split(endpoint, "/")
-	if len(parts) < 4 || !strings.EqualFold(parts[0], "repos") {
-		return []Finding{{RulePushScope, "gh api writes are limited to REST endpoints under repos/<owner>/<repo>/, because GraphQL mutations and other endpoints could open a PR around the review gate"}}
-	}
-	if len(parts) == 4 && strings.EqualFold(parts[3], "pulls") {
-		return []Finding{{RulePushScope, "opening a PR through gh api skips the review gate; use `gh pr create`"}}
+		return []Finding{{RuleSelf, "changes gh aliases, which could hide commands from codeforge"}}
 	}
 	return nil
 }
 
-// apiEndpoint returns gh api's endpoint as the server resolves it: unescaped, without query or fragment,
-// and with dot segments and repeated slashes removed, so "repos/o/a/../../b/pulls" is read as "repos/b/pulls".
-// ok is false when a clustered or unknown flag could take the next word as its value, or the endpoint cannot be
-// unescaped: then the guard cannot tell which endpoint gh calls, or whether it writes.
-func apiEndpoint(args []string) (string, bool) {
-	endpoint := ""
-	for i := 0; i < len(args); i++ {
-		a := args[i]
-		name, _, attached := strings.Cut(a, "=")
-		switch {
-		case !strings.HasPrefix(a, "-"):
-			if endpoint != "" {
-				return "", false
-			}
-			p, _, _ := strings.Cut(a, "?")
-			p, _, _ = strings.Cut(p, "#")
-			p, err := url.PathUnescape(p)
-			if err != nil {
-				return "", false
-			}
-			endpoint = strings.TrimPrefix(urlpath.Clean("/"+p), "/")
-		case strings.HasPrefix(a, "--") && knownAPIFlags[name]:
-			if apiValueFlags[name] && !attached {
-				i++
-			}
-		case len(a) == len("-X") && knownAPIFlags[a]:
-			if apiValueFlags[a] {
-				i++
-			}
-		case len(a) > len("-X") && a[1] != '-' && apiValueFlags[a[:2]]:
-			// A short value flag with its value attached, such as -XPOST or -fbody=x.
-		default:
-			return "", false
-		}
-	}
-	return endpoint, endpoint != ""
-}
-
-// graphQLRead accepts `gh api graphql` whose only fields are a query and variables, with no mutation.
-func graphQLRead(args []string) bool {
-	endpoint, query := "", ""
-	for i := 0; i < len(args); i++ {
-		a := args[i]
-		name, value, attached := strings.Cut(a, "=")
-		switch {
-		case name == "-f" || name == "-F" || name == "--field" || name == "--raw-field":
-			field := value
-			if !attached && i+1 < len(args) {
-				i++
-				field = args[i]
-			}
-			if k, v, ok := strings.Cut(field, "="); ok && k == "query" {
-				// -F and --field expand {owner}/{repo} and @file, so the query that runs is not the text here.
-				if name == "-F" || name == "--field" {
-					return false
-				}
-				query = v
-			}
-		case len(a) > 2 && (strings.HasPrefix(a, "-f") || strings.HasPrefix(a, "-F")) && a[1] != '-':
-			if k, v, ok := strings.Cut(a[2:], "="); ok && k == "query" {
-				if a[1] == 'F' {
-					return false
-				}
-				query = v
-			}
-		case name == "-X" || name == "--method" || strings.HasPrefix(a, "-X") || name == "--input":
-			return false
-		case apiValueFlags[name] && !attached:
-			i++
-		case !strings.HasPrefix(a, "-") && endpoint == "":
-			endpoint = a
-		case strings.HasPrefix(a, "-") && !knownAPIFlags[name]:
-			// Clustered or unknown flags can take the next word as a value, moving the real endpoint.
-			return false
-		}
-	}
-
-	q := strings.ToLower(strings.TrimSpace(query))
-	return endpoint == "graphql" && q != "" &&
-		!strings.Contains(q, "mutation") && !strings.Contains(q, "subscription") &&
-		(strings.HasPrefix(q, "query") || strings.HasPrefix(q, "{"))
-}
+var apiValueFlags = set("-X", "--method", "-f", "-F", "--field", "--raw-field", "-H", "--header", "--input", "-q", "--jq", "-t", "--template", "--hostname", "--cache")
 
 // apiWrites mirrors gh: an explicit method wins, otherwise any field or input flag makes the request a POST.
 // Option values are consumed, so a field value that looks like a flag is never read as one.
@@ -651,13 +490,6 @@ func shellScript(w []string) (string, bool) {
 		}
 	}
 	return "", false
-}
-
-func cmpGate(have, next string) string {
-	if have != gateNone {
-		return have
-	}
-	return next
 }
 
 // segments splits on shell separators so `cd x && git push` is seen as two commands.
@@ -1002,44 +834,7 @@ func scriptCallsGuarded(path, cwd string) (Finding, bool) {
 	return Finding{}, false
 }
 
-// merge folds a nested command's result into r, resolving its directories against dir.
-func (r *Result) merge(sub Result, dir string) {
+// merge folds a nested command's result into r.
+func (r *Result) merge(sub Result) {
 	r.Blocked = append(r.Blocked, sub.Blocked...)
-	r.Gate = cmpGate(r.Gate, sub.Gate)
-	r.OtherWrites = r.OtherWrites || sub.OtherWrites
-	r.DirectGH = r.DirectGH || sub.DirectGH
-	for _, d := range sub.Dirs {
-		r.Dirs = append(r.Dirs, joinDir(dir, d))
-	}
-	for rule := range sub.Deferred {
-		if r.Deferred == nil {
-			r.Deferred = map[string]bool{}
-		}
-		r.Deferred[rule] = true
-	}
-}
-
-// deferTo marks rules the gh shim will enforce for this command; gh calls through PATH are checked there.
-func deferTo(r *Result, words, raw []string, found []Finding, gate string) {
-	mark := func(rule string) {
-		if r.Deferred == nil {
-			r.Deferred = map[string]bool{}
-		}
-		r.Deferred[rule] = true
-	}
-
-	if words[0] != "gh" {
-		return
-	}
-	exe := unwrapped(raw)
-	if len(exe) > 0 && strings.Contains(exe[0], "/") {
-		r.DirectGH = true
-		return
-	}
-	if gate != gateNone {
-		mark(gate)
-	}
-	for _, f := range found {
-		mark(f.Rule)
-	}
 }

@@ -90,6 +90,40 @@ func TestResumeCLI(t *testing.T) {
 	}
 }
 
+func TestResume_PrefixUsesEmpryoActiveProfile(t *testing.T) {
+	wd, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	t.Chdir(wd)
+	home := t.TempDir()
+	id := "1f15c107-959c-44ea-b03b-b27add189453"
+	historicalSession(t, wd, id)
+	meta := `{"id":"` + id + `","cwd":"` + wd + `","activeTabId":"main","tabs":[{"id":"main","agent":"codeforge-review"}]}`
+	require.NoError(t, os.WriteFile(filepath.Join(wd, ".empryo", "sessions", id, "meta.json"), []byte(meta), privateFile))
+	for _, flag := range []string{"--resume", "--session", "-s"} {
+		args := []string{flag, "1f15c107"}
+		mode, resumed, err := restoreMode(t.Context(), home, "", args)
+		require.NoError(t, err)
+		require.True(t, resumed)
+		require.Equal(t, modeReview, mode)
+		prepared, err := persistSession(t.Context(), home, mode, args)
+		require.NoError(t, err)
+		require.Equal(t, id, flagValue(prepared, "--session"))
+	}
+}
+
+func TestResume_AmbiguousPrefixFailsClosed(t *testing.T) {
+	wd, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	t.Chdir(wd)
+	historicalSession(t, wd, "1f15c107-first")
+	historicalSession(t, wd, "1f15c107-second")
+	_, _, err = restoreMode(t.Context(), t.TempDir(), modeChat, []string{"--resume", "1f15c107"})
+	require.ErrorIs(t, err, errSessionArgs)
+	id, err := resolveResumeID(wd, "1f15c107-first")
+	require.NoError(t, err)
+	require.Equal(t, "1f15c107-first", id)
+}
+
 func TestResume_UnknownRequiresExplicitModeOnce(t *testing.T) {
 	wd, err := filepath.EvalSymlinks(t.TempDir())
 	require.NoError(t, err)

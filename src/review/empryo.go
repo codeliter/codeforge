@@ -43,7 +43,9 @@ func (r EmpryoReviewer) Review(ctx context.Context, brief string) (string, error
 	if r.Wrap != nil {
 		cmd = r.Wrap(ctx, r.Dir, argv)
 	}
-	cmd.Env = append(cmd.Environ(), "CODEFORGE_GUARD=review", "EMPRYO_HOOK_ENV=CODEFORGE_*")
+	// CODEFORGE_LAUNCH=0: a juror inherits the marker when the gate runs inside a codeforge session, and must not
+	// print a resume hint for its throwaway session.
+	cmd.Env = append(cmd.Environ(), "CODEFORGE_GUARD=review", "EMPRYO_HOOK_ENV=CODEFORGE_*", "CODEFORGE_LAUNCH=0")
 
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr

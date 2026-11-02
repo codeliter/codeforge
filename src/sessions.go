@@ -116,6 +116,62 @@ func verifyEmpryoSession(wd, id string) error {
 	return nil
 }
 
+// resolveResumeID matches Empryo's exact-ID-first, unique-prefix session lookup.
+func resolveResumeID(wd, prefix string) (string, error) {
+	dir := filepath.Join(wd, ".empryo", "sessions")
+	if info, err := os.Stat(filepath.Join(dir, prefix)); err == nil && info.IsDir() {
+		return prefix, nil
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return "", fmt.Errorf("%w: %s", errSessionMissing, prefix)
+	}
+	match := ""
+	for _, entry := range entries {
+		if !entry.IsDir() || !safeSessionID(entry.Name()) || !strings.HasPrefix(entry.Name(), prefix) {
+			continue
+		}
+		if match != "" {
+			return "", fmt.Errorf("%w: ambiguous prefix %s; use a longer session ID", errSessionArgs, prefix)
+		}
+		match = entry.Name()
+	}
+	if match == "" {
+		return "", fmt.Errorf("%w: %s", errSessionMissing, prefix)
+	}
+	return match, nil
+}
+
+func historicalMode(wd, id string) string {
+	f, err := os.Open(filepath.Join(wd, ".empryo", "sessions", id, "meta.json"))
+	if err != nil {
+		return ""
+	}
+	defer func() { _ = f.Close() }()
+	var meta struct {
+		ActiveTabID string `json:"activeTabId"` //nolint:tagliatelle // Empryo's metadata field.
+		Tabs        []struct {
+			ID    string `json:"id"`
+			Agent string `json:"agent"`
+		} `json:"tabs"`
+	}
+	const maxMetadataBytes = 1024 * 1024
+	if json.NewDecoder(io.LimitReader(f, maxMetadataBytes)).Decode(&meta) != nil {
+		return ""
+	}
+	for _, tab := range meta.Tabs {
+		if tab.ID != meta.ActiveTabID {
+			continue
+		}
+		for _, mode := range modes {
+			if tab.Agent == profileFor(mode) {
+				return mode
+			}
+		}
+	}
+	return ""
+}
+
 // restoreMode runs before the picker or task preparation, regardless of configured defaults.
 func restoreMode(ctx context.Context, home, explicit string, args []string) (string, bool, error) {
 	id, resume, err := sessionID(args)
@@ -139,10 +195,17 @@ func restoreMode(ctx context.Context, home, explicit string, args []string) (str
 		return "", true, err
 	}
 	defer func() { _ = s.Close() }()
+	id, err = resolveResumeID(wd, id)
+	if err != nil {
+		return "", true, err
+	}
 	saved, err := s.Get(ctx, id)
 	if errors.Is(err, store.ErrNotFound) {
 		if explicit == "" {
-			return "", true, errSessionMode
+			explicit = historicalMode(wd, id)
+			if explicit == "" {
+				return "", true, errSessionMode
+			}
 		}
 		if explicit == "start" {
 			explicit = modeTicket
@@ -194,6 +257,12 @@ func persistSession(ctx context.Context, home, mode string, args []string) ([]st
 		return nil, fmt.Errorf("resolving session workspace: %w", err)
 	}
 	if resume {
+		id, err = resolveResumeID(wd, id)
+		if err != nil {
+			return nil, err
+		}
+		args = dropFlag(dropFlag(dropFlag(args, "--resume"), "--session"), "-s")
+		args = append([]string{"--session", id}, args...)
 		if err := verifyEmpryoSession(wd, id); err != nil {
 			return nil, err
 		}

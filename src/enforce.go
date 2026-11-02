@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
-	"time"
 
 	"github.com/codeliter/codeforge/src/guard"
 )
@@ -75,53 +74,20 @@ func runPrePush(_ context.Context, _ string, _ io.Reader, _ io.Writer) int {
 }
 
 // runGHShim checks the call and then replaces itself with the real gh, keeping gh's exit code and output.
-func runGHShim(ctx context.Context, home string, args []string) int {
+func runGHShim(_ context.Context, home string, args []string) int {
 	gh, err := realGH(filepath.Join(home, ".empryo"))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "codeforge:", err)
 		return 1
 	}
 
-	wd, err := os.Getwd()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "codeforge:", err)
+	if err := guard.CheckGH(args); err != nil {
+		fmt.Fprintln(os.Stderr, err)
 		return 1
-	}
-
-	if code := withState(home, os.Stderr, func(st guard.State) error {
-		return guard.CheckGH(ctx, st, wd, args, time.Now())
-	}); code != 0 {
-		return code
 	}
 
 	if err := syscall.Exec(gh, append([]string{gh}, args...), os.Environ()); err != nil {
 		fmt.Fprintln(os.Stderr, "codeforge: starting gh:", err)
-		return 1
-	}
-	return 0
-}
-
-// withState runs check under the state lock and saves only when it succeeds, so refused actions spend nothing.
-func withState(home string, stderr io.Writer, check func(guard.State) error) int {
-	unlock, err := guard.Lock(stateDir(home))
-	if err != nil {
-		fmt.Fprintln(stderr, "codeforge:", err)
-		return 1
-	}
-	defer unlock()
-
-	st, err := guard.Load(stateDir(home))
-	if err != nil {
-		fmt.Fprintln(stderr, "codeforge:", err)
-		return 1
-	}
-
-	if err := check(st); err != nil {
-		fmt.Fprintln(stderr, err)
-		return 1
-	}
-	if err := st.Save(stateDir(home)); err != nil {
-		fmt.Fprintln(stderr, "codeforge:", err)
 		return 1
 	}
 	return 0

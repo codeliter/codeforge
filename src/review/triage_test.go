@@ -36,6 +36,19 @@ func TestTriage(t *testing.T) {
 	}
 }
 
+func TestJuryFor_SimpleReviewsSkipTheJury(t *testing.T) {
+	models := []string{"x/second"}
+	for _, tier := range []Tier{TierDocs, TierSmall} {
+		require.Empty(t, JuryFor(tier, models), tier.Name)
+		p := PromptLocal(Local{Base: "main"}, tier, JuryFor(tier, models))
+		require.Contains(t, p, "skip the jury", tier.Name)
+		require.NotContains(t, p, "x/second", tier.Name)
+	}
+	for _, tier := range []Tier{TierStandard, TierRisky} {
+		require.Equal(t, models, JuryFor(tier, models), tier.Name)
+	}
+}
+
 func TestSymbols(t *testing.T) {
 	diff := "+func Ratio(a, b int) int {\n-func (s *Store) Get() {}\n+type Options struct{}\n+export async function loadUser() {}\n+func helper() {}\n"
 	require.Equal(t, []string{"Ratio", "Get", "Options", "loadUser"}, symbols(diff))
