@@ -105,6 +105,17 @@ func TestModesCLI(t *testing.T) {
 				cmd.Dir = wd
 				cmd.Env = append(os.Environ(), "HOME="+home, "PATH="+bins+string(os.PathListSeparator)+os.Getenv("PATH"), "CODEFORGE_MODE=chat", "CODEFORGE_CLI_ARGS="+string(raw), "CODEFORGE_CLI_CAPTURE="+capture, "CODEFORGE_CLI_FAIL="+code)
 				out, err = cmd.CombinedOutput()
+				receipt := "codeforge: Task received."
+				if tc.mode == modeReview {
+					receipt = "codeforge: Review requested."
+				} else if tc.name == "respond" {
+					receipt = "codeforge: Review responses requested."
+				}
+				if variant == "headless" {
+					require.NotContains(t, string(out), receipt)
+				} else {
+					require.Contains(t, string(out), receipt)
+				}
 				if variant == "failure" {
 					var exit *exec.ExitError
 					require.ErrorAs(t, err, &exit, string(out))

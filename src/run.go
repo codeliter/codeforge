@@ -140,6 +140,7 @@ func Run(ctx context.Context, args []string) error {
 		} else if resume {
 			return errSessionArgs
 		}
+		acknowledgeTask(os.Stderr, "respond", rest)
 		var done bool
 		if args, done, err = respondArgs(ctx, rest); err != nil || done {
 			return err
@@ -162,6 +163,9 @@ func Run(ctx context.Context, args []string) error {
 			return err
 		}
 	}
+	if !resumed {
+		acknowledgeTask(os.Stderr, cmd, rest)
+	}
 	mode, args, err := modeArgs(ctx, bin, cfg, cmd, rest)
 	if err != nil {
 		return err
@@ -183,7 +187,7 @@ func launch(ctx context.Context, home, bin, mode string, args []string) error {
 		if !resume && promptOf(args) != "" {
 			// Empryo's TUI does not submit positional prompts. Submit every mode's
 			// initial task through its headless API, then reopen the saved conversation.
-			fmt.Fprintln(os.Stderr, "codeforge: running the task; opening its TUI when it finishes")
+			fmt.Fprintln(os.Stderr, "codeforge: context ready; waiting for the model. The TUI opens when the task finishes.")
 			initial := append(append([]string(nil), argv...), "--headless", "--save-session")
 			if err := runInteractive(ctx, initial, env); err != nil {
 				return err
