@@ -26,6 +26,7 @@ type Config struct {
 	Init        string            `json:"init,omitempty" yaml:"init,omitempty"`
 	DefaultMode string            `json:"default_mode,omitempty" yaml:"default_mode,omitempty"` //nolint:tagliatelle // Preserve the established configuration keys.
 	Routing     map[string]string `json:"routing,omitempty" yaml:"routing,omitempty"`
+	Providers   *ProviderPolicy   `json:"providers,omitempty" yaml:"providers,omitempty"`
 }
 
 type ReviewConfig struct {
@@ -88,20 +89,35 @@ func configEnvironment(cfg Config) Config {
 }
 
 func configDefaults(cfg Config) Config {
-	cfg.Model = cmp.Or(cfg.Model, defaultModel)
+	choice := func(id string) string {
+		if cfg.Providers != nil && cfg.Providers.Primary != "" {
+			return modelName(id)
+		}
+		return id
+	}
+	cfg.Model = cmp.Or(cfg.Model, choice(defaultModel))
 	cfg.Init = cmp.Or(cfg.Init, cfg.Model)
-	cfg.Expert = cmp.Or(cfg.Expert, defaultExpertModel)
-	cfg.Review.Model = cmp.Or(cfg.Review.Model, defaultReviewModel)
+	cfg.Expert = cmp.Or(cfg.Expert, choice(defaultExpertModel))
+	cfg.Review.Model = cmp.Or(cfg.Review.Model, choice(defaultReviewModel))
 	if len(cfg.Judges) == 0 {
-		cfg.Judges = effort.DefaultJudges
+		cfg.Judges = nil
+		for _, id := range effort.DefaultJudges {
+			cfg.Judges = append(cfg.Judges, choice(id))
+		}
 	}
 	if len(cfg.Review.SecondOpinion) == 0 {
-		cfg.Review.SecondOpinion = defaultSecondOpinion
+		cfg.Review.SecondOpinion = nil
+		for _, id := range defaultSecondOpinion {
+			cfg.Review.SecondOpinion = append(cfg.Review.SecondOpinion, choice(id))
+		}
 	}
 	return cfg
 }
 
 func validate(cfg Config) error {
+	if err := validateProviderPolicy(cfg.Providers); err != nil {
+		return err
+	}
 	if err := validMode(cfg.DefaultMode); err != nil {
 		return err
 	}
@@ -123,7 +139,7 @@ func validate(cfg Config) error {
 				return fmt.Errorf("%w: %s", errDuplicateModels, role.key)
 			}
 			seen[model] = true
-			if !validModelID(model) {
+			if !validModelReference(model) {
 				return fmt.Errorf("%w for %s: %q", errNotProviderModel, role.key, model)
 			}
 		}

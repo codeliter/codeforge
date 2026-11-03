@@ -1,20 +1,31 @@
 # Example only: choose models available to your authenticated Empryo providers.
 # Save globally as ~/.codeforge/config.yaml or per-project as .codeforge/config.yaml.
-model: copilot/claude-sonnet-5.5
-expert: copilot/claude-opus-5.5
-judges:
-  - copilot/claude-haiku-5.5
-  - copilot/gpt-6-luna
-review:
-  model: copilot/gpt-6.1-sol
-  second_opinion:
-    - copilot/gemini-3.8-flash
-init: copilot/claude-sonnet-5.5
+# Model names resolve through the primary provider; DevPass aliases llmgateway.
+providers:
+  primary: devpass
+  fallback: copilot
 
-# Optional profile routing. Omitted jobs inherit Empryo's routing.
-# In a project override, an empty string resets that job to Empryo's routing.
+# A chosen backup must serve the same named model. Codeforge never installs native
+# fallback settings. Run codeforge models plan and apply missing chains in Empryo.
+# Omit fallback to inherit native policy without a Codeforge backup preference.
+model: Sonnet 5.5
+expert: Opus 5.5
+judges:
+  - Haiku 5.5
+  - gpt-6-luna
+review:
+  model: gpt-6.1-sol
+  second_opinion:
+    - gemini-3.8-flash
+init: Sonnet 5.5
+
+# Explicit provider/model values are advanced overrides; they keep native fallback.
+# expert: copilot/claude-opus-5.5
+
+# Optional profile routing. Omitted project jobs inherit global Codeforge routing.
+# In a project override, an empty string resets that job to native Empryo routing.
 routing:
-  research: copilot/gpt-6-luna
-  editing: copilot/claude-sonnet-5.5
-  verify: copilot/gpt-6.1-sol
-  summaries: copilot/gpt-6-luna
+  research: gpt-6-luna
+  editing: Sonnet 5.5
+  verify: gpt-6.1-sol
+  summaries: gpt-6-luna

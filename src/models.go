@@ -21,7 +21,7 @@ var (
 	errOneModel          = errors.New("role takes exactly one model")
 	errNotProviderModel  = errors.New("model is not provider/model")
 	errUnknownSubcommand = errors.New("unknown subcommand")
-	errModelsUsage       = errors.New("usage: codeforge models set <role> <provider/model>")
+	errModelsUsage       = errors.New("usage: codeforge models set <role> <model-name or provider/model>")
 )
 
 // role describes one model slot. Candidates are model names without the provider, best first,
@@ -49,7 +49,7 @@ var independentOf = map[string][]string{
 }
 
 func family(model string) string {
-	name := model[strings.LastIndex(model, "/")+1:]
+	name := modelReferenceKey(modelName(model))
 	if i := strings.IndexAny(name, "-."); i > 0 {
 		return name[:i]
 	}
@@ -66,7 +66,7 @@ func modelKey(name string) string {
 // availableModels lists provider/model ids from `empryo --list-models`, keeping the provider order Empryo prints.
 // suggestedModel excludes models the project must never recommend or offer.
 func suggestedModel(id string) bool {
-	return !strings.HasPrefix(strings.ToLower(modelName(id)), "gemini-4-argon")
+	return !strings.HasPrefix(modelReferenceKey(modelName(id)), "gemini-4-argon")
 }
 func availableModels(ctx context.Context, bin string) ([]string, error) {
 	out, err := exec.CommandContext(ctx, bin, "--list-models").Output()
@@ -92,6 +92,31 @@ func parseModelList(r io.Reader) []string {
 // and second opinions avoid the reviewer's family so the review is truly independent.
 func recommend(available []string) map[string][]string {
 	return recommendKeeping(available, Config{})
+}
+func recommendConfigured(catalog []string, cfg Config, keep bool) map[string][]string {
+	primary := ""
+	if cfg.Providers != nil {
+		primary = providerID(cfg.Providers.Primary)
+	}
+	if primary != "" {
+		catalog = slices.DeleteFunc(slices.Clone(catalog), func(id string) bool { p, _, _ := strings.Cut(id, "/"); return p != primary })
+	}
+	retained := Config{}
+	if keep {
+		retained = cfg
+	}
+	rec := recommendKeeping(catalog, retained)
+	if primary != "" {
+		for key, ids := range rec {
+			if keep && len(current(cfg, key)) > 0 {
+				continue
+			}
+			for i, id := range ids {
+				ids[i] = modelName(id)
+			}
+		}
+	}
+	return rec
 }
 
 // recommendKeeping fills roles around the ones already configured, so reviewers still avoid the
@@ -167,7 +192,7 @@ func apply(cfg *Config, key string, models []string) error {
 		return fmt.Errorf("%w: %s", errOneModel, key)
 	}
 	for _, model := range models {
-		if !validModelID(model) {
+		if !validModelReference(model) {
 			return fmt.Errorf("%w: %q", errNotProviderModel, model)
 		}
 	}
@@ -249,6 +274,39 @@ func runModels(ctx context.Context, home, bin string, args []string) error {
 		fmt.Printf("%s = %s\nWrote global %s\n", key, strings.Join(models, ", "), filepath.Join(configDir(home), "config.yaml"))
 		return nil
 
+	case "plan":
+		if len(args) != 1 {
+			return fmt.Errorf("%w: codeforge models plan takes no arguments", errModelsUsage)
+		}
+		root, err := repoRoot(ctx)
+		if err != nil {
+			return err
+		}
+		cfg, err = loadConfigAt(home, root)
+		if err != nil {
+			return err
+		}
+		var catalog []string
+		if needsModelCatalog(cfg) {
+			catalog, err = connectedModelCatalog(ctx, bin)
+			if err != nil {
+				return err
+			}
+		}
+		plan, err := resolveModelPlan(cfg, catalog)
+		if err != nil {
+			return err
+		}
+		printModelPlan(os.Stdout, plan)
+		if err := verifyModelPlan(ctx, bin, root, plan); err != nil {
+			return err
+		}
+		if len(plan.fallbackChains()) > 0 {
+			fmt.Fprintln(os.Stdout, "Native fallback verification passed; no native settings were changed.")
+		} else {
+			fmt.Fprintln(os.Stdout, "No Codeforge fallback preference to verify; native policy was not changed.")
+		}
+		return nil
 	case "recommend", "apply", "fill":
 		if sub == "recommend" {
 			root, err := repoRoot(ctx)
@@ -264,10 +322,7 @@ func runModels(ctx context.Context, home, bin string, args []string) error {
 		if err != nil {
 			return err
 		}
-		rec := recommend(available)
-		if sub == "fill" {
-			rec = recommendKeeping(available, cfg)
-		}
+		rec := recommendConfigured(available, cfg, sub == "fill")
 		printModels(os.Stdout, cfg, rec)
 		if sub == "recommend" {
 			fmt.Println("\nRun `codeforge models apply` to use the recommendations, or `codeforge models set <role> <model>...`.")
@@ -289,7 +344,7 @@ func runModels(ctx context.Context, home, bin string, args []string) error {
 		fmt.Printf("\nWrote %s\n", filepath.Join(configDir(home), "config.yaml"))
 		return nil
 	}
-	return fmt.Errorf("%w %q; use configure, recommend, apply or set", errUnknownSubcommand, sub)
+	return fmt.Errorf("%w %q; use configure, plan, recommend, apply, fill or set", errUnknownSubcommand, sub)
 }
 
 func printModels(w io.Writer, cfg Config, rec map[string][]string) {

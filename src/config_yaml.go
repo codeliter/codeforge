@@ -45,7 +45,7 @@ func validateRouting(routing map[string]string) error {
 		if !known {
 			return fmt.Errorf("%w: %s", errRoutingJob, job)
 		}
-		if model != "" && !validModelID(model) {
+		if model != "" && !validModelReference(model) {
 			return fmt.Errorf("%w for routing.%s: %q", errNotProviderModel, job, model)
 		}
 	}
@@ -94,6 +94,10 @@ func decodeConfig(path string, data []byte) (Config, error) {
 }
 
 func mergeConfig(base, local Config) Config {
+	if local.Providers != nil {
+		policy := *local.Providers
+		base.Providers = &policy
+	}
 	if local.Model != "" {
 		base.Model = local.Model
 	}

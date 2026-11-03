@@ -26,7 +26,8 @@ Setup:
   repair, reinit                     Rebuild managed hooks, profiles and skills; keep personas and sessions
   repair --legacy-hook PATH          Replace a named old Codeforge hook; repeat for several paths
   models configure [--project|--global]
-                                     Choose role/helper models interactively and save config.yaml
+                                     Choose providers and role/helper models interactively; save config.yaml
+  models plan                        Show resolved IDs and verify existing native fallback settings
   models [recommend|apply|set ROLE MODEL...]
                                      See effective roles, or apply/set global model choices
   trust                              Approve this repository's persona

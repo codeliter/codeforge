@@ -108,7 +108,7 @@ func Run(ctx context.Context, args []string) error {
 	}
 
 	empryoDir := filepath.Join(home, ".empryo")
-	if err := syncAssets(empryoDir, globalCfg); err != nil {
+	if err := syncAssets(empryoDir, maintenanceProfileConfig(globalCfg)); err != nil {
 		return fmt.Errorf("installing profiles: %w", err)
 	}
 	workspace, err := os.Getwd()
@@ -135,7 +135,7 @@ func Run(ctx context.Context, args []string) error {
 	}
 
 	if repair.enabled {
-		if err := syncProjectAgents(workspace, globalCfg); err != nil {
+		if err := syncProjectAgents(workspace, maintenanceProfileConfig(globalCfg)); err != nil {
 			return err
 		}
 		fmt.Fprintf(os.Stdout, "codeforge: repaired profiles, skills, hooks and gh shim. Hook executable: %s\n", hookBin)
@@ -156,12 +156,41 @@ func Run(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := syncProjectAgents(workspace, cfg); err != nil {
-		return fmt.Errorf("installing project profiles: %w", err)
-	}
 	bin, err := findEmpryo(empryoDir)
 	if err != nil {
 		return err
+	}
+	var catalog []string
+	if needsModelCatalog(cfg) || argumentsNeedCatalog(args) {
+		fmt.Fprintln(os.Stderr, "codeforge: request received; resolving model names through connected providers...")
+		catalog, err = connectedModelCatalog(ctx, bin)
+		if err != nil {
+			return err
+		}
+	}
+	plan, err := resolveModelPlan(cfg, catalog)
+	if err != nil {
+		return err
+	}
+	args, overrides, err := resolveModelArguments(args, cfg.Providers, catalog)
+	if err != nil {
+		return err
+	}
+	plan.Routes = append(plan.Routes, overrides...)
+	if len(plan.fallbackChains()) > 0 {
+		fmt.Fprintln(os.Stderr, "codeforge: checking existing native fallback settings (read-only)...")
+		if err := verifyModelPlan(ctx, bin, workspace, plan); err != nil {
+			return err
+		}
+	}
+	cfg = plan.Config
+	if base, err := resolveModelPlan(globalCfg, catalog); err == nil {
+		if err := syncAssets(empryoDir, base.Config); err != nil {
+			return err
+		}
+	}
+	if err := syncProjectAgents(workspace, cfg); err != nil {
+		return fmt.Errorf("installing project profiles: %w", err)
 	}
 
 	cmd, rest := "", args

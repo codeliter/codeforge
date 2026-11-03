@@ -22,7 +22,7 @@ var allowedEfforts = map[string]bool{"off": true, "none": true, "minimal": true,
 
 // flagsWithValue are Empryo flags whose next argument is a value, not part of the prompt.
 var flagsWithValue = map[string]bool{
-	"--model": true, "--effort": true, "--mode": true, "--session": true, "--resume": true, "-s": true,
+	"--model": true, "--profile": true, "--agent": true, "--effort": true, "--mode": true, "--session": true, "--resume": true, "-s": true,
 	"--session-id": true, "--fork": true, "--cwd": true, "--locale": true, "--system": true,
 	"--max-steps": true, "--timeout": true, "--include": true, "--skill": true, "--image": true,
 	"--thinking": true, "--thinking-budget": true, "--speed": true, "--max-iterations": true,
@@ -49,9 +49,18 @@ func taskArgs(ctx context.Context, bin string, cfg Config, args []string) ([]str
 }
 
 func checkEffort(args []string) error {
-	for i := range args {
-		if v, ok := effortFlag(args, i); ok && !allowedEfforts[v] {
-			return fmt.Errorf("%w: %q", errEffortAboveCeiling, v)
+	for i := 0; i < len(args); i++ {
+		key, _, equal := strings.Cut(args[i], "=")
+		if key == "--effort" {
+			value, ok := effortFlag(args, i)
+			if !ok || !allowedEfforts[value] {
+				return fmt.Errorf("%w: %q", errEffortAboveCeiling, value)
+			}
+			if !equal {
+				i++
+			}
+		} else if flagsWithValue[key] && !equal {
+			i++
 		}
 	}
 	return nil
@@ -123,22 +132,19 @@ func atoi(s string) int {
 }
 
 func hasFlag(args []string, name string) bool {
-	for _, a := range args {
-		if a == name || strings.HasPrefix(a, name+"=") {
+	for i := 0; i < len(args); i++ {
+		key, _, equal := strings.Cut(args[i], "=")
+		if key == name {
 			return true
+		}
+		if flagsWithValue[key] && !equal {
+			i++
 		}
 	}
 	return false
 }
 
-func hasEffort(args []string) bool {
-	for i := range args {
-		if _, ok := effortFlag(args, i); ok {
-			return true
-		}
-	}
-	return false
-}
+func hasEffort(args []string) bool { return hasFlag(args, "--effort") }
 
 func effortFlag(args []string, i int) (string, bool) {
 	if v, ok := strings.CutPrefix(args[i], "--effort="); ok {
@@ -164,26 +170,37 @@ func findEmpryo(empryoDir string) (string, error) {
 
 // flagValue returns the value of --name or --name=value, or "".
 func flagValue(args []string, name string) string {
-	for i, a := range args {
-		if v, ok := strings.CutPrefix(a, name+"="); ok {
-			return v
-		}
-		if a == name && i+1 < len(args) {
-			return args[i+1]
+	value := ""
+	for i := 0; i < len(args); i++ {
+		key, v, equal := strings.Cut(args[i], "=")
+		if key == name {
+			if equal {
+				value = v
+			} else if i+1 < len(args) {
+				i++
+				value = args[i]
+			}
+		} else if flagsWithValue[key] && !equal {
+			i++
 		}
 	}
-	return ""
+	return value
 }
 
 // dropFlag removes --name and its value, so a flag codeforge has already applied is not applied twice.
 func dropFlag(args []string, name string) []string {
 	out := make([]string, 0, len(args))
 	for i := 0; i < len(args); i++ {
-		switch {
-		case args[i] == name:
+		key, _, equal := strings.Cut(args[i], "=")
+		if key == name {
+			if flagsWithValue[key] && !equal && i+1 < len(args) {
+				i++
+			}
+			continue
+		}
+		out = append(out, args[i])
+		if flagsWithValue[key] && !equal && i+1 < len(args) {
 			i++
-		case strings.HasPrefix(args[i], name+"="):
-		default:
 			out = append(out, args[i])
 		}
 	}

@@ -64,7 +64,9 @@ Outside a Git project, `init` also uses this global location.
 codeforge models configure
 ```
 
-Pick the coding model, expert delegate, reviewer, jury, effort judges, and persona model from your provider's model list.
+Choose **provider defaults** to pick a primary provider and optional fallback once, then choose model names for coding, expert help, review, effort judging, and persona generation.
+For DevPass, choose **LLM Gateway / DevPass** first and **Copilot** as fallback. The preview shows the actual catalog IDs.
+The advanced style keeps explicit `provider/model` choices; those use native Empryo fallback instead of the shared Codeforge preference.
 New setups use **Sonnet 5.5** for everyday coding and **Opus 5.5** only when expert help is needed. Existing saved choices are kept.
 Choose whether to save for this project or for all projects. You can also choose models for helper jobs.
 
@@ -74,6 +76,14 @@ The wizard approves the exact settings you save. For a manually edited or shared
 Without approval, Codeforge ignores that project's model file instead of letting it choose its own reviewers.
 Old global `config.json` files still work; saving model choices writes YAML and keeps the old JSON file.
 Prefer editing a file? See [config.example.yaml](config.example.yaml).
+
+**Fallback is verified, not installed.** With a selected backup, the same model must exist on both connected providers, and its native Empryo fallback chain must already match. Codeforge stops before model work if it does not.
+
+```sh
+codeforge models plan
+```
+
+This displays resolved primary/backup IDs and checks the existing native settings. If a chain is missing, it prints the required settings for you to apply through Empryo `/router` or its settings tool. Codeforge does not write native settings, credentials, or billing configuration. Empryo owns quota retries and failover timing.
 
 ## 3. Give it a job
 

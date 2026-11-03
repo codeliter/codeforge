@@ -61,7 +61,7 @@ func TestApply(t *testing.T) {
 
 	require.ErrorIs(t, apply(&cfg, "nope", []string{"a/b"}), errUnknownRole)
 	require.ErrorIs(t, apply(&cfg, "model", []string{"a/b", "c/d"}), errOneModel)
-	require.ErrorIs(t, apply(&cfg, "judges", []string{"plain"}), errNotProviderModel)
+	require.ErrorIs(t, apply(&cfg, "judges", []string{"invalid model/ref"}), errNotProviderModel)
 	require.ErrorIs(t, apply(&cfg, "review.model", []string{"a/b"}), errReviewerIsCoder)
 	require.ErrorIs(t, apply(&cfg, "review.model", []string{"c/d"}), errSecondOpinionIsReviewer)
 }

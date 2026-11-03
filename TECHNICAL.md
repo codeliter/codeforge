@@ -201,8 +201,21 @@ Cancellation leaves existing settings unchanged. Existing, temporarily unavailab
 - `models set`, `apply`, and setup's `fill` retain their global write scope. The configuration wizard supports either scope.
   `models` displays effective project-aware roles. YAML rejects unknown keys, duplicate mappings, invalid types, and multiple documents.
 
-The current schema stores qualified `provider/model` IDs chosen from the catalog. A provider-first, model-name-only selector with
-primary/fallback provider resolution is a separate proposed extension, not a supported YAML field or a promised automatic failover mechanism.
+The schema also accepts `providers: {primary: devpass, fallback: copilot}` and model names such as `Sonnet 5.5`.
+`devpass` resolves to the native `llmgateway` provider ID; this is an account alias, not a billing override.
+The wizard offers a provider-defaults style and an advanced explicit-ID style. Names resolve against authenticated-provider catalog IDs,
+normalising spaces, version punctuation, and Claude family aliases. Unknown or ambiguous names fail before a model-backed task.
+Explicit `provider/model` IDs retain their previous semantics, including unavailable saved IDs and native fallback.
+Switching styles is an explicit migration of model references at the selected scope; cancelling does not save it.
+Provider policies replace the corresponding global policy as a block; a project `providers: {}` clears inherited provider defaults.
+
+A chosen backup requires the same named model on that provider. Codeforge does not install fallback maps or use an unproven preset overlay.
+Before model work it reads global, project, and effective `modelFallback` settings through the documented ACP config extension,
+without a prompt or config write, then deletes only its own query session. Declared and effective chains must both match, including
+no undeclared extra backup hop. Missing or incompatible chains fail closed and show required settings for the user to apply in Empryo.
+`codeforge models plan` prints resolved IDs and performs the same read-only verification; it does not make a model request.
+Quota retry timing and actual failover remain native Empryo behaviour. No backup preference means native fallback is inherited without this check.
+Roles, explicit helper routing, environment model references and CLI model arguments are resolved before generation; flag values are not reinterpreted as options.
 
 See the complete [example configuration](config.example.yaml). The `routing` map accepts the supported Empryo profile jobs:
 `research`, `editing`, `explore`, `web-search`, `cleanup`, `verify`, `review`, `goal-review`, `summaries`, and `marionette`.
