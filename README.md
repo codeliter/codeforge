@@ -92,6 +92,15 @@ The safety-check program stays at `~/.empryo/hooks/cf`, not in a temporary folde
 Old, broken Codeforge hooks are replaced. Your other hooks, personas, sessions, and logins are kept.
 Close and reopen affected sessions after repairing.
 
+If an old **Codeforge** hook used another name, tell repair its old path:
+
+```sh
+codeforge repair --legacy-hook /tmp/old-bin
+```
+
+Only use this for an old Codeforge executable you recognise. Other security hooks are kept.
+If that path is not in the global hook file, repair warns you to check the project's or other agent's hook settings.
+
 Repair does not fix a provider's quota, a failed sign-in, or a broken internet connection.
 
 ## Come back later

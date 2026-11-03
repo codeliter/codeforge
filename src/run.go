@@ -74,6 +74,11 @@ func Run(ctx context.Context, args []string) error {
 		}
 	}
 
+	repair, err := parseRepairArgs(args)
+	if err != nil {
+		return err
+	}
+
 	// Machine setup runs before anything that needs Empryo, because it installs and signs in to Empryo.
 	// init runs it first and then continues with the persona; setup stops after it.
 	if len(args) > 0 && (args[0] == "setup" || args[0] == "init" && !slices.Contains(args, "--repo")) {
@@ -107,17 +112,14 @@ func Run(ctx context.Context, args []string) error {
 	if err != nil {
 		return fmt.Errorf("installing hook executable: %w", err)
 	}
-	if err := installHooks(empryoDir, hookBin); err != nil {
+	if err := installHooks(empryoDir, hookBin, repair.legacyHooks...); err != nil {
 		return fmt.Errorf("installing guard: %w", err)
 	}
 	if err := installGHShim(empryoDir, hookBin); err != nil {
 		return fmt.Errorf("installing gh guard: %w", err)
 	}
 
-	if len(args) > 0 && (args[0] == "repair" || args[0] == "reinit") {
-		if len(args) != 1 {
-			return fmt.Errorf("%w: repair takes no arguments", errInitUsage)
-		}
+	if repair.enabled {
 		fmt.Fprintf(os.Stdout, "codeforge: repaired profiles, skills, hooks and gh shim. Hook executable: %s\n", hookBin)
 		fmt.Fprintln(os.Stdout, "Personas, sessions and logins were kept. Start a new Codeforge session to use the repaired hooks.")
 		return nil

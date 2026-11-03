@@ -59,7 +59,7 @@ sequenceDiagram
         CLI->>Engine: Open TUI with --session and original profile
     else Initial turn fails or is interrupted
         Engine-->>CLI: Error or interruption
-        CLI-->>User: Preserve exit status; do not open an empty TUI
+        CLI-->>User: Preserve exit status and do not open an empty TUI
     end
 ```
 
@@ -118,7 +118,11 @@ The permanent `~/.empryo/hooks/cf` helper is a private executable copy of the ru
 binary. It is refreshed atomically; its lifetime is independent of temporary build paths and Homebrew
 Cellar cleanup. Hook registration and the managed `gh` shim use this helper.
 The installer replaces recognised legacy Codeforge entries, including `/tmp/cf`, while retaining
-unrelated hooks and other hooks sharing the same rule.
+unrelated hooks and other hooks sharing the same rule. Unknown renamed binaries are not assumed to be
+Codeforge: the user can explicitly identify one with `repair --legacy-hook /absolute/old/path`.
+That migrates only exact executable/Codeforge-subcommand matches in the global hook registry;
+a missing match produces a warning to inspect project or other agent settings. It does not disable
+fail-closed behaviour or indiscriminately delete missing security hooks.
 
 The `PreToolUse` guard remains **fail-closed**. If it cannot run, a protected tool call is not allowed
 through. The `SessionEnd` resume-hint hook is fail-open because shutdown must not wait on a hint.

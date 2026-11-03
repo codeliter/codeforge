@@ -13,7 +13,7 @@ import (
 // installHooks merges codeforge's guard and resume hint into ~/.empryo/hooks.json, keeping any hooks the user added.
 // The guard is global and fail-closed because hard stops must hold even when the model ignores its instructions.
 // The resume hint is fail-open: a shutdown must never wait on it.
-func installHooks(empryoDir, self string) error {
+func installHooks(empryoDir, self string, legacyHooks ...string) error {
 	path := filepath.Join(empryoDir, "hooks.json")
 
 	doc := map[string]any{}
@@ -33,20 +33,26 @@ func installHooks(empryoDir, self string) error {
 		hooks = map[string]any{}
 	}
 
+	for _, legacy := range legacyHooks {
+		if !legacyHookPresent(hooks, legacy) {
+			fmt.Fprintf(os.Stderr, "codeforge: no matching legacy hook for %q in %s; check project or other agent hook settings if the error continues.\n", legacy, path)
+		}
+	}
+
 	const hookTimeoutSeconds = 10
 	setOurs(hooks, "PreToolUse", hookCommand, map[string]any{
 		"type":       "command",
 		"command":    shellQuote(self) + " " + hookCommand,
 		"timeout":    hookTimeoutSeconds,
 		"failClosed": true,
-	})
+	}, legacyHooks...)
 	// Empryo gives each SessionEnd hook at most 3 seconds while it shuts down.
 	const sessionEndTimeoutSeconds = 3
 	setOurs(hooks, "SessionEnd", sessionEndCommand, map[string]any{
 		"type":    "command",
 		"command": shellQuote(self) + " " + sessionEndCommand,
 		"timeout": sessionEndTimeoutSeconds,
-	})
+	}, legacyHooks...)
 	doc["hooks"] = hooks
 
 	out, err := json.MarshalIndent(doc, "", "  ")
@@ -66,7 +72,7 @@ const (
 
 // setOurs replaces only codeforge's hooks, including stale temporary launchers.
 // User hooks in the same rule and the rule's matcher are preserved.
-func setOurs(hooks map[string]any, event, sub string, hook map[string]any) {
+func setOurs(hooks map[string]any, event, sub string, hook map[string]any, legacyHooks ...string) {
 	var kept []any
 	if rules, ok := hooks[event].([]any); ok {
 		for _, r := range rules {
@@ -82,7 +88,7 @@ func setOurs(hooks map[string]any, event, sub string, hook map[string]any) {
 			}
 			var remaining []any
 			for _, h := range list {
-				if !isOurHook(h, sub) {
+				if !isOurHook(h, sub, legacyHooks...) {
 					remaining = append(remaining, h)
 				}
 			}
@@ -99,7 +105,7 @@ func setOurs(hooks map[string]any, event, sub string, hook map[string]any) {
 
 // isOurHook recognises the permanent helper and codeforge's legacy commands.
 // Merely mentioning codeforge in a user hook is not enough to replace it.
-func isOurHook(h any, sub string) bool {
+func isOurHook(h any, sub string, legacyHooks ...string) bool {
 	m, ok := h.(map[string]any)
 	if !ok {
 		return false
@@ -107,6 +113,9 @@ func isOurHook(h any, sub string) bool {
 	cmd, ok := m["command"].(string)
 	if !ok {
 		return false
+	}
+	if matchesLegacyHook(cmd, sub, legacyHooks) {
+		return true
 	}
 	quoted, ok := strings.CutSuffix(cmd, " "+sub)
 	if !ok {
