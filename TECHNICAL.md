@@ -95,6 +95,9 @@ flowchart TD
 - Automatic init inside Git writes at the repository root, even when invoked from a subdirectory.
   It does not replace the global persona. Explicit repository input paths retain the historical
   global-learning form; `--global` makes that intention clear.
+- `init --persona` opens a selector with the available starter names and short descriptions.
+  An explicit name, such as `--persona oss`, skips the selector. Non-interactive callers must
+  supply a name; otherwise the command lists the choices and stops without writing a persona.
 - Existing, filled-in repository personas are not overwritten. Empty files and an unchanged
   repository scaffold can be populated. Failed generation does not replace a persona with an empty result.
 - Local rules take precedence over generic/global style where they differ, but never override safety rules.

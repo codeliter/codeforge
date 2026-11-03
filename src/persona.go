@@ -34,8 +34,16 @@ var (
 )
 
 type starter struct {
-	Name    string
-	Summary string
+	Name        string
+	Summary     string
+	Description string
+}
+
+var starterDescriptions = map[string]string{
+	"oss":       "Friendly reviews, stable APIs, and good docs.",
+	"pragmatic": "Small, clear changes backed by tests.",
+	"regulated": "Careful changes with risk, audit, and rollback notes.",
+	"startup":   "Ship quickly with small PRs and practical follow-ups.",
 }
 
 // starters lists the embedded personas for users with no history, such as a brand-new repository.
@@ -52,9 +60,16 @@ func starters() []starter {
 			continue
 		}
 		title, _, _ := strings.Cut(string(data), "\n")
+		name := strings.TrimSuffix(e.Name(), ".md")
+		summary := strings.TrimPrefix(title, "# Persona: ")
+		description := starterDescriptions[name]
+		if description == "" {
+			description = summary
+		}
 		out = append(out, starter{
-			Name:    strings.TrimSuffix(e.Name(), ".md"),
-			Summary: strings.TrimPrefix(title, "# Persona: "),
+			Name:        name,
+			Summary:     summary,
+			Description: description,
 		})
 	}
 	return out

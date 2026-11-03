@@ -20,8 +20,8 @@ Modes:
 
 Setup:
   init [--yes]                       Set up Empryo, sign-in and checks; learn a local persona in this Git repo
-  init --repo [--persona NAME]       Learn a local persona, or use a starter (.codeforge/persona.md)
-  init --persona NAME               Use a starter persona for this repo
+  init --repo [--persona [NAME]]     Learn a local persona, or use a starter (.codeforge/persona.md)
+  init --persona [NAME]             Pick a described starter persona; name it to skip the menu
   init --global [REPO...]           Set your global persona instead (~/.codeforge/persona.md)
   repair, reinit                     Rebuild managed hooks, profiles and skills; keep personas and sessions
   models [recommend|apply|set ROLE MODEL...]

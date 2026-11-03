@@ -25,7 +25,7 @@ const (
 	scopeRepo   = "repo"
 )
 
-var errInitUsage = errors.New("usage: codeforge init [--repo|--global] [--persona <name>] [repo...]")
+var errInitUsage = errors.New("usage: codeforge init [--repo|--global] [--persona [name]] [repo...]")
 
 type initAnswers struct {
 	scope   string
@@ -40,6 +40,12 @@ func runInit(ctx context.Context, home, bin string, cfg Config, args []string) e
 	ans, err := initFromArgs(args)
 	if err != nil {
 		return err
+	}
+	if ans.source == sourceStarter {
+		ans.starter, err = resolveStarter(ans.starter, pickStarter)
+		if err != nil {
+			return err
+		}
 	}
 	if ans.scope == scopeAuto {
 		wd, err := os.Getwd()
@@ -141,9 +147,12 @@ func initFromArgs(args []string) (initAnswers, error) {
 				return ans, fmt.Errorf("%w: --repo and --global conflict", errInitUsage)
 			}
 			ans.scope = scope
-		case args[i] == "--persona" && i+1 < len(args):
-			ans.source, ans.starter = sourceStarter, args[i+1]
-			i++
+		case args[i] == "--persona":
+			ans.source, ans.starter = sourceStarter, ""
+			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+				ans.starter = args[i+1]
+				i++
+			}
 		case strings.HasPrefix(args[i], "-"):
 			return ans, fmt.Errorf("%w: unknown flag %s", errInitUsage, args[i])
 		default:
@@ -168,10 +177,7 @@ func initFromArgs(args []string) (initAnswers, error) {
 func askInit() (initAnswers, error) {
 	ans := initAnswers{scope: scopeGlobal, source: sourceLearn, repos: "."}
 
-	var options []huh.Option[string]
-	for _, s := range starters() {
-		options = append(options, huh.NewOption(s.Summary, s.Name))
-	}
+	options := starterOptions(starters())
 
 	form := huh.NewForm(
 		huh.NewGroup(

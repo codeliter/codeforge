@@ -33,13 +33,21 @@ This file tells Codeforge how to work in this project. You can edit it.
 An existing, filled-in file is kept. An empty file or untouched old template can be filled in.
 Your global persona is not changed.
 
-No history yet? Use a ready-made starting point:
+No history yet? Choose a ready-made starting point:
 
 ```sh
-codeforge init --persona oss
+codeforge init --persona
 ```
 
-Other choices: `pragmatic`, `startup`, and `regulated`.
+Use the arrow keys to pick one, then press Enter:
+
+- **oss:** Friendly reviews, stable APIs, and good docs.
+- **pragmatic:** Small, clear changes backed by tests.
+- **regulated:** Careful changes with risk, audit, and rollback notes.
+- **startup:** Ship quickly with small PRs and practical follow-ups.
+
+Already know your choice? `codeforge init --persona oss` skips the menu.
+Scripts must include the name because they cannot answer the menu.
 
 Want to set rules for **all** projects instead? Ask for that explicitly:
 
