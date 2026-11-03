@@ -41,6 +41,9 @@ func protectedPath(p, cwd, home string) bool {
 	}
 
 	dir := filepath.Base(filepath.Dir(p))
+	if dir == ".codeforge" && slices.Contains([]string{"config.yaml", "config.yml", "config.json"}, filepath.Base(p)) {
+		return true
+	}
 	return slices.Contains(hookConfigDirs, dir) && slices.Contains(hookConfigFiles, filepath.Base(p)) ||
 		slices.Contains(hookConfigDirs, dir) && strings.HasPrefix(filepath.Base(filepath.Dir(filepath.Dir(p))), ".") && filepath.Base(p) == "hooks.json" ||
 		strings.Contains(filepath.ToSlash(p), "/.empryo/hooks/") ||

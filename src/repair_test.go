@@ -16,6 +16,8 @@ func TestRepairRestoresManagedFilesWithoutChangingUserData(t *testing.T) {
 	global, err := savePersona(home, []byte("# My global persona\nKeep this.\n"))
 	require.NoError(t, err)
 	local := writeRepoPersona(t, wd, "# My local persona\nKeep this too.\n")
+	brokenConfig := filepath.Join(wd, ".codeforge", "config.yaml")
+	require.NoError(t, os.WriteFile(brokenConfig, []byte("unknown: true\n---\ninvalid: [\n"), privateFile))
 	empryoDir := filepath.Join(home, ".empryo")
 	hooks := filepath.Join(empryoDir, "hooks.json")
 	require.NoError(t, os.WriteFile(hooks, []byte(`{"hooks":{"PreToolUse":[{"hooks":[{"command":"'/tmp/cf' hook","failClosed":true},{"command":"notify-user"}]}]}}`), privateFile))

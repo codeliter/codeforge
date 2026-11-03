@@ -91,14 +91,29 @@ func Run(ctx context.Context, args []string) error {
 		args = slices.DeleteFunc(slices.Clone(args), func(a string) bool { return a == "--yes" || a == "-y" })
 	}
 
-	cfg, err := loadConfig(home)
+	if len(args) > 0 && args[0] == "models" {
+		bin, err := findEmpryo(filepath.Join(home, ".empryo"))
+		if err != nil {
+			return err
+		}
+		return runModels(ctx, home, bin, args[1:])
+	}
+	project, err := repoRoot(ctx)
+	if err != nil {
+		return err
+	}
+	globalCfg, err := loadBaseConfig(home)
 	if err != nil {
 		return err
 	}
 
 	empryoDir := filepath.Join(home, ".empryo")
-	if err := syncAssets(empryoDir, cfg); err != nil {
+	if err := syncAssets(empryoDir, globalCfg); err != nil {
 		return fmt.Errorf("installing profiles: %w", err)
+	}
+	workspace, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("finding workspace: %w", err)
 	}
 	if err := installPersonaSkill(home); err != nil {
 		return fmt.Errorf("installing persona: %w", err)
@@ -120,11 +135,30 @@ func Run(ctx context.Context, args []string) error {
 	}
 
 	if repair.enabled {
+		if err := syncProjectAgents(workspace, globalCfg); err != nil {
+			return err
+		}
 		fmt.Fprintf(os.Stdout, "codeforge: repaired profiles, skills, hooks and gh shim. Hook executable: %s\n", hookBin)
 		fmt.Fprintln(os.Stdout, "Personas, sessions and logins were kept. Start a new Codeforge session to use the repaired hooks.")
 		return nil
 	}
 
+	if len(args) > 0 && args[0] == "trust" {
+		if len(args) == 1 {
+			return runTrust(ctx, home)
+		}
+		if len(args) == 2 && args[1] == "--models" {
+			return runTrustModels(home, project)
+		}
+		return fmt.Errorf("%w: use codeforge trust [--models]", errInitUsage)
+	}
+	cfg, err := loadConfigAt(home, project)
+	if err != nil {
+		return err
+	}
+	if err := syncProjectAgents(workspace, cfg); err != nil {
+		return fmt.Errorf("installing project profiles: %w", err)
+	}
 	bin, err := findEmpryo(empryoDir)
 	if err != nil {
 		return err
@@ -143,10 +177,6 @@ func Run(ctx context.Context, args []string) error {
 	switch cmd {
 	case "init":
 		return runInit(ctx, home, bin, cfg, rest)
-	case "models":
-		return runModels(ctx, home, bin, rest)
-	case "trust":
-		return runTrust(ctx, home)
 	case "gate":
 		return runGate(ctx, home, bin, cfg, os.Stdout)
 	case "respond":

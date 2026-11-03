@@ -22,8 +22,6 @@ const (
 // syncAssets writes the embedded profiles and skills into ~/.empryo, replacing stale copies and symlinks.
 // Profiles carry {{coder}} and {{reviewer}} so `/profile` switches inside the TUI keep the configured models.
 func syncAssets(empryoDir string, cfg Config) error {
-	vars := strings.NewReplacer("{{coder}}", cfg.Model, "{{reviewer}}", cfg.Review.Model)
-
 	err := fs.WalkDir(assets.Profile, ".", func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return err
@@ -34,7 +32,10 @@ func syncAssets(empryoDir string, cfg Config) error {
 			return fmt.Errorf("reading embedded %s: %w", path, err)
 		}
 		if strings.HasPrefix(path, "agents/") {
-			want = []byte(vars.Replace(string(want)))
+			want, err = renderAgent(want, cfg)
+			if err != nil {
+				return err
+			}
 		}
 
 		dst := filepath.Join(empryoDir, path)
@@ -60,7 +61,7 @@ func writeFile(root, rel string, data []byte, perm os.FileMode) error {
 	if err := os.MkdirAll(filepath.Dir(dst), dirPerm); err != nil {
 		return fmt.Errorf("creating %s: %w", filepath.Dir(dst), err)
 	}
-	if err := os.WriteFile(dst, data, perm); err != nil {
+	if err := atomicWriteFile(dst, data, perm); err != nil {
 		return fmt.Errorf("writing %s: %w", dst, err)
 	}
 	return nil

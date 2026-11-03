@@ -58,6 +58,23 @@ codeforge init --global
 Those rules go in `~/.codeforge/persona.md`.
 Outside a Git project, `init` also uses this global location.
 
+## Choose models (optional)
+
+```sh
+codeforge models configure
+```
+
+Pick the coding model, expert delegate, reviewer, jury, effort judges, and persona model from your provider's model list.
+New setups use **Sonnet 5.5** for everyday coding and **Opus 5.5** only when expert help is needed. Existing saved choices are kept.
+Choose whether to save for this project or for all projects. You can also choose models for helper jobs.
+
+Project choices live in `.codeforge/config.yaml`. Global choices live in `~/.codeforge/config.yaml`.
+Approved project choices win over global choices. Your normal Empryo settings and logins are not changed.
+The wizard approves the exact settings you save. For a manually edited or shared project file, inspect it and run `codeforge trust --models`.
+Without approval, Codeforge ignores that project's model file instead of letting it choose its own reviewers.
+Old global `config.json` files still work; saving model choices writes YAML and keeps the old JSON file.
+Prefer editing a file? See [config.example.yaml](config.example.yaml).
+
 ## 3. Give it a job
 
 ```sh
@@ -70,12 +87,30 @@ codeforge respond 123
 
 Or run `codeforge` and pick a mode.
 
+**Not sure? Start with `work`.**
+
+| Mode | Use it when… |
+| --- | --- |
+| `work` | You want a change built and tested, without ticket or PR steps. |
+| `chat` | You want an explanation, a plan, or a small edit. |
+| `ticket` | You have a ticket to take through implementation and the draft-PR workflow. |
+| `review` | You want a separate, read-only review of a PR or local changes. |
+| `respond` | You want to address feedback on your existing PR. |
+
+For “make a change, review it, then fix the findings”, stay in `work` and ask for `codeforge-reviewer`.
+You do not need to start another terminal.
+
 Codeforge acknowledges a new job right away. It prepares the context, then waits for the model.
 The job runs in your terminal. When it finishes, a chat screen opens for follow-up questions.
 A slow or broken provider can still delay the model's reply.
 
-Review is read-only and posts nothing. Review currently needs macOS.
+A standalone review is read-only and posts nothing. Its sandbox currently needs macOS.
 Use `codeforge review` with no PR number to review your local changes.
+
+You can also ask for a review in your existing work or chat screen. No second terminal is needed.
+The `codeforge-reviewer` helper returns findings and can ask the parent conversation to delegate agreed fixes to `codeforge-work`.
+For another person's PR, it can draft a comment. The parent must show you the exact PR and comment and ask your approval before posting.
+The reviewer itself cannot edit or post; a review request is not permission to publish.
 
 ## Something is broken?
 

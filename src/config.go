@@ -2,10 +2,8 @@ package src
 
 import (
 	"cmp"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,23 +15,27 @@ var (
 	errSecondOpinionIsReviewer = errors.New("review.second_opinion must differ from review.model")
 	errReviewerIsCoder         = errors.New("review.model must differ from model, the model that writes the code")
 	errSecondOpinionIsCoder    = errors.New("review.second_opinion must not include model, the model that writes the code")
+	errDuplicateModels         = errors.New("model IDs must be unique within each role")
 )
 
 type Config struct {
-	Model       string       `json:"model,omitempty"`
-	Judges      []string     `json:"judges,omitempty"`
-	Review      ReviewConfig `json:"review,omitzero"`
-	Init        string       `json:"init,omitempty"`
-	DefaultMode string       `json:"default_mode,omitempty"`
+	Model       string            `json:"model,omitempty" yaml:"model,omitempty"`
+	Expert      string            `json:"expert,omitempty" yaml:"expert,omitempty"`
+	Judges      []string          `json:"judges,omitempty" yaml:"judges,omitempty"`
+	Review      ReviewConfig      `json:"review,omitzero" yaml:"review,omitempty"`
+	Init        string            `json:"init,omitempty" yaml:"init,omitempty"`
+	DefaultMode string            `json:"default_mode,omitempty" yaml:"default_mode,omitempty"` //nolint:tagliatelle // Preserve the established configuration keys.
+	Routing     map[string]string `json:"routing,omitempty" yaml:"routing,omitempty"`
 }
 
 type ReviewConfig struct {
-	Model         string   `json:"model,omitempty"`
-	SecondOpinion []string `json:"second_opinion,omitempty"`
+	Model         string   `json:"model,omitempty" yaml:"model,omitempty"`
+	SecondOpinion []string `json:"second_opinion,omitempty" yaml:"second_opinion,omitempty"` //nolint:tagliatelle // Preserve the established configuration keys.
 }
 
 const (
-	defaultModel       = "copilot/claude-opus-5.5"
+	defaultModel       = "copilot/claude-sonnet-5.5"
+	defaultExpertModel = "copilot/claude-opus-5.5"
 	defaultReviewModel = "copilot/gpt-6.1-sol"
 )
 
@@ -43,20 +45,52 @@ func configDir(home string) string {
 	return filepath.Join(home, ".codeforge")
 }
 
-// loadConfig merges defaults, ~/.codeforge/config.json and CODEFORGE_* overrides, then validates the reviewers.
+// loadConfig retains the global-only contract for setup and existing callers.
 func loadConfig(home string) (Config, error) {
+	return loadConfigAt(home, "")
+}
+
+// loadConfigAt applies project overrides before environment overrides and defaults.
+func loadConfigAt(home, project string) (Config, error) {
 	cfg, err := readConfigFile(home)
 	if err != nil {
 		return cfg, err
 	}
+	if project != "" && !sameConfigScope(home, project) {
+		local, err := readTrustedProjectConfig(home, project)
+		if err != nil {
+			return cfg, err
+		}
+		cfg = mergeConfig(cfg, local)
+	}
+	cfg = configEnvironment(cfg)
+	cfg = configDefaults(cfg)
+	return cfg, validate(cfg)
+}
+func loadBaseConfig(home string) (Config, error) {
+	cfg, err := readConfigFile(home)
+	if err != nil {
+		return cfg, err
+	}
+	cfg = configDefaults(cfg)
+	return cfg, nil
+}
 
+func configEnvironment(cfg Config) Config {
 	override(&cfg.Model, "CODEFORGE_MODEL")
+	override(&cfg.Init, "CODEFORGE_INIT")
+	override(&cfg.Expert, "CODEFORGE_EXPERT")
 	override(&cfg.DefaultMode, "CODEFORGE_MODE")
 	override(&cfg.Review.Model, "CODEFORGE_REVIEW_MODEL")
 	overrideList(&cfg.Judges, "CODEFORGE_JUDGES")
 	overrideList(&cfg.Review.SecondOpinion, "CODEFORGE_REVIEW_SECOND_OPINION")
+	return cfg
+}
 
+func configDefaults(cfg Config) Config {
 	cfg.Model = cmp.Or(cfg.Model, defaultModel)
+	cfg.Init = cmp.Or(cfg.Init, cfg.Model)
+	cfg.Expert = cmp.Or(cfg.Expert, defaultExpertModel)
 	cfg.Review.Model = cmp.Or(cfg.Review.Model, defaultReviewModel)
 	if len(cfg.Judges) == 0 {
 		cfg.Judges = effort.DefaultJudges
@@ -64,11 +98,9 @@ func loadConfig(home string) (Config, error) {
 	if len(cfg.Review.SecondOpinion) == 0 {
 		cfg.Review.SecondOpinion = defaultSecondOpinion
 	}
-
-	return cfg, validate(cfg)
+	return cfg
 }
 
-// validate keeps every reviewer independent of the code's author and of each other.
 func validate(cfg Config) error {
 	if err := validMode(cfg.DefaultMode); err != nil {
 		return err
@@ -84,40 +116,27 @@ func validate(cfg Config) error {
 			return fmt.Errorf("%w (%s)", errSecondOpinionIsCoder, m)
 		}
 	}
-	return nil
+	for _, role := range roles {
+		seen := make(map[string]bool)
+		for _, model := range current(cfg, role.key) {
+			if seen[model] {
+				return fmt.Errorf("%w: %s", errDuplicateModels, role.key)
+			}
+			seen[model] = true
+			if !validModelID(model) {
+				return fmt.Errorf("%w for %s: %q", errNotProviderModel, role.key, model)
+			}
+		}
+	}
+	return validateRouting(cfg.Routing)
 }
 
-// readConfigFile reads only what the user wrote, so `set` and `apply` never bake defaults into the file.
 func readConfigFile(home string) (Config, error) {
-	var cfg Config
-
-	data, err := os.ReadFile(filepath.Join(configDir(home), "config.json"))
-	if errors.Is(err, fs.ErrNotExist) {
-		return cfg, nil
-	}
-	if err != nil {
-		return cfg, fmt.Errorf("reading config: %w", err)
-	}
-
-	if err := json.Unmarshal(data, &cfg); err != nil {
-		return cfg, fmt.Errorf("decoding config: %w", err)
-	}
-	return cfg, nil
+	return readConfigDirectory(configDir(home), true)
 }
 
 func writeConfigFile(home string, cfg Config) error {
-	data, err := json.MarshalIndent(cfg, "", "  ")
-	if err != nil {
-		return fmt.Errorf("encoding config: %w", err)
-	}
-
-	if err := os.MkdirAll(configDir(home), privateDir); err != nil {
-		return fmt.Errorf("creating config dir: %w", err)
-	}
-	if err := os.WriteFile(filepath.Join(configDir(home), "config.json"), append(data, '\n'), privateFile); err != nil {
-		return fmt.Errorf("writing config: %w", err)
-	}
-	return nil
+	return writeConfigYAML(configDir(home), cfg)
 }
 
 func override(dst *string, env string) {

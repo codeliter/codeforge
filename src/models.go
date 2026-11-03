@@ -34,11 +34,12 @@ type role struct {
 }
 
 var roles = []role{
-	{"model", 1, "writes the code; strongest coding model you have", []string{"claude-opus-5.5", "gpt-6.1-sol", "claude-opus-5", "gpt-6-sol", "claude-sonnet-5.5"}},
+	{"model", 1, "writes the code; strongest coding model you have", []string{"claude-sonnet-5.5", "claude-opus-5.5", "gpt-6.1-sol", "claude-opus-5", "gpt-6-sol"}},
+	{"expert", 1, "on-demand delegate for difficult implementation, not routine work", []string{"claude-opus-5.5", "claude-opus-5", "gpt-6.1-sol"}},
 	{"judges", 2, "score effort before launch; cheapest fast models, two families", []string{"claude-haiku-5.5", "gpt-6-luna", "gemini-3.8-flash", "gpt-5.6-luna", "mai-code-1.1-flash", "gpt-5.4-nano"}},
-	{"review.model", 1, "writes the review; strongest model from a different family than the coder", []string{"gpt-6.1-sol", "claude-opus-5.5", "gpt-5.5", "claude-opus-5", "gemini-4-argon"}},
+	{"review.model", 1, "writes the review; strongest model from a different family than the coder", []string{"gpt-6.1-sol", "claude-opus-5.5", "gpt-5.5", "claude-opus-5", "gemini-3.8-flash"}},
 	{"review.second_opinion", 2, "independent reviewers; frontier models from other families", []string{"kimi-k3", "gpt-6.1-sol", "gpt-5.5", "claude-opus-5.5"}},
-	{"init", 1, "distils your persona once; best writer", []string{"claude-opus-5.5", "gpt-6.1-sol", "claude-sonnet-5.5"}},
+	{"init", 1, "distils your persona once; capable everyday writer", []string{"claude-sonnet-5.5", "claude-opus-5.5", "gpt-6.1-sol"}},
 }
 
 // independentOf lists the roles whose model families a role must avoid, so reviews never share the coder's blind spots.
@@ -58,8 +59,15 @@ func family(model string) string {
 func modelName(model string) string {
 	return model[strings.LastIndex(model, "/")+1:]
 }
+func modelKey(name string) string {
+	return strings.ToLower(strings.NewReplacer(".", "-", "_", "-").Replace(name))
+}
 
 // availableModels lists provider/model ids from `empryo --list-models`, keeping the provider order Empryo prints.
+// suggestedModel excludes models the project must never recommend or offer.
+func suggestedModel(id string) bool {
+	return !strings.HasPrefix(strings.ToLower(modelName(id)), "gemini-4-argon")
+}
 func availableModels(ctx context.Context, bin string) ([]string, error) {
 	out, err := exec.CommandContext(ctx, bin, "--list-models").Output()
 	if err != nil {
@@ -73,7 +81,7 @@ func parseModelList(r io.Reader) []string {
 	sc := bufio.NewScanner(r)
 	for sc.Scan() {
 		f := strings.Fields(sc.Text())
-		if len(f) > 0 && strings.Count(f[0], "/") == 1 && !strings.HasSuffix(f[0], ":") {
+		if len(f) > 0 && validModelID(f[0]) && suggestedModel(f[0]) {
 			models = append(models, f[0])
 		}
 	}
@@ -91,14 +99,18 @@ func recommend(available []string) map[string][]string {
 func recommendKeeping(available []string, keep Config) map[string][]string {
 	byName := map[string]string{}
 	for _, m := range available {
-		if _, ok := byName[modelName(m)]; !ok {
-			byName[modelName(m)] = m
+		key := modelKey(modelName(m))
+		if _, ok := byName[key]; !ok {
+			byName[key] = m
 		}
 	}
 
 	rec := map[string][]string{}
 	for _, r := range roles {
 		if have := current(keep, r.key); len(have) > 0 {
+			if slices.ContainsFunc(have, func(id string) bool { return !suggestedModel(id) }) {
+				continue
+			}
 			rec[r.key] = have
 			continue
 		}
@@ -109,7 +121,7 @@ func recommendKeeping(available []string, keep Config) map[string][]string {
 			}
 		}
 		for _, c := range r.candidates {
-			m, ok := byName[c]
+			m, ok := byName[modelKey(c)]
 			if !ok || avoid[family(m)] {
 				continue
 			}
@@ -127,6 +139,8 @@ func recommendKeeping(available []string, keep Config) map[string][]string {
 
 func current(cfg Config, key string) []string {
 	switch key {
+	case "expert":
+		return nonEmpty(cfg.Expert)
 	case "model":
 		return nonEmpty(cfg.Model)
 	case "judges":
@@ -152,25 +166,33 @@ func apply(cfg *Config, key string, models []string) error {
 	if r.count == 1 && len(models) != 1 {
 		return fmt.Errorf("%w: %s", errOneModel, key)
 	}
-	for _, m := range models {
-		if strings.Count(m, "/") != 1 {
-			return fmt.Errorf("%w: %q", errNotProviderModel, m)
+	for _, model := range models {
+		if !validModelID(model) {
+			return fmt.Errorf("%w: %q", errNotProviderModel, model)
 		}
 	}
-
+	assignModelRole(cfg, key, models)
+	return validate(*cfg)
+}
+func assignModelRole(cfg *Config, key string, models []string) {
+	value := ""
+	if len(models) > 0 {
+		value = models[0]
+	}
 	switch key {
+	case "expert":
+		cfg.Expert = value
 	case "model":
-		cfg.Model = models[0]
+		cfg.Model = value
 	case "judges":
 		cfg.Judges = models
 	case "review.model":
-		cfg.Review.Model = models[0]
+		cfg.Review.Model = value
 	case "review.second_opinion":
 		cfg.Review.SecondOpinion = models
 	case "init":
-		cfg.Init = models[0]
+		cfg.Init = value
 	}
-	return validate(*cfg)
 }
 
 func findRole(key string) (role, bool) {
@@ -198,6 +220,9 @@ func nonEmpty(s string) []string {
 
 // runModels implements `codeforge models [recommend|apply|set <role> <model>...]`.
 func runModels(ctx context.Context, home, bin string, args []string) error {
+	if len(args) > 0 && args[0] == "configure" {
+		return runModelConfigure(ctx, home, bin, args[1:])
+	}
 	cfg, err := readConfigFile(home)
 	if err != nil {
 		return err
@@ -221,10 +246,20 @@ func runModels(ctx context.Context, home, bin string, args []string) error {
 		if err := writeConfigFile(home, cfg); err != nil {
 			return err
 		}
-		fmt.Printf("%s = %s\n", key, strings.Join(models, ", "))
+		fmt.Printf("%s = %s\nWrote global %s\n", key, strings.Join(models, ", "), filepath.Join(configDir(home), "config.yaml"))
 		return nil
 
 	case "recommend", "apply", "fill":
+		if sub == "recommend" {
+			root, err := repoRoot(ctx)
+			if err != nil {
+				return err
+			}
+			cfg, err = loadConfigAt(home, root)
+			if err != nil {
+				return err
+			}
+		}
 		available, err := availableModels(ctx, bin)
 		if err != nil {
 			return err
@@ -251,10 +286,10 @@ func runModels(ctx context.Context, home, bin string, args []string) error {
 		if err := writeConfigFile(home, cfg); err != nil {
 			return err
 		}
-		fmt.Printf("\nWrote %s\n", filepath.Join(configDir(home), "config.json"))
+		fmt.Printf("\nWrote %s\n", filepath.Join(configDir(home), "config.yaml"))
 		return nil
 	}
-	return fmt.Errorf("%w %q; use recommend, apply or set", errUnknownSubcommand, sub)
+	return fmt.Errorf("%w %q; use configure, recommend, apply or set", errUnknownSubcommand, sub)
 }
 
 func printModels(w io.Writer, cfg Config, rec map[string][]string) {

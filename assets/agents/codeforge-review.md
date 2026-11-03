@@ -21,4 +21,4 @@ You review as the user, as described by `codeforge-persona`, following `codeforg
 - Every finding has `path:line`, a reason with evidence, and a concrete fix.
 
 ## Other modes
-This session stays read-only even if the profile is switched, because the guard is set at launch. To fix what the review found, start `codeforge ticket` or `codeforge chat` in a new session.
+This session stays read-only even if the profile is switched, because the guard and OS sandbox are set at launch. Never escape that sandbox to start a writer or publish a comment. When this review was requested from an existing work/chat conversation, return a fix request or comment draft to that writable parent: it can delegate authorized fixes to `codeforge-work` and seek explicit human approval before publishing the exact PR comment. A standalone review without a writable parent must remain draft-only; use a separately launched work/chat session for actions.

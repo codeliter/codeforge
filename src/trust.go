@@ -15,7 +15,8 @@ import (
 
 const trustFile = "trusted-personas.json"
 
-// trustStore maps an absolute repository persona path to the sha256 of the content the user approved.
+// trustStore maps approved repository persona/model-config paths to content hashes.
+// The legacy filename is retained for compatibility.
 type trustStore map[string]string
 
 func digest(content string) string {
@@ -49,7 +50,7 @@ func saveTrust(home string, ts trustStore) error {
 	if err := os.MkdirAll(configDir(home), privateDir); err != nil {
 		return fmt.Errorf("creating config dir: %w", err)
 	}
-	if err := os.WriteFile(filepath.Join(configDir(home), trustFile), append(data, '\n'), privateFile); err != nil {
+	if err := atomicWriteFile(filepath.Join(configDir(home), trustFile), append(data, '\n'), privateFile); err != nil {
 		return fmt.Errorf("writing trusted personas: %w", err)
 	}
 	return nil
@@ -76,15 +77,32 @@ func trusted(home, path, content string) (bool, error) {
 		return true, nil
 	}
 
+	command := "codeforge trust"
+	title := "Use this repository's persona?"
+	explanation := "It becomes part of the agent's instructions in this repository."
+	models := filepath.Base(path) == "config.yaml" && filepath.Base(filepath.Dir(path)) == ".codeforge"
+	if models {
+		command = "codeforge trust --models"
+		title = "Use this repository's model configuration?"
+		explanation = "It can select providers, models, reviewers and helper routing. Review this file before trusting it."
+	}
 	if !interactive() {
-		fmt.Fprintf(os.Stderr, "codeforge: skipping %s: new or changed since you last approved it. Run `codeforge trust` to use it.\n", path)
+		fmt.Fprintf(os.Stderr, "codeforge: skipping %s: new or changed since you last approved it. Run `%s` to use it.\n", path, command)
 		return false, nil
 	}
 
+	display := preview(content)
+	if models {
+		var err error
+		display, err = modelConfigTrustPreview(home, content)
+		if err != nil {
+			return false, err
+		}
+	}
 	ok := false
 	if err := runForm("trust prompt", huh.NewConfirm().
-		Title("Use this repository's persona?").
-		Description(fmt.Sprintf("%s is new or changed. It becomes part of the agent's instructions in this repository.\n\n%s", path, preview(content))).
+		Title(title).
+		Description(fmt.Sprintf("%s is new or changed. %s\n\n%s", path, explanation, display)).
 		Affirmative("Trust it").
 		Negative("Skip").
 		Value(&ok)); err != nil {

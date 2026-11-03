@@ -161,7 +161,10 @@ Ticket and prompted chat launches can use this classifier. Work starts at medium
 judge calls; an idle chat starts at low. Interactive review defaults to high. An explicit supported
 `--effort` wins, but Codeforge rejects levels above high.
 
-The model-role settings are `model`, `judges`, `review.model`, `review.second_opinion`, and `init`.
+The model-role settings are `model`, `expert`, `judges`, `review.model`, `review.second_opinion`, and `init`.
+The new-install coding default is Sonnet 5.5; the `codeforge-expert` delegate uses Opus 5.5 only for a bounded difficult task.
+Saved model choices are not overwritten. Gemini 4 Argon is excluded from Codeforge recommendations and selection lists;
+existing manually configured native Empryo routing/fallback settings are not silently rewritten.
 Recommendations try to separate model families. Configuration validation rejects identical model IDs
 for author/reviewer and reviewer/second opinion; that is not proof of independence when two IDs reach
 the same underlying model through different providers.
@@ -174,6 +177,51 @@ Implementation: [launch.go](src/launch.go), [effort/effort.go](src/effort/effort
 [models.go](src/models.go), [config.go](src/config.go).
 The project design paper and historical evaluation are in [adaptive-effort.md](docs/adaptive-effort.md).
 Its small evaluation set is not a release-by-release benchmark or a guarantee of calibration.
+
+### YAML configuration and launch-only overrides
+
+`codeforge models configure` lists the authenticated provider catalog and opens role selectors.
+The wizard asks for project or global scope; `--project` and `--global` select it explicitly.
+It saves only after confirmation and validation, using a private, atomically replaced YAML file.
+Cancellation leaves existing settings unchanged. Existing, temporarily unavailable model IDs are labelled as saved rather than falsely listed as available.
+
+- Global settings: `~/.codeforge/config.yaml`. Legacy `~/.codeforge/config.json` is read only when YAML is absent.
+  The files are alternatives, not merged layers. Saving keeps the old JSON file unchanged and writes the complete selected YAML configuration.
+- Project overrides: `.codeforge/config.yaml` at the Git repository root, including when launched from a subdirectory.
+  They are content-hash trust gated before parsing/application, just like repository personas. An unapproved or changed checkout cannot
+  nominate its own reviewers or routing; non-interactive launches skip it with a notice. Inspect manual/shared changes and run
+  `codeforge trust --models` to approve them. The wizard records the exact bytes it writes, not a second read vulnerable to substitution.
+  Repair and trust operate before project configuration is loaded, so a broken checkout file cannot prevent recovery.
+  The trust dialog shows the complete parsed effective model settings, not a raw prefix that comments could pad to hide reviewers.
+  Declining an existing file's trust does not authorize overwriting it: the project wizard separately asks before replacing an unapproved file.
+  This approval covers Codeforge's model file only, not arbitrary Empryo project configuration or programs it may start.
+- Precedence for Codeforge roles: explicit `--model` for the active role, then `CODEFORGE_*` environment values,
+  then project YAML, global YAML/legacy JSON, and built-in defaults. `CODEFORGE_INIT` controls persona generation;
+  `CODEFORGE_EXPERT` controls the on-demand expert. When `init` is omitted, persona generation follows the configured coding model rather than silently selecting another provider.
+- `models set`, `apply`, and setup's `fill` retain their global write scope. The configuration wizard supports either scope.
+  `models` displays effective project-aware roles. YAML rejects unknown keys, duplicate mappings, invalid types, and multiple documents.
+
+The current schema stores qualified `provider/model` IDs chosen from the catalog. A provider-first, model-name-only selector with
+primary/fallback provider resolution is a separate proposed extension, not a supported YAML field or a promised automatic failover mechanism.
+
+See the complete [example configuration](config.example.yaml). The `routing` map accepts the supported Empryo profile jobs:
+`research`, `editing`, `explore`, `web-search`, `cleanup`, `verify`, `review`, `goal-review`, `summaries`, and `marionette`.
+Project routing entries replace the corresponding global Codeforge routing entries; an empty string resets a job to native Empryo routing.
+The wizard distinguishes inheriting global routing (no entry) from explicitly resetting to native Empryo (an empty string).
+Project saves record changed model roles rather than copying all global values, so future global changes still propagate.
+Existing explicit project pins and routing reset entries are preserved when other roles are edited.
+
+Codeforge passes primary-role models through native `--model` flags and installs workspace-local Codeforge agent profiles with native `routing` metadata.
+Project profiles prevent two projects from overwriting one another's model/routing choices in global profiles.
+The normal Empryo config file, credentials, default profile, and unrelated profiles are not rewritten.
+
+Profile routing does **not** control every background request. Tab naming, Genome summaries, advisor, council, and other non-profile jobs
+remain under Empryo's task router. Unsupported routing keys are rejected, not silently advertised as overrides.
+Provider authentication, quotas, fallback chains, retries, and native background routing remain Empryo responsibilities.
+See [Empryo profile routing](https://empryo.com/docs/tools/profiles#routing-jobs).
+
+Implementation: [config_yaml.go](src/config_yaml.go), [models_configure.go](src/models_configure.go),
+[profile_routing.go](src/profile_routing.go), and [config.example.yaml](config.example.yaml).
 
 ## 5. Reviews and independent checks
 
@@ -207,14 +255,34 @@ Implementation: [reviewcmd.go](src/reviewcmd.go), [review/triage.go](src/review/
 [review/jury.go](src/review/jury.go), [gate.go](src/gate.go),
 [review skill](assets/skills/codeforge-review/SKILL.md).
 
+### Reviewer-to-work handoffs inside one TUI
+
+Work/chat can run the existing sandboxed `codeforge gate` or `codeforge review <PR> --headless` command without opening a second terminal.
+The named `codeforge-reviewer` helper has a read-only native tool allowlist: read, grep, find, navigate, and final response.
+It can ground findings and return `FIX_REQUEST` or `COMMENT_DRAFT` proposals, but cannot execute commands, edit, dispatch writers, or publish.
+
+The writable parent can delegate user-authorized fixes to `codeforge-work`. A child report is not permission to change files or somebody else's branch.
+For public feedback, the parent must show the exact PR target and final comment text and obtain explicit human approval before posting that draft.
+Posting a comment is not approval of the PR, nor permission to push or merge. This approval workflow is expressed in the managed parent instructions;
+it is not a new server-side GitHub authorization mechanism.
+
+The native helper allowlist and the standalone review's OS sandbox are distinct protections.
+A standalone read-only review cannot gain writes through a profile switch or by starting a writer inside its sandbox.
+Fixes and approved publication must be handled by an already writable parent, or a separately launched writable conversation.
+
+Implementation: [reviewer definition](assets/agents/codeforge-reviewer.md),
+[work profile](assets/agents/codeforge-work.md), [chat profile](assets/agents/codeforge-chat.md).
+
 ## 6. State and recovery
 
 | Location | Purpose |
 | --- | --- |
 | Repository `.codeforge/persona.md` | Project-specific conventions |
 | `~/.codeforge/persona.md` | Global conventions |
-| `~/.codeforge/config.json` | Codeforge model roles and default mode |
-| `~/.codeforge/trusted-personas.json` | Persona approvals tied to content hashes |
+| Repository `.codeforge/config.yaml` | Project model roles and profile routing overrides |
+| `~/.codeforge/config.yaml` | Global Codeforge roles, routing and default mode |
+| `~/.codeforge/config.json` | Legacy global configuration, read only when YAML is absent |
+| `~/.codeforge/trusted-personas.json` | Persona and model-config content approvals; legacy filename retained |
 | `~/.codeforge/sessions/sessions.db` | Original session mode/profile/repository and inert learning evidence |
 | Repository `.empryo/sessions/ID` | Empryo metadata, transcript, and session state |
 | `~/.empryo/hooks/cf` | Permanent managed hook executable |
@@ -230,6 +298,10 @@ prompts, approvals, or guard policy. Review verdict caching is separate from thi
 
 See [store/](src/store/), [sessions.go](src/sessions.go), [learncmd.go](src/learncmd.go),
 and [review/cache.go](src/review/cache.go). Do not delete the database as a routine repair step.
+
+Known concurrency limits: the JSON approval ledger is atomically replaced but concurrent approvals can still require reapproval after a last-writer update.
+Owned profiles are workspace snapshots, not separate registries per terminal: simultaneous launches in the same workspace with different environment overrides
+can replace each other's helper definitions. Different projects are isolated, and native Empryo configuration and Codeforge YAML settings are not rewritten by those launches.
 
 ## 7. Citations
 

@@ -25,9 +25,12 @@ Setup:
   init --global [REPO...]           Set your global persona instead (~/.codeforge/persona.md)
   repair, reinit                     Rebuild managed hooks, profiles and skills; keep personas and sessions
   repair --legacy-hook PATH          Replace a named old Codeforge hook; repeat for several paths
+  models configure [--project|--global]
+                                     Choose role/helper models interactively and save config.yaml
   models [recommend|apply|set ROLE MODEL...]
-                                     See, apply or set the models for each role
+                                     See effective roles, or apply/set global model choices
   trust                              Approve this repository's persona
+  trust --models                     Approve this repository's model configuration by content hash
 
 Review:
   gate                               Review your branch: one reviewer for simple changes, the jury for
@@ -52,9 +55,11 @@ Help:
   help, -h, --help                   Show this help
   version                            Show the codeforge version
 
-Git is never blocked outside review mode. Pushing, opening PRs, merges, PR comments and infra changes need no approval.
+Git is never blocked outside review mode. Pushing, opening PRs and merges follow your explicit requests; no mandatory gate.
+Reviewer-generated PR comments require approval of the exact target and draft.
 
-Config: ~/.codeforge/config.json   Docs: https://github.com/codeliter/codeforge
+Config: ~/.codeforge/config.yaml + project .codeforge/config.yaml (legacy global JSON still readable)
+Docs: https://github.com/codeliter/codeforge
 `
 
 func printHelp(w io.Writer) {

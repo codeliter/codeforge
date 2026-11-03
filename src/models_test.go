@@ -12,6 +12,7 @@ const listing = `GitHub Copilot (copilot)
   source: live /models listing for your seat
   copilot/claude-haiku-5.5  1000k ctx  $0.1/$0.5/M
   copilot/claude-opus-5.5  1000k ctx  $4/$20/M
+  copilot/claude-sonnet-5.5  1000k ctx  $2/$10/M
   copilot/gpt-6-luna  1000k ctx  $0.1/$0.5/M
   copilot/gpt-6.1-sol  1050k ctx  $2/$10/M
   copilot/kimi-k3  1049k ctx  $3/$15/M
@@ -23,7 +24,7 @@ Anthropic (anthropic)
 
 func TestParseModelList(t *testing.T) {
 	got := parseModelList(strings.NewReader(listing))
-	require.Len(t, got, 7)
+	require.Len(t, got, 8)
 	require.Equal(t, "copilot/claude-haiku-5.5", got[0])
 	require.NotContains(t, got, "/models")
 }
@@ -31,11 +32,12 @@ func TestParseModelList(t *testing.T) {
 func TestRecommend(t *testing.T) {
 	rec := recommend(parseModelList(strings.NewReader(listing)))
 
-	require.Equal(t, []string{"copilot/claude-opus-5.5"}, rec["model"])
+	require.Equal(t, []string{"copilot/claude-sonnet-5.5"}, rec["model"])
+	require.Equal(t, []string{"copilot/claude-opus-5.5"}, rec["expert"])
 	require.Equal(t, []string{"copilot/claude-haiku-5.5", "copilot/gpt-6-luna"}, rec["judges"])
 	require.Equal(t, []string{"copilot/gpt-6.1-sol"}, rec["review.model"])
 	require.Equal(t, []string{"copilot/kimi-k3"}, rec["review.second_opinion"])
-	require.Equal(t, []string{"copilot/claude-opus-5.5"}, rec["init"])
+	require.Equal(t, []string{"copilot/claude-sonnet-5.5"}, rec["init"])
 }
 
 func TestRecommend_ReviewersAvoidCoderFamily(t *testing.T) {

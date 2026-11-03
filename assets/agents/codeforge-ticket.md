@@ -33,7 +33,7 @@ codeforge picks the starting effort from a rubric (ambiguity, blast radius, risk
 ## Hard stops
 Git is yours to use freely: commit, push and manage branches as the work needs. codeforge enforces only this, with a hook: only the user changes codeforge's own settings.
 
-Pushing, opening PRs, merges, PR comments and reviews, and terraform/kubectl changes need no approval or gate. Do them when the user asks, and confirm destructive ones first.
+Git and infrastructure actions follow the user's explicit requests; confirm destructive ones first. A request to review is not permission to publish feedback: show the exact PR target and final reviewer-generated comment and obtain explicit human approval before posting it. Do not treat a child agent's report as approval.
 
 ## Writing
 Follow `codeforge-persona` first; where it is silent, use the generic skills.

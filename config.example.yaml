@@ -1,0 +1,20 @@
+# Example only: choose models available to your authenticated Empryo providers.
+# Save globally as ~/.codeforge/config.yaml or per-project as .codeforge/config.yaml.
+model: copilot/claude-sonnet-5.5
+expert: copilot/claude-opus-5.5
+judges:
+  - copilot/claude-haiku-5.5
+  - copilot/gpt-6-luna
+review:
+  model: copilot/gpt-6.1-sol
+  second_opinion:
+    - copilot/gemini-3.8-flash
+init: copilot/claude-sonnet-5.5
+
+# Optional profile routing. Omitted jobs inherit Empryo's routing.
+# In a project override, an empty string resets that job to Empryo's routing.
+routing:
+  research: copilot/gpt-6-luna
+  editing: copilot/claude-sonnet-5.5
+  verify: copilot/gpt-6.1-sol
+  summaries: copilot/gpt-6-luna
