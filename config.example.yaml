@@ -5,8 +5,8 @@ providers:
   primary: devpass
   fallback: copilot
 
-# A chosen backup must serve the same named model. Codeforge never installs native
-# fallback settings. Run codeforge models plan and apply missing chains in Empryo.
+# A chosen backup must serve the same named model. Normal launches only verify.
+# Run codeforge models apply to choose scope, preview and confirm native fallback changes.
 # Omit fallback to inherit native policy without a Codeforge backup preference.
 model: Sonnet 5.5
 expert: Opus 5.5

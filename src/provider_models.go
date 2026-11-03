@@ -223,7 +223,7 @@ func (plan ModelPlan) verifyFallbacks(native map[string][]string) error {
 		}
 	}
 	if len(failures) > 0 {
-		return fmt.Errorf("%w:\n%s\nconfigure these chains through Empryo /router or its settings tool, then retry", errNativeFallback, strings.Join(failures, "\n"))
+		return fmt.Errorf("%w:\n%s\nrun codeforge models apply to review and confirm changes, or configure these chains through Empryo /router", errNativeFallback, strings.Join(failures, "\n"))
 	}
 	return nil
 }

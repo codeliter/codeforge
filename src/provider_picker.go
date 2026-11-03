@@ -169,7 +169,7 @@ func modelPlanPreview(plan ModelPlan) string {
 		fmt.Fprintf(&text, "%s: %s; backup: %s\n", route.Role, route.Primary, backup)
 	}
 	if len(plan.fallbackChains()) > 0 {
-		fmt.Fprintln(&text, "Codeforge will not install these chains. It checks existing native settings before starting work. Run codeforge models plan to verify/setup.")
+		fmt.Fprintln(&text, "Normal launches only verify these chains. Run codeforge models apply to choose scope, review changes, and confirm applying them.")
 	}
 	return text.String()
 }

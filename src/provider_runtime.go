@@ -80,19 +80,12 @@ func verifyModelPlan(ctx context.Context, bin, workspace string, plan ModelPlan)
 	if err != nil {
 		return err
 	}
-	declared := make(map[string][]string)
-	for id, backups := range native.Global {
-		declared[id] = backups
-	}
-	for id, backups := range native.Project {
-		declared[id] = backups
-	}
-	if err := errors.Join(plan.verifyFallbacks(declared), plan.verifyFallbacks(native.Effective)); err != nil {
+	if err := errors.Join(plan.verifyFallbacks(native.declaredFallbacks()), plan.verifyFallbacks(native.Effective)); err != nil {
 		data, encodeErr := json.MarshalIndent(map[string]any{"modelFallback": plan.fallbackChains()}, "", "  ")
 		if encodeErr != nil {
 			return err
 		}
-		return fmt.Errorf("%w\nRequired native settings (apply them yourself in Empryo):\n%s", err, data)
+		return fmt.Errorf("%w\nRequired native settings (run codeforge models apply to review scope and apply, or use Empryo /router):\n%s", err, data)
 	}
 	return nil
 }

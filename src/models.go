@@ -248,6 +248,9 @@ func runModels(ctx context.Context, home, bin string, args []string) error {
 	if len(args) > 0 && args[0] == "configure" {
 		return runModelConfigure(ctx, home, bin, args[1:])
 	}
+	if len(args) > 0 && args[0] == "apply" {
+		return runModelApply(ctx, home, bin, args[1:])
+	}
 	cfg, err := readConfigFile(home)
 	if err != nil {
 		return err
@@ -307,7 +310,7 @@ func runModels(ctx context.Context, home, bin string, args []string) error {
 			fmt.Fprintln(os.Stdout, "No Codeforge fallback preference to verify; native policy was not changed.")
 		}
 		return nil
-	case "recommend", "apply", "fill":
+	case "recommend", "fill":
 		if sub == "recommend" {
 			root, err := repoRoot(ctx)
 			if err != nil {
@@ -325,7 +328,7 @@ func runModels(ctx context.Context, home, bin string, args []string) error {
 		rec := recommendConfigured(available, cfg, sub == "fill")
 		printModels(os.Stdout, cfg, rec)
 		if sub == "recommend" {
-			fmt.Println("\nRun `codeforge models apply` to use the recommendations, or `codeforge models set <role> <model>...`.")
+			fmt.Println("\nUse `codeforge models configure` or `codeforge models set <role> <model>...` to change saved choices; `codeforge models apply` applies their native fallback settings.")
 			return nil
 		}
 		for _, r := range roles {

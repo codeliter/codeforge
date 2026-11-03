@@ -77,13 +77,21 @@ Without approval, Codeforge ignores that project's model file instead of letting
 Old global `config.json` files still work; saving model choices writes YAML and keeps the old JSON file.
 Prefer editing a file? See [config.example.yaml](config.example.yaml).
 
-**Fallback is verified, not installed.** With a selected backup, the same model must exist on both connected providers, and its native Empryo fallback chain must already match. Codeforge stops before model work if it does not.
+**Normal launches only verify fallback.** With a selected backup, the same model must exist on both connected providers, and its native Empryo fallback chain must already match. Codeforge stops before model work if it does not.
 
 ```sh
 codeforge models plan
 ```
 
-This displays resolved primary/backup IDs and checks the existing native settings. If a chain is missing, it prints the required settings for you to apply through Empryo `/router` or its settings tool. Codeforge does not write native settings, credentials, or billing configuration. Empryo owns quota retries and failover timing.
+This command is read-only. To apply the saved fallback plan, run:
+
+```sh
+codeforge models apply
+```
+
+Inside a Git repository (or a directory with a project model file), the scope prompt defaults to **this project**; elsewhere it defaults to **global**. You can override that choice with `--project` or `--global`. Codeforge shows the native fallback changes and asks for confirmation before writing through Empryo's supported settings interface, then verifies them. Unrelated settings and fallback entries are retained. Run `models plan` again or start a new task after it succeeds.
+
+`models apply` uses your saved model choices; it no longer replaces roles with recommendations. `models recommend` remains read-only. `models configure` and normal launches never write native settings; only this explicit apply command can do so. Credentials and billing configuration are never changed. Empryo owns quota retries and failover timing.
 
 ## 3. Give it a job
 

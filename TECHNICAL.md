@@ -198,7 +198,11 @@ Cancellation leaves existing settings unchanged. Existing, temporarily unavailab
 - Precedence for Codeforge roles: explicit `--model` for the active role, then `CODEFORGE_*` environment values,
   then project YAML, global YAML/legacy JSON, and built-in defaults. `CODEFORGE_INIT` controls persona generation;
   `CODEFORGE_EXPERT` controls the on-demand expert. When `init` is omitted, persona generation follows the configured coding model rather than silently selecting another provider.
-- `models set`, `apply`, and setup's `fill` retain their global write scope. The configuration wizard supports either scope.
+- `models set` and setup's `fill` retain their global Codeforge YAML write scope. `models recommend` is read-only.
+  `models apply [--project|--global]` applies saved fallback choices to native Empryo, never model recommendations. It requires a terminal,
+  offers an inferred scope (project inside Git or with a local model file, global otherwise), previews exact native changes and asks for confirmation.
+  Explicit scope flags skip the scope selector, not confirmation. Global application reads only saved global choices; project application uses approved project overrides.
+  One-off environment model overrides are excluded from persistent application.
   `models` displays effective project-aware roles. YAML rejects unknown keys, duplicate mappings, invalid types, and multiple documents.
 
 The schema also accepts `providers: {primary: devpass, fallback: copilot}` and model names such as `Sonnet 5.5`.
@@ -209,10 +213,16 @@ Explicit `provider/model` IDs retain their previous semantics, including unavail
 Switching styles is an explicit migration of model references at the selected scope; cancelling does not save it.
 Provider policies replace the corresponding global policy as a block; a project `providers: {}` clears inherited provider defaults.
 
-A chosen backup requires the same named model on that provider. Codeforge does not install fallback maps or use an unproven preset overlay.
+A chosen backup requires the same named model on that provider. Only an explicit, confirmed `models apply` installs fallback maps;
+configuration, plan inspection and normal launches remain non-writing. No unproven preset overlay is used.
 Before model work it reads global, project, and effective `modelFallback` settings through the documented ACP config extension,
 without a prompt or config write, then deletes only its own query session. Declared and effective chains must both match, including
-no undeclared extra backup hop. Missing or incompatible chains fail closed and show required settings for the user to apply in Empryo.
+no undeclared extra backup hop. Missing or incompatible chains fail closed and direct the user to `models apply` or Empryo `/router`.
+The apply command uses `_empryo/config/set` for the single `modelFallback` key after re-reading native layers and checking that they still match the approved preview.
+It preserves unrelated rows and other settings, explicitly previews clearing undeclared extra backup hops, and verifies persisted results in a fresh read-only process.
+Native project `modelFallback` replaces the whole global map; creating a project override therefore retains currently effective unrelated rows. These copied rows become project pins.
+Native global writes clear the current session workspace's project override, so global application runs in a neutral temporary workspace, never the active repository.
+Cancellation does not write settings. A stale preview aborts rather than overwriting intervening fallback edits; unsupported native APIs fail without a JSON-file fallback.
 `codeforge models plan` prints resolved IDs and performs the same read-only verification; it does not make a model request.
 Quota retry timing and actual failover remain native Empryo behaviour. No backup preference means native fallback is inherited without this check.
 Roles, explicit helper routing, environment model references and CLI model arguments are resolved before generation; flag values are not reinterpreted as options.
