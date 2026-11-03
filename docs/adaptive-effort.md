@@ -1,5 +1,9 @@
 # Adaptive reasoning effort for a coding agent
 
+Implementation scope: this classifier applies to prompted ticket/chat launches without an explicit effort.
+Work and review use their own defaults. The evaluation below is a historical report, not a benchmark rerun for each release.
+See [TECHNICAL.md](../TECHNICAL.md) for the current architecture and consolidated citations.
+
 ## Abstract
 codeforge chooses a reasoning effort (low, medium or high) for each task before the agent starts. A small, cheap model scores the task on a fixed rubric, and a deterministic rule turns the scores into a level. High is a hard ceiling. On a 20-task evaluation set with 7 deliberate traps, the classifier scores 17/20 and gets every trap right. All three misses err on the side of effort the rubric author did not expect, not on the side of under-thinking safety-critical work.
 

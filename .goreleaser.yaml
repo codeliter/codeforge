@@ -16,7 +16,7 @@ builds:
 archives:
   - formats: [tar.gz]
     name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
-    files: [README.md, LICENSE]
+    files: [README.md, TECHNICAL.md, docs/adaptive-effort.md, LICENSE]
 
 checksum:
   name_template: checksums.txt

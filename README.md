@@ -115,3 +115,5 @@ codeforge help
 codeforge models
 codeforge version
 ```
+
+For architecture diagrams and research citations, see [TECHNICAL.md](TECHNICAL.md).
