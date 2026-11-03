@@ -31,6 +31,30 @@ func TestLegacyHookMigrationIsExplicitAndExact(t *testing.T) {
 	}
 }
 
+func TestRepairMultipleLegacyHooks(t *testing.T) {
+	home, wd := t.TempDir(), t.TempDir()
+	dir := filepath.Join(home, ".empryo")
+	require.NoError(t, os.MkdirAll(dir, privateDir))
+	p := filepath.Join(dir, "hooks.json")
+	doc := `{"hooks":{"PreToolUse":[{"hooks":[{"command":"'/tmp/old-bin' hook","failClosed":true},{"command":"'/tmp/new-bin' hook","failClosed":true},{"command":"notify-user"}]}],"SessionEnd":[{"hooks":[{"command":"'/tmp/new-bin' session-end"}]}]}}`
+	require.NoError(t, os.WriteFile(p, []byte(doc), privateFile))
+	raw, err := json.Marshal([]string{"repair", "--legacy-hook", "/tmp/old-bin", "--legacy-hook", "/tmp/new-bin"})
+	require.NoError(t, err)
+	cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestModesCLI$")
+	cmd.Dir = wd
+	cmd.Env = append(os.Environ(), "HOME="+home, "CODEFORGE_CLI_ARGS="+string(raw))
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, string(out))
+	data, err := os.ReadFile(p)
+	require.NoError(t, err)
+	require.NotContains(t, string(data), "/tmp/old-bin")
+	require.NotContains(t, string(data), "/tmp/new-bin")
+	require.Contains(t, string(data), "notify-user")
+	require.Equal(t, 1, strings.Count(string(data), "cf' hook"))
+	require.Equal(t, 1, strings.Count(string(data), "cf' session-end"))
+	require.Contains(t, string(data), `"failClosed": true`)
+}
+
 func TestRepairExplicitLegacyHook(t *testing.T) {
 	for _, oldCommand := range []string{"'/tmp/old-bin' hook", "/tmp/old-bin", "exec '/tmp/old-bin' hook"} {
 		t.Run(oldCommand, func(t *testing.T) {

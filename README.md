@@ -98,7 +98,8 @@ If an old **Codeforge** hook used another name, tell repair its old path:
 codeforge repair --legacy-hook /tmp/old-bin
 ```
 
-Only use this for an old Codeforge executable you recognise. Other security hooks are kept.
+Use the path shown in your error; `old-bin` is only an example. Repeat `--legacy-hook` to name more than one old path.
+Only use this for old Codeforge executables you recognise. Other security hooks are kept.
 If that path is not in the global hook file, repair warns you to check the project's or other agent's hook settings.
 
 Repair does not fix a provider's quota, a failed sign-in, or a broken internet connection.
