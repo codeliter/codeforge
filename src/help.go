@@ -19,10 +19,11 @@ Modes:
   (none)                             Ask which mode; a question on the command line goes to chat
 
 Setup:
-  init [--yes]                       Set up everything: Empryo (installed only if missing), sign-in, checks,
-                                     models and your persona
-  init --repo [--persona NAME]       Add a repository persona (.codeforge/persona.md)
-  init --persona NAME | init REPO... Use a starter persona, or learn from other repositories
+  init [--yes]                       Set up Empryo, sign-in and checks; learn a local persona in this Git repo
+  init --repo [--persona NAME]       Learn a local persona, or use a starter (.codeforge/persona.md)
+  init --persona NAME               Use a starter persona for this repo
+  init --global [REPO...]           Set your global persona instead (~/.codeforge/persona.md)
+  repair, reinit                     Rebuild managed hooks, profiles and skills; keep personas and sessions
   models [recommend|apply|set ROLE MODEL...]
                                      See, apply or set the models for each role
   trust                              Approve this repository's persona

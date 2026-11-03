@@ -42,6 +42,16 @@ func TestInstallPersonaSkill(t *testing.T) {
 	require.Contains(t, string(got), "Short sentences.")
 }
 
+func TestInstallPersonaSkillHandlesEmptyPersona(t *testing.T) {
+	home := t.TempDir()
+	require.NoError(t, os.MkdirAll(configDir(home), privateDir))
+	require.NoError(t, os.WriteFile(filepath.Join(configDir(home), "persona.md"), []byte(" \n\t"), privateFile))
+	require.NoError(t, installPersonaSkill(home))
+	data, err := os.ReadFile(filepath.Join(home, ".empryo", "skills", "codeforge-persona", "SKILL.md"))
+	require.NoError(t, err)
+	require.Contains(t, string(data), "No persona yet.")
+}
+
 func TestRepoSlug(t *testing.T) {
 	tests := []struct{ remote, want string }{
 		{"git@github.com:acme/api.git", "acme/api"},
@@ -62,7 +72,7 @@ func TestRepoSlug(t *testing.T) {
 func TestInitFromArgs(t *testing.T) {
 	ans, err := initFromArgs(nil)
 	require.NoError(t, err)
-	require.Equal(t, initAnswers{scope: scopeGlobal, source: sourceLearn, repos: "."}, ans)
+	require.Equal(t, initAnswers{scope: scopeAuto, source: sourceLearn, repos: "."}, ans)
 
 	ans, err = initFromArgs([]string{"../other", "../third"})
 	require.NoError(t, err)

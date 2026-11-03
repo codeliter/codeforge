@@ -244,7 +244,7 @@ func classify(w []string) []Finding {
 		// These give a program a pseudo-terminal the agent controls, which could answer codeforge trust's prompt.
 		return []Finding{{RuleSelf, w[0] + " can drive a terminal prompt such as codeforge trust; run it yourself if you need it"}}
 	case "codeforge":
-		if len(w) > 1 && (hasAny(w[1:2], "trust", "init") || w[1] == "models" && !printsModels(w[2:])) {
+		if len(w) > 1 && (hasAny(w[1:2], "trust", "init", "repair", "reinit") || w[1] == "models" && !printsModels(w[2:])) {
 			return []Finding{{RuleSelf, "only you can change codeforge settings"}}
 		}
 		if len(w) > 1 && w[1] == "learn" && !readsLearning(w[2:]) {

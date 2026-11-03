@@ -68,7 +68,7 @@ func TestCheck_OpeningPRsNeedsNoGate(t *testing.T) {
 }
 
 func TestCheck_SelfStillGuarded(t *testing.T) {
-	for _, cmd := range []string{"codeforge trust", "codeforge init", "codeforge learn correct x"} {
+	for _, cmd := range []string{"codeforge trust", "codeforge init", "codeforge repair", "codeforge reinit", "codeforge learn correct x"} {
 		require.Equal(t, []string{RuleSelf}, rules(Check(cmd, false)), cmd)
 	}
 	for _, cmd := range []string{"codeforge models", "codeforge models recommend", "codeforge gate", "codeforge learn list"} {

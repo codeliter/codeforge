@@ -117,7 +117,7 @@ func TestInitFromArgs_Repo(t *testing.T) {
 	ans, err := initFromArgs([]string{"--repo"})
 	require.NoError(t, err)
 	require.Equal(t, scopeRepo, ans.scope)
-	require.Equal(t, sourceBlank, ans.source)
+	require.Equal(t, sourceLearn, ans.source)
 
 	ans, err = initFromArgs([]string{"--repo", "--persona", "startup"})
 	require.NoError(t, err)

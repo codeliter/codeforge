@@ -11,6 +11,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/huh"
+
+	"github.com/codeliter/codeforge/src/guard"
 )
 
 const (
@@ -18,11 +20,12 @@ const (
 	sourceStarter = "starter"
 	sourceBlank   = "blank"
 
+	scopeAuto   = "auto"
 	scopeGlobal = "global"
 	scopeRepo   = "repo"
 )
 
-var errInitUsage = errors.New("usage: codeforge init [--repo] [--persona <name>] [repo...]")
+var errInitUsage = errors.New("usage: codeforge init [--repo|--global] [--persona <name>] [repo...]")
 
 type initAnswers struct {
 	scope   string
@@ -38,24 +41,34 @@ func runInit(ctx context.Context, home, bin string, cfg Config, args []string) e
 	if err != nil {
 		return err
 	}
-	_, statErr := os.Stat(filepath.Join(configDir(home), "persona.md"))
-	if statErr != nil && !errors.Is(statErr, fs.ErrNotExist) {
-		return fmt.Errorf("checking persona: %w", statErr)
+	if ans.scope == scopeAuto {
+		wd, err := os.Getwd()
+		if err != nil {
+			return fmt.Errorf("finding current directory: %w", err)
+		}
+		ans.scope = scopeGlobal
+		if _, err := guard.RepoRoot(ctx, wd); err == nil {
+			ans.scope = scopeRepo
+		}
 	}
-	if len(args) == 0 && interactive() && statErr != nil {
-		if ans, err = askInit(); err != nil {
-			return err
+	if ans.scope == scopeGlobal {
+		_, statErr := os.Stat(filepath.Join(configDir(home), "persona.md"))
+		if statErr != nil && !errors.Is(statErr, fs.ErrNotExist) {
+			return fmt.Errorf("checking persona: %w", statErr)
+		}
+		if len(args) == 0 && statErr == nil {
+			fmt.Fprintln(os.Stderr, "codeforge: outside a Git repository; keeping your global persona. Use `codeforge init --global` to replace it.")
+			return nil
+		}
+		if len(args) == 0 && interactive() && statErr != nil {
+			if ans, err = askInit(); err != nil {
+				return err
+			}
 		}
 	}
 
 	if ans.scope == scopeRepo {
-		return initRepo(ctx, home, ans)
-	}
-
-	// A second repository reuses the global persona; `init --persona` or naming repos replaces it on purpose.
-	if statErr == nil && len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "codeforge: persona already set; run `codeforge init --persona NAME` or `codeforge init REPO...` to replace it.")
-		return nil
+		return initRepo(ctx, home, bin, cfg.Init, ans)
 	}
 
 	persona, err := buildPersona(ctx, bin, cfg.Init, ans)
@@ -75,18 +88,28 @@ func runInit(ctx context.Context, home, bin string, cfg Config, args []string) e
 	return nil
 }
 
-// initRepo seeds team conventions from a starter or a blank template, never from personal history.
-func initRepo(ctx context.Context, home string, ans initAnswers) error {
+// initRepo learns this repository's conventions without changing the global persona.
+func initRepo(ctx context.Context, home, bin, model string, ans initAnswers) error {
 	root, err := repoRoot(ctx)
 	if err != nil {
 		return err
 	}
-
-	starterName := ans.starter
-	if ans.source != sourceStarter {
-		starterName = ""
+	p := filepath.Join(root, repoPersonaPath)
+	if existing, err := os.ReadFile(p); err == nil {
+		if !unfinishedRepoPersona(existing) {
+			fmt.Fprintf(os.Stderr, "codeforge: repository persona already exists at %s; left unchanged.\n", p)
+			return nil
+		}
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("reading repository persona: %w", err)
 	}
-	persona, err := repoPersonaSeed(starterName)
+	fmt.Fprintf(os.Stderr, "codeforge: setting up the repository persona in %s; your global persona is unchanged.\n", root)
+	var persona []byte
+	if ans.source == sourceBlank {
+		persona, err = repoPersonaSeed("")
+	} else {
+		persona, err = buildPersona(ctx, bin, model, ans)
+	}
 	if err != nil {
 		return err
 	}
@@ -94,7 +117,7 @@ func initRepo(ctx context.Context, home string, ans initAnswers) error {
 		persona = append(persona, []byte("\n## Team notes\n"+ans.notes+"\n")...)
 	}
 
-	p, err := saveRepoPersona(home, root, persona)
+	p, err = saveRepoPersona(home, root, persona)
 	if err != nil {
 		return err
 	}
@@ -104,13 +127,20 @@ func initRepo(ctx context.Context, home string, ans initAnswers) error {
 }
 
 func initFromArgs(args []string) (initAnswers, error) {
-	ans := initAnswers{scope: scopeGlobal, source: sourceLearn}
+	ans := initAnswers{scope: scopeAuto, source: sourceLearn}
 
 	var repos []string
 	for i := 0; i < len(args); i++ {
 		switch {
-		case args[i] == "--repo":
-			ans.scope = scopeRepo
+		case args[i] == "--repo" || args[i] == "--global":
+			scope := scopeRepo
+			if args[i] == "--global" {
+				scope = scopeGlobal
+			}
+			if ans.scope != scopeAuto && ans.scope != scope {
+				return ans, fmt.Errorf("%w: --repo and --global conflict", errInitUsage)
+			}
+			ans.scope = scope
 		case args[i] == "--persona" && i+1 < len(args):
 			ans.source, ans.starter = sourceStarter, args[i+1]
 			i++
@@ -122,10 +152,10 @@ func initFromArgs(args []string) (initAnswers, error) {
 	}
 
 	if ans.scope == scopeRepo && len(repos) > 0 {
-		return ans, fmt.Errorf("%w: --repo learns nothing from history; use --persona or edit the file", errInitUsage)
+		return ans, fmt.Errorf("%w: --repo uses the current repository; use --global REPO... to learn from other repositories", errInitUsage)
 	}
-	if ans.scope == scopeRepo && ans.source == sourceLearn {
-		ans.source = sourceBlank
+	if ans.scope == scopeAuto && len(repos) > 0 {
+		ans.scope = scopeGlobal
 	}
 
 	ans.repos = strings.Join(repos, ",")

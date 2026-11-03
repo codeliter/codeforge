@@ -64,45 +64,63 @@ const (
 	sessionEndCommand = "session-end"
 )
 
-// setOurs replaces codeforge's rule for one event and keeps every other rule as it was.
+// setOurs replaces only codeforge's hooks, including stale temporary launchers.
+// User hooks in the same rule and the rule's matcher are preserved.
 func setOurs(hooks map[string]any, event, sub string, hook map[string]any) {
 	var kept []any
 	if rules, ok := hooks[event].([]any); ok {
 		for _, r := range rules {
-			if !isOurs(r, sub) {
+			m, ok := r.(map[string]any)
+			if !ok {
 				kept = append(kept, r)
+				continue
+			}
+			list, ok := m["hooks"].([]any)
+			if !ok {
+				kept = append(kept, r)
+				continue
+			}
+			var remaining []any
+			for _, h := range list {
+				if !isOurHook(h, sub) {
+					remaining = append(remaining, h)
+				}
+			}
+			if len(remaining) == len(list) {
+				kept = append(kept, r)
+			} else if len(remaining) > 0 {
+				m["hooks"] = remaining
+				kept = append(kept, m)
 			}
 		}
 	}
 	hooks[event] = append(kept, map[string]any{"hooks": []any{hook}})
 }
 
-// isOurs matches only entries codeforge wrote: a single-quoted path to a binary named codeforge, then sub.
-// A user hook that merely mentions codeforge is kept.
-func isOurs(rule any, sub string) bool {
-	m, ok := rule.(map[string]any)
+// isOurHook recognises the permanent helper and codeforge's legacy commands.
+// Merely mentioning codeforge in a user hook is not enough to replace it.
+func isOurHook(h any, sub string) bool {
+	m, ok := h.(map[string]any)
 	if !ok {
 		return false
 	}
-	list, ok := m["hooks"].([]any)
+	cmd, ok := m["command"].(string)
 	if !ok {
 		return false
 	}
-	for _, h := range list {
-		hm, ok := h.(map[string]any)
-		if !ok {
-			continue
-		}
-		cmd, ok := hm["command"].(string)
-		if !ok {
-			continue
-		}
-		quoted, ok := strings.CutSuffix(cmd, " "+sub)
-		if ok && len(quoted) > 1 && quoted[0] == '\'' && strings.HasSuffix(quoted, "/codeforge'") {
-			return true
-		}
+	quoted, ok := strings.CutSuffix(cmd, " "+sub)
+	if !ok {
+		return false
 	}
-	return false
+	if quoted == "/tmp/cf" || quoted == "/private/tmp/cf" {
+		return true
+	}
+	if len(quoted) < 2 || quoted[0] != '\'' {
+		return false
+	}
+	return strings.HasSuffix(quoted, "/codeforge'") ||
+		strings.HasSuffix(quoted, "/hooks/cf'") ||
+		quoted == "'/tmp/cf'" || quoted == "'/private/tmp/cf'"
 }
 
 func shellQuote(s string) string {

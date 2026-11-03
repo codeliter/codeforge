@@ -103,11 +103,24 @@ func Run(ctx context.Context, args []string) error {
 	if err != nil {
 		return fmt.Errorf("finding codeforge binary: %w", err)
 	}
-	if err := installHooks(empryoDir, self); err != nil {
+	hookBin, err := installHookBinary(empryoDir, self)
+	if err != nil {
+		return fmt.Errorf("installing hook executable: %w", err)
+	}
+	if err := installHooks(empryoDir, hookBin); err != nil {
 		return fmt.Errorf("installing guard: %w", err)
 	}
-	if err := installGHShim(empryoDir, self); err != nil {
+	if err := installGHShim(empryoDir, hookBin); err != nil {
 		return fmt.Errorf("installing gh guard: %w", err)
+	}
+
+	if len(args) > 0 && (args[0] == "repair" || args[0] == "reinit") {
+		if len(args) != 1 {
+			return fmt.Errorf("%w: repair takes no arguments", errInitUsage)
+		}
+		fmt.Fprintf(os.Stdout, "codeforge: repaired profiles, skills, hooks and gh shim. Hook executable: %s\n", hookBin)
+		fmt.Fprintln(os.Stdout, "Personas, sessions and logins were kept. Start a new Codeforge session to use the repaired hooks.")
+		return nil
 	}
 
 	bin, err := findEmpryo(empryoDir)

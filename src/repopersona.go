@@ -104,18 +104,30 @@ func runTrust(ctx context.Context, home string) error {
 	return nil
 }
 
-// saveRepoPersona never overwrites, because the file is usually committed and shared with the team.
-// The author trusts what they wrote, so it is approved straight away.
+// saveRepoPersona preserves existing conventions but can fill an empty file or
+// untouched scaffold. The author trusts what they wrote, so it is approved straight away.
 func saveRepoPersona(home, root string, persona []byte) (string, error) {
+	if strings.TrimSpace(string(persona)) == "" {
+		return "", errEmptyPersona
+	}
 	p := filepath.Join(root, repoPersonaPath)
-	if _, err := os.Stat(p); err == nil {
-		return "", fmt.Errorf("%w: %s", errRepoPersonaExists, p)
+	if existing, err := os.ReadFile(p); err == nil {
+		if !unfinishedRepoPersona(existing) {
+			return "", fmt.Errorf("%w: %s", errRepoPersonaExists, p)
+		}
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return "", fmt.Errorf("reading repository persona: %w", err)
 	}
 
 	if err := writeFile(root, repoPersonaPath, persona, publicFile); err != nil {
 		return "", err
 	}
 	return p, trust(home, p, strings.TrimSpace(string(persona)))
+}
+
+func unfinishedRepoPersona(data []byte) bool {
+	body := strings.TrimSpace(string(data))
+	return body == "" || body == strings.TrimSpace(assets.RepoPersonaTemplate)
 }
 
 func repoPersonaSeed(starterName string) ([]byte, error) {

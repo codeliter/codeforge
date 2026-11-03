@@ -90,7 +90,7 @@ func learnPersona(ctx context.Context, bin, model string, repos []string) ([]byt
 }
 
 func distil(ctx context.Context, bin, model, corpus string) ([]byte, error) {
-	args := []string{"--headless", "--json", "--no-profile", "--no-genome", "--effort", "high", "--max-steps", "1"}
+	args := []string{"--headless", "--json", "--no-profile", "--no-genome", "--effort", "high", "--max-steps", "2"}
 	if model != "" {
 		args = append(args, "--model", model)
 	}
@@ -118,6 +118,9 @@ func distil(ctx context.Context, bin, model, corpus string) ([]byte, error) {
 }
 
 func savePersona(home string, persona []byte) (string, error) {
+	if strings.TrimSpace(string(persona)) == "" {
+		return "", errEmptyPersona
+	}
 	if err := os.MkdirAll(configDir(home), privateDir); err != nil {
 		return "", fmt.Errorf("creating config dir: %w", err)
 	}
@@ -135,7 +138,9 @@ func installPersonaSkill(home string) error {
 	data, err := os.ReadFile(filepath.Join(configDir(home), "persona.md"))
 	switch {
 	case err == nil:
-		body = personaHeader + string(data)
+		if strings.TrimSpace(string(data)) != "" {
+			body = personaHeader + string(data)
+		}
 	case !errors.Is(err, fs.ErrNotExist):
 		return fmt.Errorf("reading persona: %w", err)
 	}

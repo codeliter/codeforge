@@ -18,6 +18,8 @@ func TestProtectedPath(t *testing.T) {
 		{"$HOME/.codeforge/config.json", true},
 		{"/Users/me/.codeforge", true},
 		{"/Users/me/.empryo/hooks.json", true},
+		{"/Users/me/.empryo/hooks/cf", true},
+		{"/repo/.empryo/hooks/cf", true},
 		{"/Users/me/.empryo/config.json", true},
 		{".empryo/config.json", true},
 		{".claude/settings.local.json", true},
@@ -95,7 +97,7 @@ func TestCheckTool_ProtectsEnforcementFolders(t *testing.T) {
 	require.NoError(t, err)
 
 	for _, p := range []string{
-		filepath.Join(home, ".empryo", "bin"), filepath.Join(home, ".empryo"), "~/.empryo/bin", filepath.Join(home, ".codeforge"),
+		filepath.Join(home, ".empryo", "bin"), filepath.Join(home, ".empryo", "hooks"), filepath.Join(home, ".empryo"), "~/.empryo/bin", filepath.Join(home, ".codeforge"),
 	} {
 		in := input(t, "Bash", map[string]any{"command": "mv " + p + " /tmp/x"})
 		in.Paths = []string{p, "/tmp/x"}

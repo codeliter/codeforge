@@ -43,6 +43,7 @@ func protectedPath(p, cwd, home string) bool {
 	dir := filepath.Base(filepath.Dir(p))
 	return slices.Contains(hookConfigDirs, dir) && slices.Contains(hookConfigFiles, filepath.Base(p)) ||
 		slices.Contains(hookConfigDirs, dir) && strings.HasPrefix(filepath.Base(filepath.Dir(filepath.Dir(p))), ".") && filepath.Base(p) == "hooks.json" ||
+		strings.Contains(filepath.ToSlash(p), "/.empryo/hooks/") ||
 		strings.Contains(filepath.ToSlash(p), "/.copilot/hooks/") || strings.Contains(filepath.ToSlash(p), "/.github/hooks/")
 }
 
@@ -114,7 +115,7 @@ func protectedAncestor(p, cwd, home string) bool {
 		return true
 	case "hooks":
 		parent := filepath.Base(filepath.Dir(p))
-		return parent == ".git" || parent == ".github" || parent == ".copilot"
+		return parent == ".git" || parent == ".github" || parent == ".copilot" || parent == ".empryo"
 	}
 
 	if home == "" {
