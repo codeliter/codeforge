@@ -7,7 +7,7 @@ import (
 )
 
 func TestCheck_LearningWritesAreUserOnly(t *testing.T) {
-	for _, cmd := range []string{"codeforge learn list", "codeforge learn list --all", "codeforge learn propose"} {
+	for _, cmd := range []string{"codeforge learn list", "codeforge learn list --all", "codeforge learn propose", "codeforge learn habits"} {
 		require.Empty(t, rules(Check(cmd, false)), cmd)
 	}
 	for _, cmd := range []string{
@@ -26,4 +26,15 @@ func TestCheck_LearningWritesAreUserOnly(t *testing.T) {
 	}
 	got := CheckTool(input(t, "code_script", map[string]any{"code": `await api.run("codeforge learn correct x")`}), false)
 	require.Equal(t, []string{RuleSelf}, rules(got))
+}
+
+func TestCheck_AgentCannotFeedTheObserver(t *testing.T) {
+	for _, cmd := range []string{
+		"codeforge observe",
+		"echo '{}' | codeforge observe",
+		"/opt/homebrew/bin/codeforge observe < payload.json",
+		"env CODEFORGE_LAUNCH=1 codeforge observe",
+	} {
+		require.Equal(t, []string{RuleSelf}, rules(Check(cmd, false)), cmd)
+	}
 }

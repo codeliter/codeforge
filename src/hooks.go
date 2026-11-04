@@ -41,7 +41,7 @@ func installHooks(empryoDir, self string, legacyHooks ...string) error {
 	}
 
 	const hookTimeoutSeconds = 10
-	setOurs(hooks, "PreToolUse", hookCommand, map[string]any{
+	setOurs(hooks, "PreToolUse", hookCommand, "", map[string]any{
 		"type":       "command",
 		"command":    shellQuote(self) + " " + hookCommand,
 		"timeout":    hookTimeoutSeconds,
@@ -49,11 +49,21 @@ func installHooks(empryoDir, self string, legacyHooks ...string) error {
 	}, legacyHooks...)
 	// Empryo gives each SessionEnd hook at most 3 seconds while it shuts down.
 	const sessionEndTimeoutSeconds = 3
-	setOurs(hooks, "SessionEnd", sessionEndCommand, map[string]any{
+	setOurs(hooks, "SessionEnd", sessionEndCommand, "", map[string]any{
 		"type":    "command",
 		"command": shellQuote(self) + " " + sessionEndCommand,
 		"timeout": sessionEndTimeoutSeconds,
 	}, legacyHooks...)
+	// Learning: Empryo reports whether each shell command succeeded or failed. Async and fail-open, so it never
+	// slows or blocks a tool call.
+	for _, event := range []string{"PostToolUse", "PostToolUseFailure"} {
+		setOurs(hooks, event, observeCommand, "Bash", map[string]any{
+			"type":    "command",
+			"command": shellQuote(self) + " " + observeCommand,
+			"timeout": observeTimeoutSec,
+			"async":   true,
+		}, legacyHooks...)
+	}
 	doc["hooks"] = hooks
 
 	out, err := json.MarshalIndent(doc, "", "  ")
@@ -73,8 +83,12 @@ const (
 
 // setOurs replaces only codeforge's hooks, including stale temporary launchers.
 // User hooks in the same rule and the rule's matcher are preserved.
-func setOurs(hooks map[string]any, event, sub string, hook map[string]any, legacyHooks ...string) {
-	hooks[event] = append(keepOthers(hooks[event], sub, legacyHooks), map[string]any{"hooks": []any{hook}})
+func setOurs(hooks map[string]any, event, sub, matcher string, hook map[string]any, legacyHooks ...string) {
+	rule := map[string]any{"hooks": []any{hook}}
+	if matcher != "" {
+		rule["matcher"] = matcher
+	}
+	hooks[event] = append(keepOthers(hooks[event], sub, legacyHooks), rule)
 }
 
 // keepOthers returns the rules of an event without codeforge's hooks.

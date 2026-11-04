@@ -206,6 +206,12 @@ The `codeforge-reviewer` helper returns findings and can ask the parent conversa
 For another person's PR, it can draft a comment. The parent must show you the exact PR and comment and ask your approval before posting.
 The reviewer itself cannot edit or post; a review request is not permission to publish. Review sessions are enforced with a tool guard and a read-only sandbox; other modes only protect codeforge's own settings and trust.
 
+## It learns how to check your work
+
+Codeforge notices which test, lint and build commands pass in your project and tells the agent to use them next time.
+`codeforge learn habits` shows what it learned, and `codeforge learn revert ID...` removes any of it.
+Only plain commands the tool reported as passing count; nothing is learned from review sessions.
+
 ## Come back later
 
 Use the session ID shown when you leave:

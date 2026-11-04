@@ -361,8 +361,12 @@ func launchCommand(ctx context.Context, home, bin, mode string, args []string) (
 			return nil, nil, errSessionOverride
 		}
 	}
+	userSystem := hasFlag(args, "--system")
 	if args, err = withRepoPersona(ctx, home, args); err != nil {
 		return nil, nil, err
+	}
+	if !userSystem && !resume && mode != modeReview {
+		args = withLearnedHabits(ctx, home, args)
 	}
 	env := append(os.Environ(), "EMPRYO_HOOK_ENV=CODEFORGE_*", launchMarker+"=1", "CODEFORGE_RESUME_HINT=launcher")
 	argv := append([]string{bin, "--profile", profileFor(mode)}, args...)

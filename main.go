@@ -32,6 +32,8 @@ func main() {
 			code = src.GHShim(ctx, os.Args[2:])
 		case "session-end":
 			code = src.SessionEnd()
+		case "observe":
+			code = src.Observe(ctx)
 		default:
 			code = -1
 		}

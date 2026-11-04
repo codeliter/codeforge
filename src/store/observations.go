@@ -1,6 +1,7 @@
 package store
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"errors"
@@ -17,6 +18,9 @@ const (
 	OriginCLI = "cli"
 	// OriginRun means codeforge ran the check itself and saw its exit status.
 	OriginRun = "codeforge-run"
+	// OriginHook means Empryo's tool hook reported that a command's tool call succeeded or failed. The exit
+	// code is stored only when Empryo reports one.
+	OriginHook = "hook"
 
 	StatusPassed     = "passed"
 	StatusFailed     = "failed"
@@ -33,6 +37,8 @@ type Observation struct {
 	Text       string
 	Repository string
 	SessionID  string
+	// Dir is where the command ran, relative to the repository root ("." for the root). Empty means ".".
+	Dir        string
 	Origin     string
 	Status     string
 	ExitCode   *int
@@ -47,11 +53,15 @@ func (s *Store) Record(ctx context.Context, o Observation) (int64, error) {
 	defer cancel()
 	var status, duration any
 	if o.Kind == KindOutcome {
-		status, duration = o.Status, o.Duration.Milliseconds()
+		status = o.Status
+		// A hook cannot see how long a command took, so it stores no duration instead of a made-up zero.
+		if o.Origin != OriginHook {
+			duration = o.Duration.Milliseconds()
+		}
 	}
 	res, err := s.db.ExecContext(ctx,
-		"INSERT INTO observations(kind, text, repository, session_id, origin, status, exit_code, duration_ms, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		o.Kind, o.Text, o.Repository, o.SessionID, o.Origin, status, o.ExitCode, duration, o.CreatedAt.UTC().Format(time.RFC3339Nano))
+		"INSERT INTO observations(kind, text, repository, session_id, dir, origin, status, exit_code, duration_ms, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		o.Kind, o.Text, o.Repository, o.SessionID, cmp.Or(o.Dir, "."), o.Origin, status, o.ExitCode, duration, o.CreatedAt.UTC().Format(time.RFC3339Nano))
 	if err != nil {
 		return 0, fmt.Errorf("saving observation: %w", err)
 	}
@@ -67,7 +77,7 @@ func (s *Store) Observations(ctx context.Context, repository string, withReverte
 	ctx, cancel := context.WithTimeout(ctx, operationTimeout)
 	defer cancel()
 	rows, err := s.db.QueryContext(ctx,
-		"SELECT id, kind, text, repository, session_id, origin, status, exit_code, duration_ms, created_at, reverted_at FROM observations WHERE repository = ? AND (? OR reverted_at IS NULL) ORDER BY id",
+		"SELECT id, kind, text, repository, session_id, dir, origin, status, exit_code, duration_ms, created_at, reverted_at FROM observations WHERE repository = ? AND (? OR reverted_at IS NULL) ORDER BY id",
 		repository, withReverted)
 	if err != nil {
 		return nil, fmt.Errorf("listing observations: %w", err)
@@ -92,7 +102,7 @@ func scanObservation(rows *sql.Rows) (Observation, error) {
 	var status, reverted sql.NullString
 	var exit, duration sql.NullInt64
 	var created string
-	if err := rows.Scan(&o.ID, &o.Kind, &o.Text, &o.Repository, &o.SessionID, &o.Origin, &status, &exit, &duration, &created, &reverted); err != nil {
+	if err := rows.Scan(&o.ID, &o.Kind, &o.Text, &o.Repository, &o.SessionID, &o.Dir, &o.Origin, &status, &exit, &duration, &created, &reverted); err != nil {
 		return o, fmt.Errorf("reading observation: %w", err)
 	}
 	o.Status = status.String

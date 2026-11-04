@@ -147,6 +147,30 @@ Implementation: [hookbinary.go](src/hookbinary.go), [hooks.go](src/hooks.go),
 [hookcmd.go](src/hookcmd.go), [guard/](src/guard/), [enforce.go](src/enforce.go),
 [sandbox.go](src/sandbox.go).
 
+### Learning from use
+
+Codeforge registers async, fail-open `PostToolUse` and `PostToolUseFailure` hooks for `Bash` that run
+`codeforge observe`. In sessions codeforge launched (not review sessions, not jurors) the hook records whether
+plain verification commands (`go test`, `golangci-lint run`, `npm test`, `make test` and similar; see
+`verifyPrefixes`) passed or failed, as `origin=hook` outcomes in the sessions database. Commands with shell
+operators, substitutions or redirects are never recorded.
+
+A command that passed at least twice and whose latest run passed is a **habit**. Up to five habits are added to
+the system prompt, after the repository persona, as suggestions that never override the request, and a line on
+stderr says so. `codeforge learn habits` lists them with the IDs to pass to `codeforge learn revert`. Only
+commands the harness reports as succeeded or failed count; the agent's own claims do not. Without an exit code in
+the payload, a success event is stored as `incomplete` and does not count until the payload shape is confirmed
+from `~/.codeforge/observe-shape.log`, which logs event and key names only.
+
+Residual risk: habits come from commands the agent chose to run, so they are influenceable by the agent and
+not fully trusted. The agent cannot call `codeforge observe` (the guard refuses it), and a payload must name a
+session codeforge launched in the same repository, but it can still run its own verification commands. A habit may only
+contain words, paths, flags and simple values (`plainCommand`: no comments, quotes, operators or substitutions),
+starts with a known verification command, takes only flags with small values, paths that exist in the repository and at most one bare word, needs two passes, and is shown to you at launch and in
+`learn habits`. It is still text from the agent's own history in a later prompt; `learn revert` removes it.
+`learn revert` with several IDs applies them in order and stops at the first error, leaving earlier IDs reverted.
+Outcomes are ordered by when the async hook wrote them, which can differ slightly from when the commands ended.
+
 ## 4. Effort routing and model roles
 
 The effort classifier borrows the idea of allocating inference compute by task difficulty [1–5]

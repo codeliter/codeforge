@@ -22,7 +22,7 @@ import (
 )
 
 var (
-	errLearnUsage   = errors.New("usage: codeforge learn correct [--session ID] TEXT | outcome [--session ID] -- COMMAND [ARGS] | list [--all] | propose | revert ID")
+	errLearnUsage   = errors.New("usage: codeforge learn correct [--session ID] TEXT | outcome [--session ID] -- COMMAND [ARGS] | list [--all] | propose | habits | revert ID [ID]")
 	errLearnText    = errors.New("text must be one line of 1 to 2000 printable characters")
 	errLearnSecret  = errors.New("text looks like it contains a credential; nothing was saved")
 	errLearnSession = errors.New("unknown codeforge session for this repository")
@@ -65,11 +65,22 @@ func runLearn(ctx context.Context, home string, args []string, w io.Writer) erro
 			return errLearnUsage
 		}
 		return learnPropose(ctx, home, repo, w)
-	case "revert":
-		if len(args[1:]) != 1 {
+	case "habits":
+		if len(args) != 1 {
 			return errLearnUsage
 		}
-		return learnRevert(ctx, home, repo, args[1], w)
+		return learnHabits(ctx, home, repo, w)
+	case "revert":
+		ids := args[1:]
+		if len(ids) == 0 {
+			return errLearnUsage
+		}
+		for _, id := range ids {
+			if err := learnRevert(ctx, home, repo, id, w); err != nil {
+				return err
+			}
+		}
+		return nil
 	}
 	return errLearnUsage
 }
@@ -292,7 +303,13 @@ func learnList(ctx context.Context, home, repo string, all bool, w io.Writer) er
 			line += " session=" + o.SessionID
 		}
 		if o.Kind == store.KindOutcome {
-			line += " " + strings.ReplaceAll(describeStatus(o), " ", "") + " " + o.Duration.Round(time.Millisecond).String()
+			if o.Dir != "" && o.Dir != "." {
+				line += " dir=" + strconv.Quote(o.Dir)
+			}
+			line += " " + strings.ReplaceAll(describeStatus(o), " ", "")
+			if o.Origin != store.OriginHook { // a hook cannot see how long the command took
+				line += " " + o.Duration.Round(time.Millisecond).String()
+			}
 		}
 		if o.RevertedAt != nil {
 			line += " reverted"
