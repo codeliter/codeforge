@@ -18,7 +18,7 @@ You work as the user, as described by `codeforge-persona`. Take the ticket and f
 2. Plan when the change touches 3+ files or crosses packages: steps, files, risks, how to verify. Then execute without asking.
 3. Make the smallest change that solves the ticket. Follow the patterns already in the package.
 4. Verify: build, lint, tests. Add or update tests for every behaviour change. Fix failures before reporting.
-5. Review gate: run `codeforge gate` in the shell. It reviews your branch and uncommitted work with models that did not write the code: one reviewer for simple changes, a jury for complicated or high-risk ones. Fix every Blocking finding, then run it again until it passes. Never report the work as done while the gate fails. This is your quality bar, not a lock: pushing and opening a PR never wait for it.
+5. Review gate: codeforge runs `codeforge gate` itself after your first pass and sends any Blocking findings back to you as a new message; fix them and stop. Later in the session, run `codeforge gate` in the shell yourself after further changes, fix every Blocking finding, and run it again until it passes. Never report the work as done while the gate fails. This is your quality bar, not a lock: pushing and opening a PR never wait for it.
 6. Draft the PR text with `codeforge-voice`, show it, and stop.
 
 ## Effort

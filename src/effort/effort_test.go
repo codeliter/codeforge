@@ -87,10 +87,11 @@ func TestNew_RequiresJudge(t *testing.T) {
 
 func TestMerge(t *testing.T) {
 	got := Merge([]Scores{
-		{Ambiguity: 0, Blast: 1, Risk: 0, Novelty: 0, Verify: 2, Reason: "a"},
+		{Ambiguity: 0, Blast: 1, Risk: 1, Novelty: 0, Verify: 2, Reason: "a"},
 		{Ambiguity: 1, Blast: 1, Risk: 2, Novelty: 0, Verify: 1, Reason: "b"},
 	})
-	require.Equal(t, Scores{Ambiguity: 1, Blast: 1, Risk: 2, Novelty: 0, Verify: 2, Reason: "a | b"}, got)
+	require.Equal(t, Scores{Ambiguity: 1, Blast: 1, Risk: 1, Novelty: 0, Verify: 2, Reason: "a | b"}, got, "one judge alone cannot force risk 2")
+	require.Equal(t, 2, Merge([]Scores{{Risk: 2}, {Risk: 2}}).Risk, "agreement on risk 2 keeps it")
 }
 
 func TestClassify_Panel(t *testing.T) {
@@ -103,8 +104,13 @@ func TestClassify_Panel(t *testing.T) {
 
 	got, err := c.Classify(t.Context(), "bump replicas", Signals{})
 	require.NoError(t, err)
-	require.Equal(t, High, got.Level)
+	require.Equal(t, Medium, got.Level, "one of two working judges seeing risk is not enough for High")
 	require.Len(t, got.Votes, 2)
+	both, err := New(Options{Judges: []Judge{risky, &fakeJudge{answer: `{"risk":2,"reason":"prod"}`}}})
+	require.NoError(t, err)
+	got, err = both.Classify(t.Context(), "bump replicas", Signals{})
+	require.NoError(t, err)
+	require.Equal(t, High, got.Level, "judges agreeing on risk go High")
 }
 
 func TestClassify_AllJudgesFail(t *testing.T) {

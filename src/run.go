@@ -262,11 +262,20 @@ func Run(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	if mode == modeTicket && !resumed && !hasFlag(args, "--headless") {
+		// Ticket work is reviewed by other models before the TUI opens; blocking findings go back to the agent.
+		return launchWith(ctx, home, bin, mode, args, ticketAfterTask(home, bin, cfg))
+	}
 	return launch(ctx, home, bin, mode, args)
 }
 
 // launch supervises the terminal UI so the resume hint appears after it closes.
 func launch(ctx context.Context, home, bin, mode string, args []string) error {
+	return launchWith(ctx, home, bin, mode, args, nil)
+}
+
+// launchWith runs after between the first headless turn and the TUI, e.g. ticket mode's review gate.
+func launchWith(ctx context.Context, home, bin, mode string, args []string, after func(context.Context, string)) error {
 	argv, env, err := launchCommand(ctx, home, bin, mode, args)
 	if err != nil {
 		return err
@@ -285,6 +294,9 @@ func launch(ctx context.Context, home, bin, mode string, args []string) error {
 				return err
 			}
 			id := flagValue(argv, "--session-id")
+			if after != nil {
+				after(ctx, id)
+			}
 			argv, env, err = launchCommand(ctx, home, bin, mode, []string{"--session", id})
 			if err != nil {
 				return err
@@ -374,8 +386,16 @@ func modeArgs(ctx context.Context, bin string, cfg Config, cmd string, args []st
 		return cmd, args, err
 	}
 
-	if args, err = startArgs(args); err != nil {
+	description := ""
+	if args, description, err = startArgs(args); err != nil {
 		return modeTicket, nil, err
+	}
+	// The judges score the description alone, not the skill and ticket lines added around it.
+	if !hasEffort(args) {
+		if err := checkEffort(args); err != nil {
+			return modeTicket, nil, err
+		}
+		args = append([]string{"--effort", classify(ctx, bin, description, cfg.Judges).String()}, args...)
 	}
 	args, err = taskArgs(ctx, bin, cfg, args)
 	return modeTicket, args, err

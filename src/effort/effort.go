@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -143,10 +144,16 @@ func (c *Classifier) Classify(ctx context.Context, task string, sig Signals) (Re
 	}
 
 	merged := Merge(ok)
-	return Result{Level: Decide(merged), Scores: merged, Votes: ok}, nil
+	level := Decide(merged)
+	// A single judge seeing a red flag cannot force High on its own, but it does rule out Low.
+	if level == Low && slices.ContainsFunc(ok, func(s Scores) bool { return s.Risk == maxScore || s.Ambiguity == maxScore }) {
+		level = Medium
+	}
+	return Result{Level: level, Scores: merged, Votes: ok}, nil
 }
 
-// Merge takes the highest risk any judge saw and the rounded mean of everything else.
+// Merge averages the judges' scores. Risk rounds down, so one judge alone cannot force High: when two judges
+// split 1 and 2 on risk, the task is not clearly risky. Agreement on risk 2 still gives 2.
 func Merge(votes []Scores) Scores {
 	var m Scores
 	var reasons []string
@@ -155,7 +162,7 @@ func Merge(votes []Scores) Scores {
 		m.Blast += v.Blast
 		m.Novelty += v.Novelty
 		m.Verify += v.Verify
-		m.Risk = max(m.Risk, v.Risk)
+		m.Risk += v.Risk
 		if v.Reason != "" {
 			reasons = append(reasons, v.Reason)
 		}
@@ -166,6 +173,7 @@ func Merge(votes []Scores) Scores {
 	m.Blast = roundDiv(m.Blast, n)
 	m.Novelty = roundDiv(m.Novelty, n)
 	m.Verify = roundDiv(m.Verify, n)
+	m.Risk /= n
 	m.Reason = strings.Join(reasons, " | ")
 	return m
 }
@@ -174,9 +182,14 @@ func roundDiv(sum, n int) int {
 	return (sum + n/2) / n
 }
 
+// userMessage wraps the task; repository signals are added only when there are any, so a description-only
+// judgement is not swayed by unrelated work already in the tree.
 func userMessage(task string, sig Signals) string {
-	return fmt.Sprintf("<task>\n%s\n</task>\n<signals changed_files=%d diff_lines=%d branch=%q/>",
-		task, sig.ChangedFiles, sig.DiffLines, sig.Branch)
+	msg := fmt.Sprintf("<task>\n%s\n</task>", task)
+	if sig != (Signals{}) {
+		msg += fmt.Sprintf("\n<signals changed_files=%d diff_lines=%d branch=%q/>", sig.ChangedFiles, sig.DiffLines, sig.Branch)
+	}
+	return msg
 }
 
 func parseScores(raw string) (Scores, error) {

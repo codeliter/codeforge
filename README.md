@@ -189,6 +189,8 @@ Or run `codeforge` and pick a mode.
 | `review` | You want a separate, read-only review of a PR or local changes. |
 | `respond` | You want to address feedback on your existing PR. |
 
+`codeforge ticket` with no description asks for two things: the ticket ID (optional) and a description of the work. The description alone sets the effort. After the agent's first pass, Codeforge reviews the change with models that didn't write it, sends any blocking findings back to the agent (up to 3 rounds), then opens the session.
+
 For “make a change, review it, then fix the findings”, stay in `work` and ask for `codeforge-reviewer`.
 You do not need to start another terminal.
 

@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 
 	"github.com/codeliter/codeforge/src/effort"
@@ -90,7 +89,9 @@ func classify(ctx context.Context, bin, task string, models []string) effort.Lev
 		return effort.Medium
 	}
 
-	res, err := c.Classify(ctx, task, repoSignals(ctx))
+	// Judge the described work only. The tree's uncommitted changes belong to earlier work, not this task,
+	// and inflated the blast score.
+	res, err := c.Classify(ctx, task, effort.Signals{})
 	if len(res.Votes) == 0 {
 		fmt.Fprintln(os.Stderr, "codeforge: effort judges failed, using medium:", err)
 		return res.Level
@@ -98,37 +99,6 @@ func classify(ctx context.Context, bin, task string, models []string) effort.Lev
 
 	fmt.Fprintf(os.Stderr, "codeforge: effort %s from %d/%d judges (%s)\n", res.Level, len(res.Votes), len(judges), res.Scores.Reason)
 	return res.Level
-}
-
-func repoSignals(ctx context.Context) effort.Signals {
-	var sig effort.Signals
-	if out, err := exec.CommandContext(ctx, "git", "diff", "HEAD", "--numstat").Output(); err == nil {
-		for line := range strings.SplitSeq(strings.TrimSpace(string(out)), "\n") {
-			added, rest, ok := strings.Cut(line, "\t")
-			if !ok {
-				continue
-			}
-			deleted, _, ok := strings.Cut(rest, "\t")
-			if !ok {
-				continue
-			}
-			sig.ChangedFiles++
-			sig.DiffLines += atoi(added) + atoi(deleted)
-		}
-	}
-	if out, err := exec.CommandContext(ctx, "git", "branch", "--show-current").Output(); err == nil {
-		sig.Branch = strings.TrimSpace(string(out))
-	}
-	return sig
-}
-
-// atoi treats git's "-" for binary files as zero lines.
-func atoi(s string) int {
-	n, err := strconv.Atoi(s)
-	if err != nil {
-		return 0
-	}
-	return n
 }
 
 func hasFlag(args []string, name string) bool {

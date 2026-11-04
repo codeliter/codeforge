@@ -144,6 +144,11 @@ func TestModesCLI(t *testing.T) {
 					}
 				}
 				if variant == "tui" {
+					if tc.name == "ticket" || tc.name == "start" {
+						require.Contains(t, string(out), "codeforge: reviewing the change (round 1 of 3)", "ticket work is reviewed before the TUI opens")
+					} else {
+						require.NotContains(t, string(out), "reviewing the change")
+					}
 					require.Contains(t, calls[1], "--session\ncli-session")
 					require.NotContains(t, calls[1], "--headless")
 					require.NotContains(t, calls[1], tc.detail)

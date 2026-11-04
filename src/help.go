@@ -11,7 +11,7 @@ Usage:
   codeforge [mode] [task] [empryo flags]
 
 Modes:
-  ticket [--ticket ID] ["summary"]   Take a ticket to a verified change and draft PR
+  ticket [--ticket ID] ["description"]  Take a ticket to a verified change and draft PR; reviewed before the TUI opens
   chat ["question"]                  Questions, explanations and small edits
   work ["task"]                      Conversational tasks through implementation and verification; no ticket or PR flow
   review [PR number or URL]          Read-only review of a PR, or of your branch when no PR is given
