@@ -165,33 +165,6 @@ The `codeforge-reviewer` helper returns findings and can ask the parent conversa
 For another person's PR, it can draft a comment. The parent must show you the exact PR and comment and ask your approval before posting.
 The reviewer itself cannot edit or post; a review request is not permission to publish.
 
-## Something is broken?
-
-Run this yourself in a terminal:
-
-```sh
-codeforge repair
-```
-
-`codeforge reinit` does the same thing.
-
-This rebuilds Codeforge's startup files and safety checks.
-The safety-check program stays at `~/.empryo/hooks/cf`, not in a temporary folder.
-Old, broken Codeforge hooks are replaced. Your other hooks, personas, sessions, and logins are kept.
-Close and reopen affected sessions after repairing.
-
-If an old **Codeforge** hook used another name, tell repair its old path:
-
-```sh
-codeforge repair --legacy-hook /tmp/old-bin
-```
-
-Use the path shown in your error; `old-bin` is only an example. Repeat `--legacy-hook` to name more than one old path.
-Only use this for old Codeforge executables you recognise. Other security hooks are kept.
-If that path is not in the global hook file, repair warns you to check the project's or other agent's hook settings.
-
-Repair does not fix a provider's quota, a failed sign-in, or a broken internet connection.
-
 ## Come back later
 
 Use the session ID shown when you leave:
@@ -209,8 +182,9 @@ After a new release is published:
 ```sh
 brew update
 brew upgrade codeforge
-codeforge repair
 ```
+
+The next time you run `codeforge`, it updates its own setup before starting. Nothing else is needed.
 
 Use Homebrew for installed updates. Do not copy local builds over the installed command.
 

@@ -24,6 +24,7 @@ Setup:
   init --persona [NAME]             Pick a described starter persona; name it to skip the menu
   init --global [REPO...]           Set your global persona instead (~/.codeforge/persona.md)
   repair, reinit                     Rebuild managed hooks, profiles and skills; keep personas and sessions
+                                     Runs automatically once on the first start after an upgrade
   repair --legacy-hook PATH          Replace a named old Codeforge hook; repeat for several paths
   models configure [--project|--global]
                                      Choose providers and role/helper models interactively; save config.yaml

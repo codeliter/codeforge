@@ -78,6 +78,16 @@ func Run(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	// After an upgrade, refresh managed hooks and profiles once, before any mode or command runs.
+	if !repair.enabled {
+		wd, err := os.Getwd()
+		if err != nil {
+			return fmt.Errorf("finding workspace: %w", err)
+		}
+		if err := autoRepair(home, wd, os.Stderr); err != nil {
+			return err
+		}
+	}
 
 	// Machine setup runs before anything that needs Empryo, because it installs and signs in to Empryo.
 	// init runs it first and then continues with the persona; setup stops after it.
@@ -137,6 +147,11 @@ func Run(ctx context.Context, args []string) error {
 	if repair.enabled {
 		if err := syncProjectAgents(workspace, maintenanceProfileConfig(globalCfg)); err != nil {
 			return err
+		}
+		if Version != "dev" {
+			if err := writeFile(configDir(home), repairStampFile, []byte(Version+"\n"), privateFile); err != nil {
+				return fmt.Errorf("recording repaired version: %w", err)
+			}
 		}
 		fmt.Fprintf(os.Stdout, "codeforge: repaired profiles, skills, hooks and gh shim. Hook executable: %s\n", hookBin)
 		fmt.Fprintln(os.Stdout, "Personas, sessions and logins were kept. Start a new Codeforge session to use the repaired hooks.")

@@ -106,6 +106,8 @@ flowchart TD
 - Persona history is input data, not instructions. The distillation prompt asks for evidence-based rules
   and excludes secrets and identifying examples. Inspect a learned persona before committing it.
 - `repair` (`reinit` is an alias) reinstalls managed assets without model calls or sign-in.
+  It runs automatically once per released version, before any command, when `~/.codeforge/repaired-version`
+  differs from the running version. Development builds and agent shells inside a session (`CODEFORGE_LAUNCH=1`) never trigger it.
   It is not a factory reset and does not repair malformed user configuration, expired credentials,
   provider quotas, or network outages. Restart affected sessions after repair so cached hooks are reloaded.
 
