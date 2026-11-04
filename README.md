@@ -136,7 +136,7 @@ Connected to more than one provider? Choose which one Codeforge uses first, and 
 codeforge provider configure
 ```
 
-It asks where to save (this project or all projects), then for the primary provider, then for backups one at a time in order. Pick **Done** when you have enough. Providers that lack one of your models are marked, so you can see which ones would fail before you choose. It shows the final order, saves it when you confirm, and offers to run `models apply` straight away.
+It asks where to save (this project or all projects), then for the primary provider, then for backups one at a time in order. Pick **Done** when you have enough. Each provider shows which stand-in it would use for a model it doesn't have, so you know what you get before you choose. It shows the final order, saves it when you confirm, and offers to run `models apply` straight away.
 
 Prefer one line? This does the same without the menu:
 
@@ -149,7 +149,12 @@ codeforge models apply
 - The rest are **backups**, tried in the order you list them. You can list as many as you have connected.
 - `models apply` writes the order into Empryo and asks first. Until then, nothing changes in Empryo.
 
-Every backup must serve the same models as the primary, so a switch never changes which model does the work. If one doesn't, `provider set` names the missing model and saves nothing.
+A backup uses the same model as the primary when it has it. When it doesn't, Codeforge picks that provider's closest model instead of dropping the backup:
+
+1. Another version of the same model, for example `claude-sonnet-5` for **Sonnet 5.5** (the nearest older one, else the nearest newer one).
+2. Otherwise a model of the same level from the same maker, then from any maker, newest first. Levels are top (Opus, GPT Sol, Kimi), everyday (Sonnet) and fast (Haiku, Luna, Flash, Nano, Mini).
+
+`codeforge models plan` marks these backups `(closest)`. Only a provider with nothing at the same level is refused; `provider set` then names the model and saves nothing.
 
 | Command | What it does |
 | --- | --- |

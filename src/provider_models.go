@@ -55,7 +55,9 @@ type ModelRoute struct {
 	Name      string
 	Primary   string
 	Fallbacks []string
-	Explicit  bool
+	// StandIns marks backups that serve a comparable model because the provider lacks the exact one.
+	StandIns map[string]bool
+	Explicit bool
 }
 
 type ModelPlan struct {
@@ -174,11 +176,21 @@ func resolveModelReference(role, ref string, policy *ProviderPolicy, catalog []s
 	if err != nil {
 		return route, fmt.Errorf("%s: %w", role, err)
 	}
-	// Every backup must serve the same model, so a switch never changes what the role runs.
+	// A backup serves the same model when it has it. When it doesn't, use its closest model of the same
+	// line or level, so a missing model never removes the backup; only a provider with nothing comparable fails.
 	for _, backup := range policy.Backups() {
 		id, err := catalogModel(ref, backup, catalog)
+		if errors.Is(err, errModelName) {
+			if standIn, ok := equivalentModel(route.Primary, backup, catalog); ok {
+				id, err = standIn, nil
+				if route.StandIns == nil {
+					route.StandIns = map[string]bool{}
+				}
+				route.StandIns[id] = true
+			}
+		}
 		if err != nil {
-			return route, fmt.Errorf("%s fallback: %w", role, err)
+			return route, fmt.Errorf("%s fallback: %w (and %s has no model of the same level)", role, err, backup)
 		}
 		route.Fallbacks = append(route.Fallbacks, id)
 	}

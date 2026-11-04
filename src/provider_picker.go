@@ -152,12 +152,14 @@ func providerModelOptions(catalog []string, policy *ProviderPolicy, saved ...str
 			for _, provider := range policy.Backups() {
 				if backup, err := catalogModel(value, provider, catalog); err == nil {
 					backups = append(backups, backup)
+				} else if standIn, ok := equivalentModel(id, provider, catalog); ok {
+					backups = append(backups, standIn+" (closest)")
 				} else {
 					missing = true
 				}
 			}
 			if missing {
-				label += " (missing on a backup provider)"
+				label += " (nothing comparable on a backup provider)"
 			} else {
 				label += " (backups: " + strings.Join(backups, " > ") + ")"
 			}
@@ -182,7 +184,7 @@ func modelPlanPreview(plan ModelPlan) string {
 	var text strings.Builder
 	fmt.Fprintln(&text, "Resolved catalog IDs:")
 	for _, route := range plan.Routes {
-		backup := strings.Join(route.Fallbacks, " > ")
+		backup := strings.Join(markStandIns(route), " > ")
 		if backup == "" {
 			backup = "native policy (explicit override or no preference)"
 		}

@@ -6,7 +6,8 @@ providers:
   fallbacks:   # tried in this order; set them with codeforge provider set
     - copilot
 
-# Every backup must serve the same named model. Normal launches only verify.
+# A backup uses the same named model, or its closest model of the same level when it lacks it.
+# Normal launches only verify.
 # Run codeforge models apply to choose scope, preview and confirm native fallback changes.
 # Omit fallbacks to inherit native policy without a Codeforge backup preference.
 # The older single "fallback: copilot" key still works and comes first.

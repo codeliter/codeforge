@@ -64,12 +64,24 @@ func argumentsNeedCatalog(args []string) bool {
 func printModelPlan(w io.Writer, plan ModelPlan) {
 	fmt.Fprintln(w, "ROLE\tPRIMARY MODEL\tBACKUP")
 	for _, route := range plan.Routes {
-		backup := strings.Join(route.Fallbacks, " > ")
+		backup := strings.Join(markStandIns(route), " > ")
 		if backup == "" {
 			backup = "native Empryo policy"
 		}
 		fmt.Fprintf(w, "%s\t%s\t%s\n", route.Role, route.Primary, backup)
 	}
+}
+
+// markStandIns labels backups that serve the closest comparable model rather than the exact one.
+func markStandIns(route ModelRoute) []string {
+	out := make([]string, len(route.Fallbacks))
+	for i, id := range route.Fallbacks {
+		out[i] = id
+		if route.StandIns[id] {
+			out[i] += " (closest)"
+		}
+	}
+	return out
 }
 
 func verifyModelPlan(ctx context.Context, bin, workspace string, plan ModelPlan) error {

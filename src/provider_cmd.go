@@ -118,6 +118,7 @@ func providerChain(ids, connected []string) (*ProviderPolicy, error) {
 }
 
 // checkProviderChain resolves every saved role on every provider, so the order is never saved half-working.
+// A backup without the exact model uses its closest model of the same level; only a provider with nothing comparable fails.
 func checkProviderChain(home, root, scope string, policy *ProviderPolicy, catalog []string) error {
 	cfg, err := readModelApplyConfig(home, root, scope)
 	if err != nil {
@@ -125,7 +126,7 @@ func checkProviderChain(home, root, scope string, policy *ProviderPolicy, catalo
 	}
 	cfg.Providers = policy
 	if _, err := resolveModelPlan(cfg, catalog); err != nil {
-		return fmt.Errorf("%w\nEvery backup provider must serve the same models as the primary. Choose those models with codeforge models configure, or leave that provider out", err)
+		return fmt.Errorf("%w\nThat provider has no model of the same level to stand in. Choose another model with codeforge models configure, or leave that provider out", err)
 	}
 	return nil
 }

@@ -219,7 +219,7 @@ Explicit `provider/model` IDs retain their previous semantics, including unavail
 Switching styles is an explicit migration of model references at the selected scope; cancelling does not save it.
 Provider policies replace the corresponding global policy as a block; a project `providers: {}` clears inherited provider defaults.
 
-A chosen backup requires the same named model on that provider. Only an explicit, confirmed `models apply` installs fallback maps;
+A backup uses the same named model when it serves it; otherwise `equivalentModel` (src/model_levels.go) picks a stand-in: the nearest version of the same model line (older first), else the newest same-level model from the same vendor, then any vendor. Levels come from name words (opus/sol/kimi/pro, sonnet, haiku/luna/flash/nano/mini). A provider with nothing of the same line or level is refused. Stand-ins are marked `(closest)` in plans. Only an explicit, confirmed `models apply` installs fallback maps;
 configuration, plan inspection and normal launches remain non-writing. No unproven preset overlay is used.
 Before model work it reads global, project, and effective `modelFallback` settings through the documented ACP config extension,
 without a prompt or config write, then deletes only its own query session. Declared and effective chains must both match, including

@@ -15,7 +15,7 @@ func TestProviderConfigureHelpers(t *testing.T) {
 	cfg := Config{Model: "Sonnet 5.5", Review: ReviewConfig{Model: "GPT 6.1 Sol"}, Expert: "custom/pinned", Routing: map[string]string{"editing": "Sonnet 5.5", "research": ""}}
 	require.Empty(t, missingModels(cfg, "copilot", catalog))
 	require.Equal(t, []string{"GPT 6.1 Sol"}, missingModels(cfg, "small", catalog), "explicit IDs and empty routing never count as missing")
-	require.Equal(t, "small — missing GPT 6.1 Sol", providerLabel("small", missingModels(cfg, "small", catalog)))
+	require.Equal(t, "small — nothing comparable to GPT 6.1 Sol", providerLabel("small", missingModels(cfg, "small", catalog)))
 	require.Contains(t, providerLabel("llmgateway", nil), "DevPass")
 	var values, labels []string
 	for _, option := range backupOptions(cfg, catalogProviders(catalog), []string{"llmgateway", "copilot"}, catalog) {
@@ -23,7 +23,7 @@ func TestProviderConfigureHelpers(t *testing.T) {
 		labels = append(labels, option.Key)
 	}
 	require.Equal(t, []string{providerDone, "openrouter", "small"}, values, "Done first, then providers not yet in the chain")
-	require.Contains(t, labels, "small — missing GPT 6.1 Sol")
+	require.Contains(t, labels, "small — nothing comparable to GPT 6.1 Sol")
 	preview := providerChainPreview("project", []string{"llmgateway", "copilot", "openrouter"})
 	require.Contains(t, preview, "Primary   llmgateway")
 	require.Contains(t, preview, "Backup 2  openrouter")
@@ -102,7 +102,7 @@ func TestProviderConfigureFlow(t *testing.T) {
 
 	ask = &scriptedAsker{t: t, answers: []string{"=", "small", providerDone}}
 	_, err = pickProviderOrder(ask, home, root, false, "global", catalog, &out)
-	require.ErrorIs(t, err, errModelName, "a backup missing a saved model is refused")
+	require.ErrorIs(t, err, errModelName, "a backup with nothing of the same level is refused")
 	cfg, err = readConfigFile(home)
 	require.NoError(t, err)
 	require.Equal(t, []string{"copilot", "openrouter"}, cfg.Providers.Backups(), "a refused order changes nothing")
@@ -136,7 +136,7 @@ func TestProviderMenuScreensRender(t *testing.T) {
 	form := huh.NewForm(huh.NewGroup(backup)).WithWidth(100)
 	form.Init()
 	view := form.View()
-	for _, want := range []string{"Backup 1", "Order so far: llmgateway", "Done — no more backups", "copilot", "openrouter", "small — missing GPT 6.1 Sol"} {
+	for _, want := range []string{"Backup 1", "Order so far: llmgateway", "Done — no more backups", "copilot", "openrouter", "small — nothing comparable to GPT 6.1 Sol"} {
 		require.Contains(t, view, want)
 	}
 	save := true
@@ -230,7 +230,7 @@ esac
 	require.Equal(t, "Sonnet 5.5", cfg.Routing["editing"])
 	out.Reset()
 	err = runProvider(t.Context(), home, bin, []string{"set", "devpass", "copilot", "openrouter", "--global"}, &out)
-	require.ErrorIs(t, err, errModelName, "openrouter lacks GPT 6.1 Sol, so the order is not saved half-working")
+	require.ErrorIs(t, err, errModelName, "openrouter has no frontier model to stand in for GPT 6.1 Sol, so the order is not saved half-working")
 	cfg, err = readConfigFile(home)
 	require.NoError(t, err)
 	require.Equal(t, []string{"copilot"}, cfg.Providers.Backups(), "a failed set leaves the saved order alone")

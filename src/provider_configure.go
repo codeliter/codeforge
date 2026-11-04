@@ -17,40 +17,60 @@ var errProviderConfigureCancelled = errors.New("provider configuration cancelled
 
 const providerDone = ""
 
-// providerLabel names a provider and says which saved models it lacks, so a bad backup is visible before it is picked.
-func providerLabel(id string, missing []string) string {
+// providerLabel names a provider and says how it covers the saved models, so the choice is clear before it is picked.
+func providerLabel(id string, missing []string, standIns ...string) string {
 	label := id
 	if id == "llmgateway" {
 		label = "llmgateway (LLM Gateway / DevPass)"
 	}
+	if len(standIns) > 0 {
+		label += " — uses " + strings.Join(standIns, ", ")
+	}
 	if len(missing) > 0 {
-		label += " — missing " + strings.Join(missing, ", ")
+		label += " — nothing comparable to " + strings.Join(missing, ", ")
 	}
 	return label
 }
 
-// missingModels lists the saved model names a provider cannot serve; explicit provider/model IDs never move.
-func missingModels(cfg Config, provider string, catalog []string) []string {
-	var missing []string
-	seen := map[string]bool{}
-	refs := []string{}
+// savedModelNames lists the model names the config resolves through providers; explicit provider/model IDs never move.
+func savedModelNames(cfg Config) []string {
+	var refs []string
 	for _, role := range roles {
 		refs = append(refs, current(cfg, role.key)...)
 	}
 	for _, ref := range cfg.Routing {
 		refs = append(refs, ref)
 	}
-	for _, ref := range refs {
-		if ref == "" || validModelID(ref) || seen[ref] {
+	refs = slices.DeleteFunc(refs, func(ref string) bool { return ref == "" || validModelID(ref) })
+	slices.Sort(refs)
+	return slices.Compact(refs)
+}
+
+// providerCoverage reports, for one provider, the stand-ins it would use ("Sonnet 5.5 → copilot/claude-sonnet-5")
+// and the saved names it has nothing comparable for.
+func providerCoverage(cfg Config, provider string, catalog []string) (standIns, missing []string) {
+	for _, ref := range savedModelNames(cfg) {
+		if _, err := catalogModel(ref, provider, catalog); err == nil {
 			continue
 		}
-		seen[ref] = true
-		if _, err := catalogModel(ref, provider, catalog); err != nil {
+		if id, ok := equivalentModel(ref, provider, catalog); ok {
+			standIns = append(standIns, ref+" → "+modelName(id))
+		} else {
 			missing = append(missing, ref)
 		}
 	}
-	slices.Sort(missing)
+	return standIns, missing
+}
+
+// missingModels lists the saved model names a provider has nothing comparable for.
+func missingModels(cfg Config, provider string, catalog []string) []string {
+	_, missing := providerCoverage(cfg, provider, catalog)
 	return missing
+}
+
+func coverageLabel(cfg Config, id string, catalog []string) string {
+	standIns, missing := providerCoverage(cfg, id, catalog)
+	return providerLabel(id, missing, standIns...)
 }
 
 // backupOptions offers every connected provider not already in the chain, plus Done to stop adding.
@@ -58,7 +78,7 @@ func backupOptions(cfg Config, connected, chain []string, catalog []string) []hu
 	options := []huh.Option[string]{huh.NewOption("Done — no more backups", providerDone)}
 	for _, id := range connected {
 		if !slices.Contains(chain, id) {
-			options = append(options, huh.NewOption(providerLabel(id, missingModels(cfg, id, catalog)), id))
+			options = append(options, huh.NewOption(coverageLabel(cfg, id, catalog), id))
 		}
 	}
 	return options
@@ -172,7 +192,7 @@ func pickProviderOrder(ask providerAsker, home, root string, inGit bool, scope s
 				break
 			}
 		}
-		help := "Empryo switches to it, in this order, when the provider before it fails or runs out of quota. A provider missing a model cannot be saved."
+		help := "Empryo switches to it, in this order, when the provider before it fails or runs out of quota. A provider without one of your models uses its closest model of the same level instead."
 		if err := ask.choose(fmt.Sprintf("Backup %d", len(chain)), "Order so far: "+strings.Join(chain, " > ")+"\n"+help, backupOptions(cfg, connected, chain, catalog), &pick); err != nil {
 			return "", err
 		}
