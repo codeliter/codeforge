@@ -23,7 +23,7 @@ type nativeRPCReply struct {
 }
 
 // Native fallback layers read through the supported ACP configuration interface.
-// Read-only plans never call config/set; explicit application writes only modelFallback.
+// Read-only plans never call config/set; explicit application writes only modelFallback and defaultModel.
 type nativeFallbackSnapshot struct {
 	Global    map[string][]string
 	Project   map[string][]string

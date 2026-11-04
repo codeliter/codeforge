@@ -199,7 +199,7 @@ Cancellation leaves existing settings unchanged. Existing, temporarily unavailab
   then project YAML, global YAML/legacy JSON, and built-in defaults. `CODEFORGE_INIT` controls persona generation;
   `CODEFORGE_EXPERT` controls the on-demand expert. When `init` is omitted, persona generation follows the configured coding model rather than silently selecting another provider.
 - `models set` and setup's `fill` retain their global Codeforge YAML write scope. `models recommend` is read-only.
-  `models apply [--project|--global]` applies saved fallback choices to native Empryo. With `--recommended`, it first previews
+  `models apply [--project|--global]` applies saved fallback choices and the coding model (as `defaultModel`, which the Empryo TUI selects on start) to native Empryo. With `--recommended`, it first previews
   recommended role changes, saves them only after confirmation at the chosen scope (project changes are content-approved), keeps helper routing and other settings, then applies fallback. It requires a terminal,
   offers an inferred scope (project inside Git or with a local model file, global otherwise), previews exact native changes and asks for confirmation.
   Explicit scope flags skip the scope selector, not confirmation. Global application reads only saved global choices; project application uses approved project overrides.

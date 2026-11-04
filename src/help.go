@@ -29,7 +29,7 @@ Setup:
                                      Choose providers and role/helper models interactively; save config.yaml
   models plan                        Show resolved IDs and verify existing native fallback settings
   models apply [--recommended] [--project|--global]
-                                      Apply saved settings; --recommended first saves recommendations
+                                      Set Empryo's default model and backups after one confirmation; --recommended first saves recommendations
   models [recommend|set ROLE MODEL...]
                                      Show recommendations or set global Codeforge role choices
   trust                              Approve this repository's persona

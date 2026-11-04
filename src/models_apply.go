@@ -2,6 +2,7 @@ package src
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -19,8 +20,8 @@ import (
 var errModelApplyUsage = errors.New("usage: codeforge models apply [--recommended] [--project|--global]")
 var errModelApplyTerminal = errors.New("models apply requires a terminal to choose scope and confirm native settings changes; run it yourself")
 var errModelApplyCancelled = errors.New("model application cancelled; native settings were not changed")
-var errNativeConfigChanged = errors.New("native fallback settings changed since the preview; nothing was written, run models apply again")
-var errNativeConfigApply = errors.New("cannot apply native fallback settings")
+var errNativeConfigChanged = errors.New("native model settings changed since the preview; nothing was written, run models apply again")
+var errNativeConfigApply = errors.New("cannot apply native model settings")
 
 func parseModelApplyScope(args []string) (string, error) {
 	scope, _, err := parseModelApplyArgs(args)
@@ -140,29 +141,36 @@ func runModelApply(ctx context.Context, home, bin string, args []string) error {
 	}
 	fmt.Fprintf(os.Stdout, "Applying %s Codeforge settings (one-off environment overrides are excluded).\n", scope)
 	printModelPlan(os.Stdout, plan)
-	if len(plan.fallbackChains()) == 0 {
-		fmt.Fprintln(os.Stdout, "No Codeforge fallback chains are declared. Saved role choices already apply on the next launch; nothing was written.")
-		return nil
-	}
 	target := filepath.Join(home, ".empryo", "config.json")
 	if scope == "project" {
 		target = filepath.Join(root, ".empryo", "config.json")
 	}
-	return applyModelPlan(ctx, bin, workspace, scope, plan, func(preview string) bool {
-		description := fmt.Sprintf("Native target: %q\n%s", target, preview)
-		fmt.Fprintln(os.Stderr, description)
-		approved := false
-		if err := runForm("confirm native model settings", huh.NewConfirm().Title("Apply these fallback changes to "+scope+" Empryo settings?").Description(description).Value(&approved)); err != nil {
-			return false
+	confirmNative := func(title string) func(string) bool {
+		return func(preview string) bool {
+			description := fmt.Sprintf("Native target: %q\n%s", target, preview)
+			fmt.Fprintln(os.Stderr, description)
+			approved := false
+			if err := runForm("confirm native model settings", huh.NewConfirm().Title(title).Description(description).Value(&approved)); err != nil {
+				return false
+			}
+			return approved
 		}
-		return approved
-	})
+	}
+	if err := applyModelPlan(ctx, bin, workspace, scope, plan, confirmNative("Apply these changes to "+scope+" Empryo settings?")); err != nil {
+		return err
+	}
+	if scope == "global" && !sameConfigScope(home, root) {
+		if warning := globalDefaultModelShadowed(root, plan); warning != "" {
+			fmt.Fprintln(os.Stderr, "codeforge: "+warning)
+		}
+	}
+	return nil
 }
 func applyScopeDescription(recommended bool) string {
 	if recommended {
-		return "Saves recommended roles after confirmation, then applies any declared native fallback."
+		return "Saves recommended roles after confirmation, then applies any declared native fallback and default model."
 	}
-	return "Applies saved choices, not model recommendations. Native fallback changes require confirmation."
+	return "Applies saved choices, not model recommendations. Native fallback and default model changes require confirmation."
 }
 
 // recommendedModelConfig replaces every role with a recommendation where one exists.
@@ -328,70 +336,187 @@ func nativeFallbackPreview(before, after map[string][]string) string {
 	return text.String()
 }
 
+// nativeModelSnapshot is what models apply may change in one Empryo scope.
+type nativeModelSnapshot struct {
+	Fallbacks    *nativeFallbackSnapshot
+	DefaultModel string
+}
+
+// nativeModelChange is the approved write; a nil field leaves that setting alone.
+type nativeModelChange struct {
+	Fallbacks    map[string][]string
+	DefaultModel string
+}
+
+func (change nativeModelChange) empty() bool {
+	return change.Fallbacks == nil && change.DefaultModel == ""
+}
+
+func readNativeModelSnapshot(request nativeConfigRequest, session, scope string) (*nativeModelSnapshot, error) {
+	fallbacks, err := readNativeFallbackSnapshot(request, session)
+	if err != nil {
+		return nil, err
+	}
+	model, err := readNativeDefaultModel(request, session, scope)
+	if err != nil {
+		return nil, err
+	}
+	return &nativeModelSnapshot{Fallbacks: fallbacks, DefaultModel: model}, nil
+}
+
+// applyModelPlan writes the plan's fallback chains and coder model to one Empryo scope.
+// It reads once, asks once for every change, then writes and verifies in a single session.
 func applyModelPlan(ctx context.Context, bin, workspace, scope string, plan ModelPlan, approve func(string) bool) error {
 	if scope != "global" && scope != "project" {
 		return errModelApplyUsage
 	}
-	if len(plan.fallbackChains()) == 0 {
+	model := plannedDefaultModel(plan)
+	if len(plan.fallbackChains()) == 0 && model == "" {
 		return nil
 	}
-	snapshot, err := readNativeFallbacks(ctx, bin, workspace)
-	if err != nil {
+	var before *nativeModelSnapshot
+	if err := withNativeConfig(ctx, bin, workspace, func(request nativeConfigRequest, session string) error {
+		var err error
+		before, err = readNativeModelSnapshot(request, session, scope)
+		return err
+	}); err != nil {
 		return err
 	}
-	desired, err := plannedNativeFallbacks(plan, snapshot, scope)
-	if err != nil {
-		return err
-	}
-	if sameFallbackMap(fallbackTarget(snapshot, scope), desired) {
-		if err := plan.verifyFallbacks(snapshot.Effective); err != nil {
+	var change nativeModelChange
+	var preview strings.Builder
+	if len(plan.fallbackChains()) > 0 {
+		desired, err := plannedNativeFallbacks(plan, before.Fallbacks, scope)
+		if err != nil {
 			return err
 		}
-		fmt.Fprintln(os.Stdout, "Native fallback settings already match; nothing was written.")
+		if sameFallbackMap(fallbackTarget(before.Fallbacks, scope), desired) {
+			if err := plan.verifyFallbacks(before.Fallbacks.Effective); err != nil {
+				return err
+			}
+		} else {
+			change.Fallbacks = desired
+			preview.WriteString(nativeFallbackPreview(fallbackTarget(before.Fallbacks, scope), desired))
+		}
+	}
+	if model != "" && model != before.DefaultModel {
+		change.DefaultModel = model
+		preview.WriteString(nativeDefaultModelPreview(before.DefaultModel, model))
+	}
+	if change.empty() {
+		fmt.Fprintln(os.Stdout, "Native model settings already match; nothing was written.")
 		return nil
 	}
-	if !approve(nativeFallbackPreview(fallbackTarget(snapshot, scope), desired)) {
+	if !approve(preview.String()) {
 		return errModelApplyCancelled
 	}
-	if err := writeNativeFallbacks(ctx, bin, workspace, scope, snapshot, desired); err != nil {
+	if err := writeNativeModelChange(ctx, bin, workspace, scope, plan, before, change); err != nil {
 		return err
 	}
-	if err := verifyModelPlan(ctx, bin, workspace, plan); err != nil {
-		return fmt.Errorf("native settings were written but verification failed: %w", err)
-	}
-	fmt.Fprintf(os.Stdout, "Applied and verified %s native fallback settings. Saved Codeforge roles were not replaced. New sessions use these settings.\n", scope)
+	fmt.Fprintf(os.Stdout, "Applied and verified %s native model settings. Saved Codeforge roles were not replaced. New sessions use these settings.\n", scope)
 	return nil
 }
 
-func writeNativeFallbacks(ctx context.Context, bin, workspace, scope string, before *nativeFallbackSnapshot, desired map[string][]string) error {
+// plannedDefaultModel is the resolved coder model the Empryo TUI should preselect.
+func plannedDefaultModel(plan ModelPlan) string {
+	for _, route := range plan.Routes {
+		if route.Role == "model" && route.Primary != "" {
+			return route.Primary
+		}
+	}
+	return plan.Config.Model
+}
+
+func readNativeDefaultModel(request nativeConfigRequest, session, scope string) (string, error) {
+	var read struct {
+		Values map[string]json.RawMessage `json:"values"`
+	}
+	if err := request("_empryo/config/get", map[string]any{"sessionId": session, "scope": scope, "keys": []string{"defaultModel"}}, &read); err != nil {
+		return "", err
+	}
+	var current string
+	if data, ok := read.Values["defaultModel"]; ok && string(data) != "null" {
+		if err := json.Unmarshal(data, &current); err != nil {
+			return "", fmt.Errorf("%w: malformed %s defaultModel: %w", errNativeConfigRead, scope, err)
+		}
+	}
+	return current, nil
+}
+
+func nativeDefaultModelPreview(before, after string) string {
+	previous := "(not set)"
+	if before != "" {
+		previous = fmt.Sprintf("%q", before)
+	}
+	return fmt.Sprintf("Native defaultModel change (the model Empryo selects on start):\n  %s -> %q\n", previous, after)
+}
+
+// projectDefaultModel reads a project's own Empryo defaultModel, which wins over the global one.
+func projectDefaultModel(root string) string {
+	data, err := os.ReadFile(filepath.Join(root, ".empryo", "config.json"))
+	if err != nil {
+		return ""
+	}
+	var native struct {
+		DefaultModel string `json:"defaultModel"` //nolint:tagliatelle // Empryo config file format.
+	}
+	if json.Unmarshal(data, &native) != nil {
+		return ""
+	}
+	return native.DefaultModel
+}
+
+// globalDefaultModelShadowed explains when a project setting will keep the TUI on another model.
+func globalDefaultModelShadowed(root string, plan ModelPlan) string {
+	model, project := plannedDefaultModel(plan), projectDefaultModel(root)
+	if model == "" || project == "" || project == model {
+		return ""
+	}
+	return fmt.Sprintf("This project's Empryo settings select %q, which overrides the global default %q here. Run codeforge models apply --project to change it.", project, model)
+}
+
+func writeNativeModelChange(ctx context.Context, bin, workspace, scope string, plan ModelPlan, before *nativeModelSnapshot, change nativeModelChange) error {
 	attempted := false
 	err := withNativeConfig(ctx, bin, workspace, func(request nativeConfigRequest, session string) error {
-		current, err := readNativeFallbackSnapshot(request, session)
+		current, err := readNativeModelSnapshot(request, session, scope)
 		if err != nil {
 			return err
 		}
-		if !sameFallbackMap(before.Global, current.Global) || !sameFallbackMap(before.Project, current.Project) || !sameFallbackMap(before.Effective, current.Effective) {
+		was, now := before.Fallbacks, current.Fallbacks
+		if !sameFallbackMap(was.Global, now.Global) || !sameFallbackMap(was.Project, now.Project) || !sameFallbackMap(was.Effective, now.Effective) || before.DefaultModel != current.DefaultModel {
 			return errNativeConfigChanged
 		}
 		attempted = true
-		if err := request("_empryo/config/set", map[string]any{"sessionId": session, "scope": scope, "key": "modelFallback", "value": desired}, nil); err != nil {
-			return err
+		if change.Fallbacks != nil {
+			if err := request("_empryo/config/set", map[string]any{"sessionId": session, "scope": scope, "key": "modelFallback", "value": change.Fallbacks}, nil); err != nil {
+				return err
+			}
 		}
-		after, err := readNativeFallbackSnapshot(request, session)
+		if change.DefaultModel != "" {
+			if err := request("_empryo/config/set", map[string]any{"sessionId": session, "scope": scope, "key": "defaultModel", "value": change.DefaultModel}, nil); err != nil {
+				return err
+			}
+		}
+		after, err := readNativeModelSnapshot(request, session, scope)
 		if err != nil {
 			return err
 		}
-		if !sameFallbackMap(desired, fallbackTarget(after, scope)) {
+		if change.DefaultModel != "" && after.DefaultModel != change.DefaultModel {
+			return fmt.Errorf("%w: defaultModel is %q, want %q", errNativeConfigApply, after.DefaultModel, change.DefaultModel)
+		}
+		if change.Fallbacks == nil {
+			return nil
+		}
+		if !sameFallbackMap(change.Fallbacks, fallbackTarget(after.Fallbacks, scope)) {
 			return errNativeConfigApply
 		}
 		other := "global"
 		if scope == "global" {
 			other = "project"
 		}
-		if !sameFallbackMap(fallbackTarget(before, other), fallbackTarget(after, other)) {
+		if !sameFallbackMap(fallbackTarget(was, other), fallbackTarget(after.Fallbacks, other)) {
 			return fmt.Errorf("%w: native API changed the other scope", errNativeConfigApply)
 		}
-		return nil
+		return errors.Join(plan.verifyFallbacks(after.Fallbacks.declaredFallbacks()), plan.verifyFallbacks(after.Fallbacks.Effective))
 	})
 	if err != nil && attempted {
 		return fmt.Errorf("%w: native settings may have changed; run models plan to inspect them: %w", errNativeConfigApply, err)

@@ -166,3 +166,18 @@ func TestPlannedNativeFallbacksPreserveUnrelatedRows(t *testing.T) {
 	require.Contains(t, preview, `"backup/model": ["extra/model"] -> []`)
 	require.NotContains(t, preview, "other/model:")
 }
+
+func TestGlobalDefaultModelShadowedByProject(t *testing.T) {
+	root := t.TempDir()
+	plan := ModelPlan{Routes: []ModelRoute{{Role: "model", Primary: "a/coder"}}}
+	require.Empty(t, globalDefaultModelShadowed(root, plan), "no project file")
+	dir := filepath.Join(root, ".empryo")
+	require.NoError(t, os.MkdirAll(dir, privateDir))
+	path := filepath.Join(dir, "config.json")
+	require.NoError(t, os.WriteFile(path, []byte(`{"defaultModel":"a/coder"}`), privateFile))
+	require.Empty(t, globalDefaultModelShadowed(root, plan), "project already matches")
+	require.NoError(t, os.WriteFile(path, []byte(`{"defaultModel":"b/other"}`), privateFile))
+	warning := globalDefaultModelShadowed(root, plan)
+	require.Contains(t, warning, "b/other")
+	require.Contains(t, warning, "--project")
+}

@@ -108,6 +108,71 @@ func TestNativeModelApplyGlobalKeepsRealProjectOverrides(t *testing.T) {
 	require.Zero(t, calls.Load())
 }
 
+func nativeDefaultModel(t *testing.T, bin, workspace, scope string) string {
+	t.Helper()
+	var model string
+	require.NoError(t, withNativeConfig(t.Context(), bin, workspace, func(request nativeConfigRequest, session string) error {
+		var err error
+		model, err = readNativeDefaultModel(request, session, scope)
+		return err
+	}))
+	return model
+}
+
+func TestNativeDefaultModelApply(t *testing.T) {
+	for _, scope := range []string{"project", "global"} {
+		t.Run(scope, func(t *testing.T) {
+			bin, home, root, plan, calls := nativeApplyFixture(t, false)
+			workspace := root
+			if scope == "global" {
+				workspace = t.TempDir()
+			}
+			plan.Routes[0].Fallback = ""
+			plan.Routes[0].Primary = "cf-backup-probe/unit"
+			globalBefore, projectBefore := nativeFixtureBytes(t, home), nativeFixtureBytes(t, root)
+			require.ErrorIs(t, applyModelPlan(t.Context(), bin, workspace, scope, plan, func(preview string) bool {
+				require.Contains(t, preview, "defaultModel")
+				require.Contains(t, preview, "cf-backup-probe/unit")
+				return false
+			}), errModelApplyCancelled)
+			require.Equal(t, globalBefore, nativeFixtureBytes(t, home), "cancelling must not write")
+			require.Equal(t, projectBefore, nativeFixtureBytes(t, root), "cancelling must not write")
+			approvals := 0
+			require.NoError(t, applyModelPlan(t.Context(), bin, workspace, scope, plan, func(string) bool { approvals++; return true }))
+			require.Equal(t, 1, approvals)
+			require.Equal(t, "cf-backup-probe/unit", nativeDefaultModel(t, bin, workspace, scope))
+			if scope == "project" {
+				require.Equal(t, globalBefore, nativeFixtureBytes(t, home), "project apply must not modify global settings")
+			} else {
+				require.Equal(t, projectBefore, nativeFixtureBytes(t, root), "global apply must not modify the project")
+			}
+			require.NoError(t, applyModelPlan(t.Context(), bin, workspace, scope, plan, func(string) bool { t.Fatal("matching settings must not prompt"); return false }))
+			require.Zero(t, calls.Load())
+		})
+	}
+}
+
+func TestNativeModelApplyAsksOnceForFallbackAndDefaultModel(t *testing.T) {
+	bin, _, root, plan, calls := nativeApplyFixture(t, false)
+	plan.Routes[0].Primary, plan.Routes[0].Fallback = "cf-backup-probe/unit", "cf-config-probe/unit"
+	approvals := 0
+	require.NoError(t, applyModelPlan(t.Context(), bin, root, "project", plan, func(preview string) bool {
+		approvals++
+		require.Contains(t, preview, "modelFallback")
+		require.Contains(t, preview, "defaultModel")
+		return true
+	}))
+	require.Equal(t, 1, approvals)
+	require.Equal(t, "cf-backup-probe/unit", nativeDefaultModel(t, bin, root, "project"))
+	require.Zero(t, calls.Load())
+}
+
+func TestPlannedDefaultModel(t *testing.T) {
+	require.Equal(t, "a/coder", plannedDefaultModel(ModelPlan{Routes: []ModelRoute{{Role: "expert", Primary: "x/y"}, {Role: "model", Primary: "a/coder"}}}))
+	require.Equal(t, "b/coder", plannedDefaultModel(ModelPlan{Config: Config{Model: "b/coder"}}))
+	require.Empty(t, plannedDefaultModel(ModelPlan{}))
+}
+
 func TestNativeModelApplyCancellationAndStalePreview(t *testing.T) {
 	bin, home, root, plan, calls := nativeApplyFixture(t, true)
 	globalBefore, projectBefore := nativeFixtureBytes(t, home), nativeFixtureBytes(t, root)

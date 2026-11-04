@@ -60,38 +60,73 @@ Outside a Git project, `init` also uses this global location.
 
 ## Choose models (optional)
 
+Codeforge works with its built-in model choices. Change them in three steps:
+
+| Step | Command | What it changes |
+| --- | --- | --- |
+| 1. Choose | `codeforge models configure` | Codeforge's saved choices only. |
+| 2. Check | `codeforge models plan` | Nothing. It only shows what will be used. |
+| 3. Apply to Empryo | `codeforge models apply` | Empryo's settings, after you confirm. |
+
+Step 3 is only needed if you want the Empryo screen to start on your coding model, or if you set a backup provider.
+
+### 1. Choose
+
 ```sh
 codeforge models configure
 ```
 
-Choose **provider defaults** to pick a primary provider and optional fallback once, then choose model names for coding, expert help, review, effort judging, and persona generation.
-For DevPass, choose **LLM Gateway / DevPass** first and **Copilot** as fallback. The preview shows the actual catalog IDs.
-The advanced style keeps explicit `provider/model` choices; those use native Empryo fallback instead of the shared Codeforge preference.
-New setups use **Sonnet 5.5** for everyday coding and **Opus 5.5** only when expert help is needed. Existing saved choices are kept.
-Choose whether to save for this project or for all projects. You can also choose models for helper jobs.
+You pick a model for each job: coding, expert help, review, effort judging, and persona writing.
 
-Project choices live in `.codeforge/config.yaml`. Global choices live in `~/.codeforge/config.yaml`.
-Approved project choices win over global choices. Your normal Empryo settings and logins are not changed.
-The wizard approves the exact settings you save. For a manually edited or shared project file, inspect it and run `codeforge trust --models`.
-Without approval, Codeforge ignores that project's model file instead of letting it choose its own reviewers.
-Old global `config.json` files still work; saving model choices writes YAML and keeps the old JSON file.
-Prefer editing a file? See [config.example.yaml](config.example.yaml).
+- **Provider defaults (recommended):** pick a main provider and an optional backup provider, then pick models by name, such as **Sonnet 5.5**. For DevPass, choose **LLM Gateway / DevPass** as main and **Copilot** as backup.
+- **Advanced:** type exact `provider/model` IDs. These choices have no Codeforge backup provider.
 
-**Normal launches only verify fallback.** With a selected backup, the same model must exist on both connected providers, and its native Empryo fallback chain must already match. Codeforge stops before model work if it does not.
+New setups use **Sonnet 5.5** for coding and **Opus 5.5** for expert help. Existing choices are kept.
+
+You also choose where to save:
+
+- **This project:** `.codeforge/config.yaml`. Wins over global choices.
+- **All projects:** `~/.codeforge/config.yaml`.
+
+The wizard approves the project file it saves. If you edit a project file by hand, or get one from someone else, check it and then run `codeforge trust --models`. Until then, Codeforge ignores it, so a shared file cannot pick its own reviewers.
+
+Prefer editing a file? See [config.example.yaml](config.example.yaml). Old `~/.codeforge/config.json` files still work.
+
+### 2. Check
 
 ```sh
 codeforge models plan
 ```
 
-This command is read-only. To apply the saved fallback plan, run:
+This shows the model and backup for each job. It never changes anything.
+
+### 3. Apply to Empryo
 
 ```sh
 codeforge models apply
 ```
 
-Inside a Git repository (or a directory with a project model file), the scope prompt defaults to **this project**; elsewhere it defaults to **global**. You can override that choice with `--project` or `--global`. Codeforge shows the native fallback changes and asks for confirmation before writing through Empryo's supported settings interface, then verifies them. Unrelated settings and fallback entries are retained. Run `models plan` again or start a new task after it succeeds.
+This changes two Empryo settings:
 
-`models apply` uses your saved model choices. To use what `codeforge models` recommends, run `codeforge models apply --recommended`: it shows the role changes, asks for scope and confirmation, saves them, then applies any declared fallback. Helper routing and other settings are kept. `models recommend` remains read-only. `models configure` and normal launches never write native settings; only this explicit apply command can do so. Credentials and billing configuration are never changed. Empryo owns quota retries and failover timing.
+- **`defaultModel`:** the model the Empryo screen selects when it opens. It is set to your coding model.
+- **`modelFallback`:** the backup for each model. Only changed if you chose a backup provider.
+
+Here's what happens:
+
+1. You choose where to apply: **this project** or **global**. Inside a Git project, **this project** is preselected. Skip the question with `--project` or `--global`.
+2. Codeforge shows every change as `old -> new` and asks once.
+3. If you say no, nothing is written.
+4. If you say yes, Codeforge writes the changes and reads them back to check them.
+
+Nothing else is changed: other settings, logins, and billing are kept.
+
+**Applied globally, but Empryo still opens on another model?** That project has its own Empryo `defaultModel`, and project settings win. Codeforge warns you when this happens. Run `codeforge models apply --project` in that project.
+
+**Want the recommended models instead of your saved ones?** Run `codeforge models apply --recommended`. It shows the role changes and saves them after you confirm, then applies them as above. `codeforge models recommend` only shows recommendations.
+
+**When does Codeforge change Empryo's settings?** Only during `models apply`. `models configure` and normal launches never do.
+
+**Using a backup provider?** Each launch checks that Empryo's backup settings match your choices. If they don't, Codeforge stops before using any model and asks you to run `models apply`. Empryo handles retries and switching to the backup.
 
 ## 3. Give it a job
 
