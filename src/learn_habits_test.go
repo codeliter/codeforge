@@ -59,6 +59,54 @@ func TestVerificationCommand(t *testing.T) {
 	}
 }
 
+func TestObservedStatus_EmpryoSuccessFlag(t *testing.T) {
+	status := func(event, response string) (string, *int) { return observedStatus(event, json.RawMessage(response)) }
+	// The real Empryo 3.12 payload: keys output and success, no exit code.
+	s, code := status("PostToolUse", `{"output":"ok","success":true}`)
+	require.Equal(t, store.StatusPassed, s)
+	require.Nil(t, code)
+	s, _ = status("PostToolUse", `{"output":"FAIL","success":false}`)
+	require.Equal(t, store.StatusFailed, s)
+	s, _ = status("PostToolUseFailure", `{"output":"x","success":true}`)
+	require.Equal(t, store.StatusFailed, s, "a failure event is a failure whatever the flag says")
+	s, _ = status("PostToolUse", `{"success":true,"exit_code":1}`)
+	require.Equal(t, store.StatusIncomplete, s, "disagreeing signals are not trusted")
+	s, _ = status("PostToolUse", `{"output":{"success":true}}`)
+	require.Equal(t, store.StatusIncomplete, s, "a nested flag could be command output")
+	s, _ = status("PostToolUse", `{"output":"success: true"}`)
+	require.Equal(t, store.StatusIncomplete, s)
+}
+
+func TestRunObserve_RealPayloadBecomesAHabit(t *testing.T) {
+	home, repo := t.TempDir(), gitRepo(t)
+	knownSession(t, home, repo)
+	t.Setenv(launchMarker, "1")
+	t.Setenv("CODEFORGE_GUARD", "")
+	for range 2 {
+		runObserve(t.Context(), home, observePayloadJSON(t, repo, "PostToolUse", "Bash", "go test ./...", `{"output":"ok","success":true}`))
+	}
+	habits := learnedHabits(t.Context(), home, repo, ".")
+	require.Len(t, habits, 1)
+	require.Equal(t, "go test ./...", habits[0].Command)
+
+	data, err := os.ReadFile(filepath.Join(configDir(home), shapeLogFile))
+	require.NoError(t, err)
+	require.Contains(t, string(data), "response_keys=output,success result=recorded:passed")
+}
+
+func TestRunObserve_ShapeLogSaysWhyAnEventWasSkipped(t *testing.T) {
+	home, repo := t.TempDir(), gitRepo(t)
+	t.Setenv(launchMarker, "1")
+	t.Setenv("CODEFORGE_GUARD", "")
+	runObserve(t.Context(), home, observePayloadJSON(t, repo, "PostToolUse", "Bash", "ls -la", `{"output":"x","success":true}`))
+	runObserve(t.Context(), home, observePayloadJSON(t, repo, "PostToolUse", "Bash", "go test ./...", `{"output":"x","success":true}`))
+	data, err := os.ReadFile(filepath.Join(configDir(home), shapeLogFile))
+	require.NoError(t, err)
+	require.Contains(t, string(data), "result=skipped:not-a-verification-command")
+	require.Contains(t, string(data), "result=skipped:session-not-launched-by-codeforge-here")
+	require.NotContains(t, string(data), "go test", "the log never holds commands")
+}
+
 func TestObservedStatus(t *testing.T) {
 	status := func(event, response string) (string, *int) { return observedStatus(event, json.RawMessage(response)) }
 
@@ -185,7 +233,7 @@ func TestRunObserve_LogsShapeWithoutValues(t *testing.T) {
 
 	data, err := os.ReadFile(filepath.Join(configDir(home), shapeLogFile))
 	require.NoError(t, err)
-	require.Contains(t, string(data), "event=PostToolUse response_keys=isError,output")
+	require.Contains(t, string(data), "event=PostToolUse response_keys=isError,output result=")
 	require.NotContains(t, string(data), "secret-value", "only key names are logged")
 }
 

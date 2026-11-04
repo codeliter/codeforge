@@ -189,40 +189,70 @@ func runObserve(ctx context.Context, home string, stdin io.Reader) {
 	if json.NewDecoder(io.LimitReader(stdin, maxObserveBytes)).Decode(&in) != nil || in.Tool != "Bash" {
 		return
 	}
-	logShape(home, in)
+	logShape(home, in, observeOne(ctx, home, in))
+}
+
+// Reasons observeOne reports; they go to the shape log so a silent feature can be diagnosed without values.
+const (
+	reasonRecorded       = "recorded"
+	reasonNotVerify      = "skipped:not-a-verification-command"
+	reasonBadPayload     = "skipped:bad-session-or-cwd"
+	reasonNoRepo         = "skipped:no-repository"
+	reasonUnknownSession = "skipped:session-not-launched-by-codeforge-here"
+	reasonStoreFailed    = "skipped:store-error"
+)
+
+// observeOne records one Bash result and says what it did.
+func observeOne(ctx context.Context, home string, in observePayload) string {
 	command, ok := verificationCommand(in.ToolInput.Command)
-	if !ok || !safeSessionID(in.SessionID) || !printablePath(in.Cwd) || !filepath.IsAbs(in.Cwd) {
-		return
+	if !ok {
+		return reasonNotVerify
+	}
+	if !safeSessionID(in.SessionID) || !printablePath(in.Cwd) || !filepath.IsAbs(in.Cwd) {
+		return reasonBadPayload
 	}
 	cwd, err := filepath.EvalSymlinks(in.Cwd)
 	if err != nil {
-		return
+		return reasonBadPayload
 	}
 	repo, err := sessionRepository(ctx, cwd)
 	if err != nil {
-		return
+		return reasonNoRepo
 	}
 	dir, ok := relativeDir(repo, cwd)
 	if !ok {
-		return
+		return reasonNoRepo
 	}
 	status, exit := observedStatus(in.Event, in.ToolResponse)
 	// Only a session codeforge itself launched in this repository can teach it, so a fabricated payload naming an
 	// unknown session records nothing.
 	if err := withLearning(ctx, home, func(s *store.Store) error { return checkSession(ctx, s, repo, in.SessionID) }); err != nil {
-		return
+		return reasonUnknownSession
 	}
 	o := store.Observation{Kind: store.KindOutcome, Text: command, Repository: repo, SessionID: in.SessionID, Dir: dir, Origin: store.OriginHook, Status: status, ExitCode: exit, CreatedAt: time.Now()}
-	_ = withLearning(ctx, home, func(s *store.Store) error { //nolint:errcheck // learning must never disturb the session
+	if err := withLearning(ctx, home, func(s *store.Store) error {
 		_, err := s.Record(ctx, o)
 		return err
-	})
+	}); err != nil {
+		return reasonStoreFailed
+	}
+	return reasonRecorded + ":" + status
 }
 
 // observedStatus turns a tool event into an outcome. An exit code reported by Empryo decides it. Without one,
 // a failure event is a failure, but a success event is recorded as incomplete: whether Empryo counts a non-zero
 // exit as a failed tool call is confirmed from the shape log before a bare success is trusted.
 func observedStatus(event string, response json.RawMessage) (string, *int) {
+	// Empryo 3.12 reports a top-level boolean "success" (its payload has keys output and success, no exit code).
+	if ok, found := successOf(response); found && event != "PostToolUseFailure" {
+		if exit, hasExit := exitCodeOf(response); hasExit && (exit == 0) != ok {
+			return store.StatusIncomplete, nil // the two signals disagree, so neither is trusted
+		}
+		if ok {
+			return store.StatusPassed, nil
+		}
+		return store.StatusFailed, nil
+	}
 	if code, ok := exitCodeOf(response); ok {
 		if code == 0 && event != "PostToolUseFailure" {
 			return store.StatusPassed, &code
@@ -235,6 +265,19 @@ func observedStatus(event string, response json.RawMessage) (string, *int) {
 		return store.StatusFailed, nil
 	}
 	return store.StatusIncomplete, nil
+}
+
+// successOf reads the harness's own top-level "success" flag, never one nested inside the command's output.
+func successOf(response json.RawMessage) (ok, found bool) {
+	var m map[string]json.RawMessage
+	if len(response) == 0 || json.Unmarshal(response, &m) != nil {
+		return false, false
+	}
+	var flag bool
+	if raw, has := m["success"]; has && json.Unmarshal(raw, &flag) == nil {
+		return flag, true
+	}
+	return false, false
 }
 
 // exitCodeOf looks for an exit status in a tool response, whatever shape Empryo gives it.
@@ -258,7 +301,7 @@ func exitCodeOf(response json.RawMessage) (int, bool) {
 
 // logShape keeps a short, value-free record of the hook payloads Empryo sends (event names and key names only),
 // so the parsing above can be checked against real data. It stops growing after a few kilobytes.
-func logShape(home string, in observePayload) {
+func logShape(home string, in observePayload, result string) {
 	path := filepath.Join(configDir(home), shapeLogFile)
 	if info, err := os.Stat(path); err == nil && info.Size() > maxShapeLogBytes {
 		return
@@ -276,7 +319,7 @@ func logShape(home string, in observePayload) {
 			keys = []string{fmt.Sprintf("%T", v)}
 		}
 	}
-	line := fmt.Sprintf("%s event=%s response_keys=%s\n", time.Now().UTC().Format(time.RFC3339), in.Event, strings.Join(keys, ","))
+	line := fmt.Sprintf("%s event=%s response_keys=%s result=%s\n", time.Now().UTC().Format(time.RFC3339), in.Event, strings.Join(keys, ","), result)
 	if err := os.MkdirAll(configDir(home), privateDir); err != nil {
 		return
 	}
