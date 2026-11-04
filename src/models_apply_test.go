@@ -40,6 +40,83 @@ func TestModelApplyScopeSelection(t *testing.T) {
 		require.ErrorIs(t, err, errModelApplyUsage)
 	}
 }
+func TestModelApplyRecommendedArguments(t *testing.T) {
+	for _, tc := range []struct {
+		args        []string
+		scope       string
+		recommended bool
+	}{{nil, "", false}, {[]string{"--recommended"}, "", true}, {[]string{"--recommended", "--global"}, "global", true}, {[]string{"--project", "--recommended"}, "project", true}} {
+		scope, recommended, err := parseModelApplyArgs(tc.args)
+		require.NoError(t, err)
+		require.Equal(t, tc.scope, scope)
+		require.Equal(t, tc.recommended, recommended)
+	}
+	for _, args := range [][]string{{"--recommended", "--recommended"}, {"--recommended", "--global", "--project"}, {"--recommend"}} {
+		_, _, err := parseModelApplyArgs(args)
+		require.ErrorIs(t, err, errModelApplyUsage)
+	}
+}
+
+func TestSaveRecommendedModels(t *testing.T) {
+	if interactive() {
+		t.Skip("non-interactive trust behaviour")
+	}
+	catalog := []string{"copilot/claude-sonnet-5.5", "copilot/claude-opus-5.5", "copilot/claude-haiku-5.5", "copilot/gpt-6-luna", "copilot/gpt-6.1-sol", "copilot/kimi-k3"}
+	home, root := t.TempDir(), t.TempDir()
+	require.NoError(t, writeConfigFile(home, Config{Model: "copilot/gpt-6.1-sol", Review: ReviewConfig{Model: "copilot/claude-opus-5.5"}, DefaultMode: "work", Routing: map[string]string{"editing": "copilot/gpt-6-luna"}}))
+	path := filepath.Join(configDir(home), "config.yaml")
+	before, err := os.ReadFile(path)
+	require.NoError(t, err)
+	cfg, err := readModelApplyConfig(home, root, "global")
+	require.NoError(t, err)
+	_, err = saveRecommendedModels(home, root, "global", cfg, catalog, func(string, string) bool { return false })
+	require.ErrorIs(t, err, errModelApplyCancelled)
+	after, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Equal(t, before, after, "declining must not save recommendations")
+	var preview string
+	next, err := saveRecommendedModels(home, root, "global", cfg, catalog, func(_ string, text string) bool { preview = text; return true })
+	require.NoError(t, err)
+	require.Contains(t, preview, "model: copilot/gpt-6.1-sol -> copilot/claude-sonnet-5.5")
+	require.Equal(t, "copilot/claude-sonnet-5.5", next.Model)
+	saved, err := readConfigFile(home)
+	require.NoError(t, err)
+	require.Equal(t, "copilot/claude-sonnet-5.5", saved.Model)
+	require.Equal(t, "copilot/gpt-6.1-sol", saved.Review.Model)
+	require.Equal(t, "work", saved.DefaultMode, "non-role settings are kept")
+	require.Equal(t, "copilot/gpt-6-luna", saved.Routing["editing"], "helper routing is kept")
+	_, err = saveRecommendedModels(home, root, "global", next, catalog, func(string, string) bool { t.Fatal("matching recommendations must not prompt"); return false })
+	require.NoError(t, err)
+
+	cfg, err = readModelApplyConfig(home, root, "project")
+	require.NoError(t, err)
+	project := cloneConfig(cfg)
+	project.Model = "copilot/gpt-6.1-sol"
+	project.Review.Model = "copilot/claude-opus-5.5"
+	require.NoError(t, writeConfigYAML(filepath.Join(root, ".codeforge"), Config{Model: project.Model, Review: ReviewConfig{Model: project.Review.Model}}))
+	require.NoError(t, approveProjectConfig(home, root))
+	cfg, err = readModelApplyConfig(home, root, "project")
+	require.NoError(t, err)
+	_, err = saveRecommendedModels(home, root, "project", cfg, catalog, func(string, string) bool { return true })
+	require.NoError(t, err)
+	effective, err := loadConfigAt(home, root)
+	require.NoError(t, err)
+	require.Equal(t, "copilot/claude-sonnet-5.5", effective.Model, "saved project choices are approved and used")
+	globalAfter, err := readConfigFile(home)
+	require.NoError(t, err)
+	require.Equal(t, saved.Model, globalAfter.Model, "project application must not change global settings")
+	local, err := readTrustedProjectConfig(home, root)
+	require.NoError(t, err)
+	require.Empty(t, local.Routing, "global helper routing must not be copied into the project file")
+}
+
+func TestRecommendedModelsKeepProviderNames(t *testing.T) {
+	cfg := Config{Providers: &ProviderPolicy{Primary: "devpass", Fallback: "copilot"}, Model: "GPT 6.1 Sol"}
+	next, _, err := recommendedModelConfig(cfg, providerTestCatalog())
+	require.NoError(t, err)
+	require.Equal(t, "claude-sonnet-5-5", next.Model, "recommendations follow the primary provider and stay provider-neutral names")
+	require.Equal(t, "GPT 6.1 Sol", cfg.Model, "input is not mutated")
+}
 func TestModelApplyLoadsOnlySelectedSavedScope(t *testing.T) {
 	if interactive() {
 		t.Skip("non-interactive trust behaviour")

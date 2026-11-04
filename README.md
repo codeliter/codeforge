@@ -91,7 +91,7 @@ codeforge models apply
 
 Inside a Git repository (or a directory with a project model file), the scope prompt defaults to **this project**; elsewhere it defaults to **global**. You can override that choice with `--project` or `--global`. Codeforge shows the native fallback changes and asks for confirmation before writing through Empryo's supported settings interface, then verifies them. Unrelated settings and fallback entries are retained. Run `models plan` again or start a new task after it succeeds.
 
-`models apply` uses your saved model choices; it no longer replaces roles with recommendations. `models recommend` remains read-only. `models configure` and normal launches never write native settings; only this explicit apply command can do so. Credentials and billing configuration are never changed. Empryo owns quota retries and failover timing.
+`models apply` uses your saved model choices. To use what `codeforge models` recommends, run `codeforge models apply --recommended`: it shows the role changes, asks for scope and confirmation, saves them, then applies any declared fallback. Helper routing and other settings are kept. `models recommend` remains read-only. `models configure` and normal launches never write native settings; only this explicit apply command can do so. Credentials and billing configuration are never changed. Empryo owns quota retries and failover timing.
 
 ## 3. Give it a job
 

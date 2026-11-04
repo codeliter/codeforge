@@ -28,7 +28,8 @@ Setup:
   models configure [--project|--global]
                                      Choose providers and role/helper models interactively; save config.yaml
   models plan                        Show resolved IDs and verify existing native fallback settings
-  models apply [--project|--global]   Choose scope, preview and confirm native fallback changes
+  models apply [--recommended] [--project|--global]
+                                      Apply saved settings; --recommended first saves recommendations
   models [recommend|set ROLE MODEL...]
                                      Show recommendations or set global Codeforge role choices
   trust                              Approve this repository's persona

@@ -328,7 +328,7 @@ func runModels(ctx context.Context, home, bin string, args []string) error {
 		rec := recommendConfigured(available, cfg, sub == "fill")
 		printModels(os.Stdout, cfg, rec)
 		if sub == "recommend" {
-			fmt.Println("\nUse `codeforge models configure` or `codeforge models set <role> <model>...` to change saved choices; `codeforge models apply` applies their native fallback settings.")
+			fmt.Println("\nRun `codeforge models apply --recommended` to save these after confirmation, or change saved choices with `codeforge models configure` / `codeforge models set <role> <model>...`.")
 			return nil
 		}
 		for _, r := range roles {
