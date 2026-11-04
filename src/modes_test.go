@@ -102,3 +102,10 @@ func TestSyncAssets_FillsModels(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, strings.Contains(string(review), "disallowedTools:"), "review mode must not edit")
 }
+
+func TestModeTitle(t *testing.T) {
+	require.Equal(t, "Codeforge · work", modeTitle(modeWork))
+	var buf strings.Builder
+	showModeTitle(&buf, modeWork)()
+	require.Empty(t, buf.String(), "non-terminal output gets no title escapes")
+}

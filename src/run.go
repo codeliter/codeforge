@@ -272,6 +272,8 @@ func launch(ctx context.Context, home, bin, mode string, args []string) error {
 				return err
 			}
 		}
+		restore := showModeTitle(os.Stdout, mode)
+		defer restore()
 		return runInteractive(ctx, argv, env)
 	}
 	if err := syscall.Exec(argv[0], argv, env); err != nil {

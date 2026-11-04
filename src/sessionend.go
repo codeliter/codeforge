@@ -46,7 +46,39 @@ func runSessionEnd(stdin io.Reader, w io.Writer, launched bool) {
 	if !safeSessionID(in.SessionID) || !printablePath(in.Cwd) || !filepath.IsAbs(in.Cwd) {
 		return
 	}
+	if !sessionHasActivity(in.Cwd, in.SessionID) {
+		return
+	}
 	fmt.Fprint(w, resumeHint(in.Cwd, in.SessionID, resumeHintColors(w)))
+}
+
+// sessionHasActivity reports whether a session holds any chat or work worth resuming. An empty session
+// (opened and closed without a message) has no messages and no token use in any tab. Unreadable metadata
+// counts as active, so a real session never loses its resume hint.
+func sessionHasActivity(cwd, id string) bool {
+	data, err := os.ReadFile(filepath.Join(cwd, ".empryo", "sessions", id, "meta.json"))
+	if err != nil {
+		return true
+	}
+	var meta struct {
+		Tabs []struct {
+			TokenUsage struct {
+				Total int64 `json:"total"`
+			} `json:"tokenUsage"` //nolint:tagliatelle // Empryo session metadata.
+			MessageRange struct {
+				EndLine int64 `json:"endLine"` //nolint:tagliatelle // Empryo session metadata.
+			} `json:"messageRange"` //nolint:tagliatelle // Empryo session metadata.
+		} `json:"tabs"`
+	}
+	if json.Unmarshal(data, &meta) != nil || meta.Tabs == nil {
+		return true
+	}
+	for _, tab := range meta.Tabs {
+		if tab.TokenUsage.Total > 0 || tab.MessageRange.EndLine > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func resumeHint(cwd, id string, color bool) string {

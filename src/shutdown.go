@@ -66,7 +66,7 @@ func runInteractive(ctx context.Context, argv, env []string) error {
 		if cwdErr == nil {
 			cwd, cwdErr = filepath.EvalSymlinks(cwd)
 		}
-		if err == nil && cwdErr == nil && id != "" && verifyEmpryoSession(cwd, id) == nil {
+		if err == nil && cwdErr == nil && id != "" && verifyEmpryoSession(cwd, id) == nil && sessionHasActivity(cwd, id) {
 			fmt.Fprint(os.Stderr, resumeHint(cwd, id, resumeHintColors(os.Stderr)))
 		}
 	}

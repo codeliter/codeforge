@@ -116,3 +116,24 @@ func TestLaunchCommand_SetsLaunchMarker(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, env, launchMarker+"=1")
 }
+
+func TestSessionHasActivity(t *testing.T) {
+	cwd := t.TempDir()
+	write := func(id, meta string) {
+		dir := filepath.Join(cwd, ".empryo", "sessions", id)
+		require.NoError(t, os.MkdirAll(dir, privateDir))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "meta.json"), []byte(meta), privateFile))
+	}
+	write("empty", `{"tabs":[{"tokenUsage":{"total":0},"messageRange":{"startLine":0,"endLine":0}}]}`)
+	write("chat", `{"tabs":[{"tokenUsage":{"total":0},"messageRange":{"endLine":0}},{"tokenUsage":{"total":12},"messageRange":{"endLine":4}}]}`)
+	write("messages", `{"tabs":[{"tokenUsage":{"total":0},"messageRange":{"endLine":2}}]}`)
+	write("odd", `not json`)
+	require.False(t, sessionHasActivity(cwd, "empty"))
+	require.True(t, sessionHasActivity(cwd, "chat"))
+	require.True(t, sessionHasActivity(cwd, "messages"))
+	require.True(t, sessionHasActivity(cwd, "odd"), "unreadable metadata keeps the hint")
+	require.True(t, sessionHasActivity(cwd, "missing"), "missing metadata keeps the hint")
+	var out strings.Builder
+	runSessionEnd(strings.NewReader(`{"session_id":"empty","cwd":"`+cwd+`"}`), &out, true)
+	require.Empty(t, out.String(), "an empty session prints no resume hint")
+}

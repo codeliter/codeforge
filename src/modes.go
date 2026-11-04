@@ -3,9 +3,12 @@ package src
 import (
 	"errors"
 	"fmt"
+	"io"
+	"os"
 	"slices"
 
 	"github.com/charmbracelet/huh"
+	"golang.org/x/term"
 )
 
 const (
@@ -22,6 +25,22 @@ var (
 
 func profileFor(mode string) string {
 	return "codeforge-" + mode
+}
+
+// modeTitle names the Codeforge mode powering an Empryo window, e.g. "Codeforge · work".
+func modeTitle(mode string) string {
+	return "Codeforge · " + mode
+}
+
+// showModeTitle puts the mode in the terminal's window and tab title while Empryo runs, because Empryo's
+// TUI does not set a title of its own. It pushes the previous title and pops it back on return.
+func showModeTitle(w io.Writer, mode string) func() {
+	f, ok := w.(*os.File)
+	if !ok || validMode(mode) != nil || mode == "" || !term.IsTerminal(int(f.Fd())) || os.Getenv("TERM") == "dumb" || os.Getenv("NO_COLOR") != "" {
+		return func() {}
+	}
+	fmt.Fprintf(w, "\x1b[22;0t\x1b]0;%s\x07", modeTitle(mode))
+	return func() { fmt.Fprint(w, "\x1b[23;0t") }
 }
 
 func validMode(mode string) error {
