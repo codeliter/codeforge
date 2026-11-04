@@ -45,6 +45,8 @@ func workFromArgs(args []string) (work, []string, error) {
 		case args[i] == "--ticket" && i+1 < len(args):
 			w.ticket = args[i+1]
 			i++
+		case strings.HasPrefix(args[i], "--ticket="):
+			w.ticket = strings.TrimPrefix(args[i], "--ticket=")
 		case flagsWithValue[args[i]] && i+1 < len(args):
 			rest = append(rest, args[i], args[i+1])
 			i++

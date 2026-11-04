@@ -11,7 +11,8 @@ import (
 )
 
 // installHooks merges codeforge's guard and resume hint into ~/.empryo/hooks.json, keeping any hooks the user added.
-// The guard is global and fail-closed because hard stops must hold even when the model ignores its instructions.
+// The guard is global and fail-closed: the trust and self-protection rules must hold in every session, and in
+// review mode (see runHook) the read-only promise must hold even when the model ignores its instructions.
 // The resume hint is fail-open: a shutdown must never wait on it.
 func installHooks(empryoDir, self string, legacyHooks ...string) error {
 	path := filepath.Join(empryoDir, "hooks.json")
@@ -73,8 +74,13 @@ const (
 // setOurs replaces only codeforge's hooks, including stale temporary launchers.
 // User hooks in the same rule and the rule's matcher are preserved.
 func setOurs(hooks map[string]any, event, sub string, hook map[string]any, legacyHooks ...string) {
+	hooks[event] = append(keepOthers(hooks[event], sub, legacyHooks), map[string]any{"hooks": []any{hook}})
+}
+
+// keepOthers returns the rules of an event without codeforge's hooks.
+func keepOthers(event any, sub string, legacyHooks []string) []any {
 	var kept []any
-	if rules, ok := hooks[event].([]any); ok {
+	if rules, ok := event.([]any); ok {
 		for _, r := range rules {
 			m, ok := r.(map[string]any)
 			if !ok {
@@ -100,7 +106,7 @@ func setOurs(hooks map[string]any, event, sub string, hook map[string]any, legac
 			}
 		}
 	}
-	hooks[event] = append(kept, map[string]any{"hooks": []any{hook}})
+	return kept
 }
 
 // isOurHook recognises the permanent helper and codeforge's legacy commands.

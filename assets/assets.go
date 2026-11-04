@@ -21,3 +21,17 @@ var RepoPersonaTemplate string
 
 //go:embed agents/codeforge-gate.md
 var Gate string
+
+// Help text shown by `codeforge help`; edit these files, not Go strings.
+//
+//go:embed help/common.txt
+var HelpCommon string
+
+//go:embed help/more.txt
+var HelpMore string
+
+//go:embed help/advanced.txt
+var HelpAdvanced string
+
+//go:embed help/footer.txt
+var HelpFooter string

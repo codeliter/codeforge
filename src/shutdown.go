@@ -67,7 +67,8 @@ func runInteractive(ctx context.Context, argv, env []string) error {
 			cwd, cwdErr = filepath.EvalSymlinks(cwd)
 		}
 		if err == nil && cwdErr == nil && id != "" && verifyEmpryoSession(cwd, id) == nil && sessionHasActivity(cwd, id) {
-			fmt.Fprint(os.Stderr, resumeHint(cwd, id, resumeHintColors(os.Stderr)))
+			colors := resumeHintColors(os.Stderr)
+			fmt.Fprint(os.Stderr, sessionSummary(context.WithoutCancel(ctx), cwd, colors), resumeHint(cwd, id, colors))
 		}
 	}
 	var exit *exec.ExitError

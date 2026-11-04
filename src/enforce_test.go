@@ -28,15 +28,19 @@ func TestEnsureEnforced_RemovesOldPrePushHook(t *testing.T) {
 	require.NoError(t, ensureEnforced(t.Context(), "codeforge"), "running again is a no-op")
 }
 
-func TestInstallGHShim(t *testing.T) {
+func TestRemoveGHShim(t *testing.T) {
 	dir := t.TempDir()
-	require.NoError(t, installGHShim(dir, "/usr/local/bin/codeforge"))
-	data, err := os.ReadFile(filepath.Join(dir, "bin", "gh"))
-	require.NoError(t, err)
-	require.True(t, strings.Contains(string(data), "gh-shim"))
+	p := filepath.Join(dir, "bin", "gh")
+	require.NoError(t, os.MkdirAll(filepath.Dir(p), privateDir))
+	require.NoError(t, removeGHShim(dir), "no gh is a no-op")
 
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "bin", "gh"), []byte("#!/bin/sh\nsomeone else\n"), 0o755))
-	require.Error(t, installGHShim(dir, "/usr/local/bin/codeforge"), "never overwrite a gh we did not write")
+	require.NoError(t, os.WriteFile(p, []byte("#!/bin/sh\n"+shimMagic+"\nexec codeforge gh-shim \"$@\"\n"), execPerm))
+	require.NoError(t, removeGHShim(dir))
+	require.NoFileExists(t, p, "our shim is removed")
+
+	require.NoError(t, os.WriteFile(p, []byte("#!/bin/sh\nsomeone else\n"), execPerm))
+	require.NoError(t, removeGHShim(dir))
+	require.FileExists(t, p, "never delete a gh we did not write")
 }
 
 func TestHelp(t *testing.T) {

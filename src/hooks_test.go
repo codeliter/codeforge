@@ -37,23 +37,20 @@ func TestInstallHooks_KeepsUserHooks(t *testing.T) {
 }
 
 func TestRunHook(t *testing.T) {
+	t.Setenv("CODEFORGE_GUARD", "")
 	home := t.TempDir()
 	var stderr strings.Builder
 
-	for _, cmd := range []string{"git push --force", "git status", "git reset --hard"} {
+	for _, cmd := range []string{"git push --force", "git status", "git reset --hard", "gh pr merge 1", "gh pr comment 1 -b x", "gh pr create --fill", "gh api repos/{owner}/{repo}/pulls -f title=x", "terraform apply"} {
 		in := `{"hook_event_name":"PreToolUse","tool_name":"Bash","cwd":"/","tool_input":{"command":"` + cmd + `"}}`
-		require.Equal(t, 0, runHook(t.Context(), home, strings.NewReader(in), &stderr), cmd)
+		require.Equal(t, 0, runHook(t.Context(), home, strings.NewReader(in), &stderr), "outside review git and gh are not gated: "+cmd)
 	}
 
-	for _, cmd := range []string{"gh pr merge 1", "gh pr comment 1 -b x", "gh pr create --fill", "gh api repos/{owner}/{repo}/pulls -f title=x", "terraform apply"} {
+	for _, cmd := range []string{"codeforge trust", "codeforge trust --models"} {
 		in := `{"hook_event_name":"PreToolUse","tool_name":"Bash","cwd":"/","tool_input":{"command":"` + cmd + `"}}`
-		require.Equal(t, 0, runHook(t.Context(), home, strings.NewReader(in), &stderr), "needs no approval: "+cmd)
+		require.Equal(t, hookExitBlock, runHook(t.Context(), home, strings.NewReader(in), &stderr), "an agent cannot approve its own trust: "+cmd)
 	}
-
-	trust := `{"hook_event_name":"PreToolUse","tool_name":"Bash","cwd":"/","tool_input":{"command":"codeforge trust"}}`
-	require.Equal(t, hookExitBlock, runHook(t.Context(), home, strings.NewReader(trust), &stderr))
 	require.Contains(t, stderr.String(), "Only the user")
-
 	require.Equal(t, hookExitBlock, runHook(t.Context(), home, strings.NewReader("not json"), &stderr), "fail closed on garbage")
 }
 
@@ -67,4 +64,17 @@ func TestRunHook_ReviewModeIsReadOnly(t *testing.T) {
 	} {
 		require.Equal(t, hookExitBlock, runHook(t.Context(), t.TempDir(), strings.NewReader(in), &stderr), in)
 	}
+}
+
+func TestRunHook_ReviewFailsClosed(t *testing.T) {
+	t.Setenv("CODEFORGE_GUARD", "review")
+	var stderr strings.Builder
+	require.Equal(t, hookExitBlock, runHook(t.Context(), t.TempDir(), strings.NewReader("not json"), &stderr), "fail closed on garbage in review")
+
+	trust := `{"hook_event_name":"PreToolUse","tool_name":"Bash","cwd":"/","tool_input":{"command":"codeforge trust"}}`
+	require.Equal(t, hookExitBlock, runHook(t.Context(), t.TempDir(), strings.NewReader(trust), &stderr))
+	require.Contains(t, stderr.String(), "review mode is read-only")
+
+	read := `{"hook_event_name":"PreToolUse","tool_name":"Bash","cwd":"/","tool_input":{"command":"git status"}}`
+	require.Equal(t, 0, runHook(t.Context(), t.TempDir(), strings.NewReader(read), &stderr), "review can still read")
 }

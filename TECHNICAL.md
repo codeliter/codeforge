@@ -28,10 +28,9 @@ flowchart TD
     Resume --> TUI
     Initial --> Guard[PreToolUse: permanent hooks/cf executable]
     TUI --> Guard
-    Guard --> Rules[Review read-only and self-protection rules]
-    Initial --> Shim[Managed gh shim]
-    TUI --> Shim
-    Shim --> GitHub[GitHub CLI]
+    Guard --> Rules[Review only: read-only and self-protection rules]
+    Initial --> Sandbox[Review only: macOS read-only sandbox]
+    TUI --> Sandbox
 ```
 
 The local acknowledgement is deliberately independent of the model. It confirms that Codeforge
@@ -118,7 +117,7 @@ Implementation: [initcmd.go](src/initcmd.go), [persona.go](src/persona.go),
 
 The permanent `~/.empryo/hooks/cf` helper is a private executable copy of the running Codeforge
 binary. It is refreshed atomically; its lifetime is independent of temporary build paths and Homebrew
-Cellar cleanup. Hook registration and the managed `gh` shim use this helper.
+Cellar cleanup. Hook registration uses this helper.
 The installer replaces recognised legacy Codeforge entries, including `/tmp/cf`, while retaining
 unrelated hooks and other hooks sharing the same rule. Unknown renamed binaries are not assumed to be
 Codeforge: the user can explicitly identify one with `repair --legacy-hook /absolute/old/path`.
@@ -126,14 +125,17 @@ That migrates only exact executable/Codeforge-subcommand matches in the global h
 a missing match produces a warning to inspect project or other agent settings. It does not disable
 fail-closed behaviour or indiscriminately delete missing security hooks.
 
-The `PreToolUse` guard remains **fail-closed**. If it cannot run, a protected tool call is not allowed
-through. The `SessionEnd` resume-hint hook is fail-open because shutdown must not wait on a hint.
-Agent tools may not alter the guard, its helper, its configuration, or run user-only setup/repair commands.
-Repair does not disable these protections.
+The `PreToolUse` guard is registered globally and is **fail-closed**. In every session it enforces the
+self-protection rules (no settings changes, no `codeforge trust`, no editing the guard); only review sessions
+(`CODEFORGE_GUARD=review`) also get the read-only rules. If the guard cannot run, the tool call is not allowed through. There is no managed `gh` shim:
+`repair` deletes one that earlier versions installed, only if it carries Codeforge's marker (the `gh-shim`
+subcommand remains for a stale copy). The `SessionEnd` resume-hint hook is fail-open because shutdown must not
+wait on a hint. In review, agent tools may not alter the guard, its helper, its configuration, or run
+user-only setup/repair commands. Repair does not disable these protections.
 
 Review mode adds two distinct layers:
 
-1. The tool guard blocks write operations and writable commands.
+1. The tool guard blocks write operations, pushes, PR comments, merges and writable commands.
 2. On macOS, `sandbox-exec` refuses filesystem writes within the repository, except its `.empryo`
    runtime state. Both the initial headless turn and resumed TUI keep this sandbox.
 

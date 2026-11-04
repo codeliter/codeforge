@@ -204,7 +204,7 @@ Use `codeforge review` with no PR number to review your local changes.
 You can also ask for a review in your existing work or chat screen. No second terminal is needed.
 The `codeforge-reviewer` helper returns findings and can ask the parent conversation to delegate agreed fixes to `codeforge-work`.
 For another person's PR, it can draft a comment. The parent must show you the exact PR and comment and ask your approval before posting.
-The reviewer itself cannot edit or post; a review request is not permission to publish.
+The reviewer itself cannot edit or post; a review request is not permission to publish. Review sessions are enforced with a tool guard and a read-only sandbox; other modes only protect codeforge's own settings and trust.
 
 ## Come back later
 

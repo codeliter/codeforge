@@ -1,0 +1,38 @@
+
+Setup:
+  init --repo [--persona [NAME]]     Learn a local persona, or use a starter (.codeforge/persona.md)
+  init --persona [NAME]             Pick a described starter persona; name it to skip the menu
+  init --global [REPO...]           Set your global persona instead (~/.codeforge/persona.md)
+  repair, reinit                     Rebuild managed hooks, profiles and skills; keep personas and sessions
+                                     Runs automatically once on the first start after an upgrade
+  repair --legacy-hook PATH          Replace a named old Codeforge hook; repeat for several paths
+  models configure [--project|--global]
+                                     Choose providers and role/helper models interactively; save config.yaml
+  models plan                        Show resolved IDs and verify existing native fallback settings
+  models apply [--recommended] [--project|--global]
+                                      Set Empryo's default model and backups after one confirmation; --recommended first saves recommendations
+  models [recommend|set ROLE MODEL...]
+                                     Show recommendations or set global Codeforge role choices
+  provider [show]                    Show the provider order and which providers are connected
+  provider configure [--project|--global]
+                                     Pick the primary and backups from a menu, in order, then optionally apply
+  provider set PRIMARY [BACKUP...] [--project|--global]
+                                     Use PRIMARY first; Empryo switches to each BACKUP in order on errors or quota
+  provider clear [--project|--global]
+                                     Remove the provider order
+  trust                              Approve this repository's persona
+  trust --models                     Approve this repository's model configuration by content hash
+
+Learning (evidence only; nothing is applied to prompts, personas or guards):
+  learn correct [--session ID] TEXT  Record a correction you typed into this CLI
+  learn outcome [--session ID] -- COMMAND [ARGS]
+                                     Run a check (no shell, 10 min limit) and record passed, failed or incomplete
+  learn list [--all]                 Show this repository's observations; --all includes reverted ones
+  learn propose                      Show corrections recorded 2+ times, with their evidence
+  learn revert ID                    Hide an observation from proposals; the record is kept
+                                     The agent cannot run correct, outcome or revert; there is no approve yet
+
+Resume:
+  review --resume ID                Explicit mode required once for historical sessions
+                                     Missing or wrong-workspace sessions fail; review stays read-only
+  Storage: ~/.codeforge/sessions/sessions.db (private SQLite WAL)

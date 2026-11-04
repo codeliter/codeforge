@@ -23,8 +23,11 @@ func TestRepairRestoresManagedFilesWithoutChangingUserData(t *testing.T) {
 	require.NoError(t, os.WriteFile(hooks, []byte(`{"hooks":{"PreToolUse":[{"hooks":[{"command":"'/tmp/cf' hook","failClosed":true},{"command":"notify-user"}]}]}}`), privateFile))
 	marker := filepath.Join(home, "engine-called")
 	require.NoError(t, os.WriteFile(filepath.Join(bins, "empryo"), []byte("#!/bin/sh\ntouch \"$CODEFORGE_REPAIR_ENGINE_CALLED\"\nexit 99\n"), execPerm))
+	shimPath := filepath.Join(empryoDir, "bin", "gh")
 	for _, command := range []string{"repair", "reinit"} {
 		t.Run(command, func(t *testing.T) {
+			require.NoError(t, os.MkdirAll(filepath.Dir(shimPath), privateDir))
+			require.NoError(t, os.WriteFile(shimPath, []byte("#!/bin/sh\n"+shimMagic+"\n"), execPerm))
 			raw, err := json.Marshal([]string{command})
 			require.NoError(t, err)
 			cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestModesCLI$")
@@ -41,9 +44,7 @@ func TestRepairRestoresManagedFilesWithoutChangingUserData(t *testing.T) {
 			info, err := os.Stat(filepath.Join(empryoDir, "hooks", "cf"))
 			require.NoError(t, err)
 			require.Equal(t, os.FileMode(privateExec), info.Mode().Perm())
-			shim, err := os.ReadFile(filepath.Join(empryoDir, "bin", "gh"))
-			require.NoError(t, err)
-			require.Contains(t, string(shim), "/hooks/cf' gh-shim")
+			require.NoFileExists(t, shimPath, "the gh shim is removed")
 		})
 	}
 	data, err := os.ReadFile(global)

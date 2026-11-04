@@ -67,8 +67,9 @@ func repairManagedFiles(home, workspace string, legacyHooks []string) error {
 	if err := installHooks(empryoDir, hookBin, legacyHooks...); err != nil {
 		return fmt.Errorf("installing guard: %w", err)
 	}
-	if err := installGHShim(empryoDir, hookBin); err != nil {
-		return fmt.Errorf("installing gh guard: %w", err)
+	if err := removeGHShim(empryoDir); err != nil {
+		// A stale shim only bypasses nothing now, so a permissions problem must not block every launch.
+		fmt.Fprintf(os.Stderr, "codeforge: could not remove the old gh shim (%v); delete ~/.empryo/bin/gh yourself\n", err)
 	}
 	return syncProjectAgents(workspace, cfg)
 }

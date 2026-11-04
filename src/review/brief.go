@@ -52,11 +52,11 @@ const prFields = "number,title,body,url,baseRefName,headRefName,author,additions
 
 var (
 	ErrNoPR       = errors.New("review: PR number or URL is required")
-	prRefPattern  = regexp.MustCompile(`^(\d+)$|^https://github\.com/[\w.-]+/[\w.-]+/pull/(\d+)`)
+	prRefPattern  = regexp.MustCompile(`^#?(\d+)$|^https://github\.com/[\w.-]+/[\w.-]+/pull/(\d+)`)
 	ticketPattern = regexp.MustCompile(`\b[A-Z][A-Z0-9]+-\d+\b`)
 )
 
-// ParseRef accepts "123" or a github.com pull URL and returns the number as a string.
+// ParseRef accepts "123", "#123" or a github.com pull URL and returns the number as a string.
 func ParseRef(ref string) (string, error) {
 	m := prRefPattern.FindStringSubmatch(strings.TrimSpace(ref))
 	if m == nil {

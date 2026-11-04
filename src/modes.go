@@ -5,10 +5,13 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
 	"slices"
 
 	"github.com/charmbracelet/huh"
 	"golang.org/x/term"
+
+	"github.com/codeliter/codeforge/src/review"
 )
 
 const (
@@ -50,12 +53,39 @@ func validMode(mode string) error {
 	return fmt.Errorf("%w %q; use %v", errUnknownMode, mode, modes)
 }
 
+var (
+	prLink = regexp.MustCompile(`^https://github\.com/[\w.-]+/[\w.-]+/pull/\d+(?:[/?#]\S*)?$`)
+	prRef  = regexp.MustCompile(`^#\d+$`)
+)
+
+// suggestMode reads an unambiguous intent from the arguments, so the user is not asked what they already said:
+// --ticket means ticket mode, and a lone github.com PR link or #number means review. It returns "" when unsure,
+// and the reason is a short line that tells the user why the mode was chosen.
+func suggestMode(args []string) (mode, reason string) {
+	if hasFlag(args, "--ticket") {
+		return modeTicket, "--ticket given; starting ticket mode"
+	}
+	if prompt := promptOf(args); (prLink.MatchString(prompt) || prRef.MatchString(prompt)) && validPRRef(prompt) {
+		return modeReview, "PR reference given; starting review mode"
+	}
+	return "", ""
+}
+
+// validPRRef reports whether review can load the reference, so a suggestion never leads to a usage error.
+func validPRRef(ref string) bool {
+	_, err := review.ParseRef(ref)
+	return err == nil
+}
+
 // pickMode asks for new launches only; the resume check defends this invariant for other callers.
 func pickMode(cfg Config, args []string) (string, error) {
 	if _, resume, err := sessionID(args); err != nil {
 		return "", err
 	} else if resume {
 		return "", errSessionMode
+	}
+	if mode, _ := suggestMode(args); mode != "" {
+		return mode, nil
 	}
 	if cfg.DefaultMode != "" {
 		return cfg.DefaultMode, nil

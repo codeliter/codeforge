@@ -1,0 +1,2 @@
+
+More: codeforge help --all lists model, provider, trust, repair and learning commands.

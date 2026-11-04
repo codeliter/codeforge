@@ -49,6 +49,7 @@ func TestParseRef(t *testing.T) {
 	}{
 		{"42", "42", false},
 		{" 42 ", "42", false},
+		{"#42", "42", false},
 		{"https://github.com/acme/api/pull/347", "347", false},
 		{"https://github.com/acme/api/pull/347/files", "347", false},
 		{"", "", true},

@@ -1,0 +1,25 @@
+codeforge: a coding agent that works like you, on the Empryo TUI.
+
+Usage:
+  codeforge [mode] [task] [empryo flags]
+
+Modes:
+  ticket [--ticket ID] ["description"]  Take a ticket to a verified change and draft PR; reviewed before the TUI opens
+  chat ["question"]                  Questions, explanations and small edits
+  work ["task"]                      Conversational tasks through implementation and verification; no ticket or PR flow
+  review [PR number or URL]          Read-only review of a PR, or of your branch when no PR is given
+  respond [PR] [--watch]             Address new review comments on your PR: judge, fix, push back, draft replies
+  (none)                             Pick a mode. A PR link or "#42" (quote it: shells treat # as a comment) starts review,
+                                     --ticket starts ticket, a question goes to chat
+
+Everyday:
+  init [--yes]                       Set up Empryo, sign-in and checks; learn a local persona in this Git repo
+  doctor                             Check setup, sign-in, models, persona and trust; shows what to do next
+  gate                               Review your branch: one reviewer for simple changes, the jury for
+                                     complicated or high-risk ones. Voluntary; nothing waits for it
+  --resume ID, --session ID, -s ID    Restore the original mode without new-task preparation
+
+Help:
+  help, -h, --help                   Show the everyday commands
+  help --all                         Show every command, including models, providers and learning
+  version                            Show the codeforge version

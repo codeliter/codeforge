@@ -1,6 +1,7 @@
 package src
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -49,7 +50,8 @@ func runSessionEnd(stdin io.Reader, w io.Writer, launched bool) {
 	if !sessionHasActivity(in.Cwd, in.SessionID) {
 		return
 	}
-	fmt.Fprint(w, resumeHint(in.Cwd, in.SessionID, resumeHintColors(w)))
+	colors := resumeHintColors(w)
+	fmt.Fprint(w, sessionSummary(context.Background(), in.Cwd, colors), resumeHint(in.Cwd, in.SessionID, colors))
 }
 
 // sessionHasActivity reports whether a session holds any chat or work worth resuming. An empty session

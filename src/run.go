@@ -42,7 +42,7 @@ func GHShim(ctx context.Context, args []string) int {
 // Run dispatches a codeforge command and launches Empryo.
 func Run(ctx context.Context, args []string) error {
 	if len(args) > 0 && isHelp(args[0]) {
-		printHelp(os.Stdout)
+		printHelp(os.Stdout, wantsAllHelp(args[1:]))
 		return nil
 	}
 	if len(args) > 0 && (args[0] == "version" || args[0] == "--version") {
@@ -72,6 +72,14 @@ func Run(ctx context.Context, args []string) error {
 		if len(args) > 0 && args[0] == "learn" {
 			return errLearnCwd
 		}
+	}
+
+	// doctor only reads state, so it runs before automatic repair, project, config and Empryo preparation.
+	if len(args) > 0 && args[0] == "doctor" {
+		if len(args) > 1 {
+			return errDoctorUsage
+		}
+		return runDoctor(ctx, home, os.Stdout)
 	}
 
 	repair, err := parseRepairArgs(args)
@@ -105,6 +113,10 @@ func Run(ctx context.Context, args []string) error {
 		bin, err := findEmpryo(filepath.Join(home, ".empryo"))
 		if err != nil {
 			return err
+		}
+		// These commands change providers, models and fallbacks, so the saved model list is rebuilt next launch.
+		if changesProviders(args) {
+			defer clearCatalogCache(home)
 		}
 		if args[0] != "models" {
 			return runProvider(ctx, home, bin, args[1:], os.Stdout)
@@ -143,8 +155,8 @@ func Run(ctx context.Context, args []string) error {
 	if err := installHooks(empryoDir, hookBin, repair.legacyHooks...); err != nil {
 		return fmt.Errorf("installing guard: %w", err)
 	}
-	if err := installGHShim(empryoDir, hookBin); err != nil {
-		return fmt.Errorf("installing gh guard: %w", err)
+	if err := removeGHShim(empryoDir); err != nil {
+		fmt.Fprintf(os.Stderr, "codeforge: could not remove the old gh shim (%v); delete ~/.empryo/bin/gh yourself\n", err)
 	}
 
 	if repair.enabled {
@@ -156,7 +168,7 @@ func Run(ctx context.Context, args []string) error {
 				return fmt.Errorf("recording repaired version: %w", err)
 			}
 		}
-		fmt.Fprintf(os.Stdout, "codeforge: repaired profiles, skills, hooks and gh shim. Hook executable: %s\n", hookBin)
+		fmt.Fprintf(os.Stdout, "codeforge: repaired profiles, skills and hooks, and removed the old gh shim. Hook executable: %s\n", hookBin)
 		fmt.Fprintln(os.Stdout, "Personas, sessions and logins were kept. Start a new Codeforge session to use the repaired hooks.")
 		return nil
 	}
@@ -179,28 +191,45 @@ func Run(ctx context.Context, args []string) error {
 		return err
 	}
 	var catalog []string
+	cachedCatalog := false
 	if needsModelCatalog(cfg) || argumentsNeedCatalog(args) {
-		fmt.Fprintln(os.Stderr, "codeforge: request received; resolving model names through connected providers...")
-		catalog, err = connectedModelCatalog(ctx, bin)
+		if catalog, cachedCatalog, err = launchCatalog(ctx, home, bin); err != nil {
+			return err
+		}
+	}
+	// resolve names the models and checks the native fallback settings against them.
+	resolve := func() (ModelPlan, []string, error) {
+		plan, err := resolveModelPlan(cfg, catalog)
 		if err != nil {
+			return plan, nil, err
+		}
+		resolved, overrides, err := resolveModelArguments(args, cfg.Providers, catalog)
+		if err != nil {
+			return plan, nil, err
+		}
+		plan.Routes = append(plan.Routes, overrides...)
+		if len(plan.fallbackChains()) > 0 {
+			fmt.Fprintln(os.Stderr, "codeforge: checking existing native fallback settings (read-only)...")
+			if err := verifyModelPlan(ctx, bin, workspace, plan); err != nil {
+				return plan, nil, err
+			}
+		}
+		return plan, resolved, nil
+	}
+	plan, resolvedArgs, err := resolve()
+	if err != nil && cachedCatalog {
+		// A saved catalog can be stale after a sign-in, a sign-out or a models apply: fetch fresh once before
+		// rejecting the plan.
+		fmt.Fprintln(os.Stderr, "codeforge: refreshing the saved model list...")
+		if catalog, err = freshLaunchCatalog(ctx, home, bin, sortedCopy(readyProviders(ctx, bin))); err != nil {
 			return err
 		}
+		plan, resolvedArgs, err = resolve()
 	}
-	plan, err := resolveModelPlan(cfg, catalog)
 	if err != nil {
 		return err
 	}
-	args, overrides, err := resolveModelArguments(args, cfg.Providers, catalog)
-	if err != nil {
-		return err
-	}
-	plan.Routes = append(plan.Routes, overrides...)
-	if len(plan.fallbackChains()) > 0 {
-		fmt.Fprintln(os.Stderr, "codeforge: checking existing native fallback settings (read-only)...")
-		if err := verifyModelPlan(ctx, bin, workspace, plan); err != nil {
-			return err
-		}
-	}
+	args = resolvedArgs
 	cfg = plan.Config
 	if base, err := resolveModelPlan(globalCfg, catalog); err == nil {
 		if err := syncAssets(empryoDir, base.Config); err != nil {
@@ -253,6 +282,9 @@ func Run(ctx context.Context, args []string) error {
 	if !resumed && cmd == "" {
 		if cmd, err = pickMode(cfg, rest); err != nil {
 			return err
+		}
+		if mode, reason := suggestMode(rest); mode == cmd {
+			fmt.Fprintln(os.Stderr, "codeforge:", reason)
 		}
 	}
 	if !resumed {

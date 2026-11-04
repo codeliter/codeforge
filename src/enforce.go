@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -20,10 +21,7 @@ const (
 	execPerm  = 0o755
 )
 
-var (
-	errNoRealGH  = errors.New("gh is not installed")
-	errForeignGH = errors.New("exists and is not codeforge's; move it and run codeforge again")
-)
+var errNoRealGH = errors.New("gh is not installed")
 
 func gitConfig(ctx context.Context, repo, key string) string {
 	out, err := exec.CommandContext(ctx, "git", "-C", repo, "config", "--get", key).Output()
@@ -33,21 +31,27 @@ func gitConfig(ctx context.Context, repo, key string) string {
 	return strings.TrimSpace(string(out))
 }
 
-// installGHShim puts a gh wrapper first on the agent's PATH. Empryo puts ~/.empryo/bin first in every shell it
-// starts, so the agent's gh calls pass through codeforge however they were built.
-func installGHShim(empryoDir, self string) error {
-	body := fmt.Sprintf("#!/bin/sh\n%s\nexec %s gh-shim \"$@\"\n", shimMagic, shellQuote(self))
+// removeGHShim deletes the gh wrapper earlier versions installed, so gh runs directly. A gh that codeforge did
+// not write is left alone.
+func removeGHShim(empryoDir string) error {
 	p := filepath.Join(empryoDir, "bin", "gh")
-	if have, err := os.ReadFile(p); err == nil && string(have) == body {
+	have, err := os.ReadFile(p)
+	if errors.Is(err, fs.ErrNotExist) {
 		return nil
 	}
-	if have, err := os.ReadFile(p); err == nil && !strings.Contains(string(have), shimMagic) {
-		return fmt.Errorf("%s %w", p, errForeignGH)
+	if err != nil {
+		return fmt.Errorf("reading %s: %w", p, err)
 	}
-	return writeFile(empryoDir, "bin/gh", []byte(body), execPerm)
+	if !strings.Contains(string(have), shimMagic) {
+		return nil
+	}
+	if err := os.Remove(p); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("removing the gh shim: %w", err)
+	}
+	return nil
 }
 
-// realGH finds gh on PATH, skipping codeforge's own shim.
+// realGH finds gh on PATH, skipping a stale codeforge shim directory.
 func realGH(empryoDir string) (string, error) {
 	shimDir := filepath.Join(empryoDir, "bin")
 	for _, dir := range filepath.SplitList(os.Getenv("PATH")) {

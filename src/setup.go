@@ -56,6 +56,8 @@ func runSetup(ctx context.Context, home string, args []string, out io.Writer) er
 	if err := ensureSignedIn(ctx, bin, opts); err != nil {
 		return err
 	}
+	// Signing in changes which models are connected, so the saved list is rebuilt on the next launch.
+	clearCatalogCache(home)
 
 	checks := []check{
 		{name: "Empryo", ok: true, note: empryoVersion(ctx, bin)},
