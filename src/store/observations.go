@@ -51,6 +51,14 @@ type Observation struct {
 func (s *Store) Record(ctx context.Context, o Observation) (int64, error) {
 	ctx, cancel := context.WithTimeout(ctx, operationTimeout)
 	defer cancel()
+	return insertObservation(ctx, s.db, o)
+}
+
+type execer interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+}
+
+func insertObservation(ctx context.Context, db execer, o Observation) (int64, error) {
 	var status, duration any
 	if o.Kind == KindOutcome {
 		status = o.Status
@@ -59,7 +67,7 @@ func (s *Store) Record(ctx context.Context, o Observation) (int64, error) {
 			duration = o.Duration.Milliseconds()
 		}
 	}
-	res, err := s.db.ExecContext(ctx,
+	res, err := db.ExecContext(ctx,
 		"INSERT INTO observations(kind, text, repository, session_id, dir, origin, status, exit_code, duration_ms, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 		o.Kind, o.Text, o.Repository, o.SessionID, cmp.Or(o.Dir, "."), o.Origin, status, o.ExitCode, duration, o.CreatedAt.UTC().Format(time.RFC3339Nano))
 	if err != nil {

@@ -7,7 +7,7 @@ import (
 )
 
 func TestCheck_LearningWritesAreUserOnly(t *testing.T) {
-	for _, cmd := range []string{"codeforge learn list", "codeforge learn list --all", "codeforge learn propose", "codeforge learn habits"} {
+	for _, cmd := range []string{"codeforge learn list", "codeforge learn list --all", "codeforge learn propose", "codeforge learn habits", "codeforge learn proposals", "codeforge learn rules"} {
 		require.Empty(t, rules(Check(cmd, false)), cmd)
 	}
 	for _, cmd := range []string{
@@ -17,6 +17,9 @@ func TestCheck_LearningWritesAreUserOnly(t *testing.T) {
 		"codeforge learn outcome -- go test ./...",
 		"codeforge learn outcome -- gh pr create --fill",
 		"codeforge learn revert 3",
+		"codeforge learn accept 1",
+		"codeforge learn dismiss 1",
+		"codeforge learn forget R1",
 		"codeforge learn approve 3",
 		"/opt/homebrew/bin/codeforge learn correct x",
 		"env codeforge learn correct x",

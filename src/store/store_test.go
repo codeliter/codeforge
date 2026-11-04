@@ -60,12 +60,13 @@ func TestMigration_RollbackAndNewerSchema(t *testing.T) {
 		"migrations/002_observations.sql":  {Data: []byte("unused")},
 		"migrations/003_work_mode.sql":     {Data: []byte("unused")},
 		"migrations/004_hook_outcomes.sql": {Data: []byte("unused")},
-		"migrations/005_broken.sql":        {Data: []byte("CREATE TABLE partial (id TEXT); INSERT INTO absent VALUES (1);")},
+		"migrations/005_corrections.sql":   {Data: []byte("unused")},
+		"migrations/006_broken.sql":        {Data: []byte("CREATE TABLE partial (id TEXT); INSERT INTO absent VALUES (1);")},
 	}
 	require.Error(t, s.initialize(t.Context(), scripts))
 	var version, tables int
 	require.NoError(t, s.db.QueryRowContext(t.Context(), "PRAGMA user_version").Scan(&version))
-	require.Equal(t, 4, version)
+	require.Equal(t, 5, version)
 	require.NoError(t, s.db.QueryRowContext(t.Context(), "SELECT count(*) FROM sqlite_master WHERE name='partial'").Scan(&tables))
 	require.Zero(t, tables)
 	_, err := s.db.ExecContext(t.Context(), "PRAGMA user_version = 99")
@@ -160,5 +161,5 @@ func TestMigration_InterruptedContext(t *testing.T) {
 	require.ErrorIs(t, s.initialize(ctx, migrations), context.Canceled)
 	var version int
 	require.NoError(t, s.db.QueryRowContext(t.Context(), "PRAGMA user_version").Scan(&version))
-	require.Equal(t, 4, version)
+	require.Equal(t, 5, version)
 }

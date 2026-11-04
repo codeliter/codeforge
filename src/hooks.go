@@ -64,6 +64,13 @@ func installHooks(empryoDir, self string, legacyHooks ...string) error {
 			"async":   true,
 		}, legacyHooks...)
 	}
+	// Corrections: Empryo sends each prompt the user submits. Same rules as above: async and fail-open.
+	setOurs(hooks, promptEvent, observeCommand, "", map[string]any{
+		"type":    "command",
+		"command": shellQuote(self) + " " + observeCommand,
+		"timeout": observeTimeoutSec,
+		"async":   true,
+	}, legacyHooks...)
 	doc["hooks"] = hooks
 
 	out, err := json.MarshalIndent(doc, "", "  ")

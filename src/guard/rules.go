@@ -266,10 +266,10 @@ func printsProviders(args []string) bool {
 	return len(args) == 0 || len(args) == 1 && (args[0] == "show" || args[0] == "list")
 }
 
-// readsLearning matches `codeforge learn list`, `propose` and `habits`. Anything else, unknown forms included, may write
+// readsLearning matches the read-only `codeforge learn` forms: list, propose, habits, proposals and rules. Anything else, unknown forms included, may write
 // evidence or run a command through codeforge, so it is refused.
 func readsLearning(args []string) bool {
-	return len(args) > 0 && (args[0] == "list" || args[0] == "propose" || args[0] == "habits")
+	return len(args) > 0 && (args[0] == "list" || args[0] == "propose" || args[0] == "habits" || args[0] == "proposals" || args[0] == "rules")
 }
 
 // ghGlobalRepo removes gh's -R/--repo wherever it appears, so the subcommand is always w[1].

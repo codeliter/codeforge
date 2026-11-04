@@ -212,6 +212,15 @@ Codeforge notices which test, lint and build commands pass in your project and t
 `codeforge learn habits` shows what it learned, and `codeforge learn revert ID...` removes any of it.
 Only plain commands the tool reported as passing count; nothing is learned from review sessions.
 
+## It learns your corrections
+
+When you type the same correction in two separate sessions ("always use table-driven tests"), codeforge learns it as a
+rule for that directory by itself at the next launch and says so, with how to undo it. You do not have to approve
+anything. Corrections worded differently are offered by `codeforge learn proposals` for you to accept.
+`codeforge learn rules` lists the rules and `codeforge learn forget R1` removes one for good (it is not learned again).
+`codeforge learn proposals` shows what is about to be learned, and `learn accept P1` or `learn dismiss P1` decide early.
+Only your own prompts count, never the model's; opposite corrections never merge; and review sessions learn nothing.
+
 ## Come back later
 
 Use the session ID shown when you leave:

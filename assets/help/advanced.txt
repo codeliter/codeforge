@@ -31,6 +31,10 @@ Learning (verification habits are applied to the prompt; nothing touches persona
   learn propose                      Show corrections recorded 2+ times, with their evidence
   learn habits                       Show verification commands (lint, test, build) that keep passing here;
                                      they are learned from your sessions and added to the agent's prompt
+  learn proposals                    Show corrections you repeat across sessions, grouped as candidate rules
+  learn accept PN | dismiss PN       Decide a proposal now (IDs as shown by proposals); otherwise it is learned at launch
+  learn rules                        Show accepted rules; they are added to the agent's prompt
+  learn forget RN                    Stop using an accepted rule
   learn revert ID...                 Hide observations (or a whole habit's IDs); the records are kept
                                      The agent cannot run correct, outcome or revert; there is no approve yet
 

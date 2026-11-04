@@ -24,12 +24,19 @@ while [ "$#" -gt 0 ]; do
   esac
   shift
 done
-[ "$E2E_MODE" = learn ] || exit 0
+[ "$E2E_MODE" = learn ] || [ "$E2E_MODE" = prompt ] || exit 0
 hookcmd=$(grep -o '"command": "[^"]*observe"' "$HOME/.empryo/hooks.json" | head -n1 | sed 's/^"command": "//; s/"$//')
 [ -n "$hookcmd" ] || { echo "no observe hook registered" >&2; exit 3; }
 fire() {
   printf '{"session_id":"%s","cwd":"%s","hook_event_name":"%s","tool_name":"Bash","tool_input":{"command":"%s"},"tool_response":%s}' "$id" "$PWD" "$1" "$2" "$3" | sh -c "$hookcmd"
 }
+if [ "$E2E_MODE" = prompt ]; then
+  # A real engine started from a terminal carries the human marker codeforge sets for such launches; the fixture
+  # cannot be a terminal, so it adds the marker itself unless the test plays an agent-started session.
+  if [ "$E2E_AGENT" != 1 ]; then export CODEFORGE_HUMAN=1; fi
+  printf '{"session_id":"%s","cwd":"%s","hook_event_name":"UserPromptSubmit","prompt":"%s"}' "$id" "$PWD" "$E2E_PROMPT" | sh -c "$hookcmd"
+  exit 0
+fi
 fire PostToolUse "go test ./..." '{"output":"ok","success":true}'
 fire PostToolUse "go test ./..." '{"output":"ok","success":true}'
 fire PostToolUse "ls -la" '{"output":"x","success":true}'
@@ -71,10 +78,14 @@ func newE2E(t *testing.T) *e2eEnv {
 }
 
 func (e *e2eEnv) run(dir, mode string, args ...string) string {
+	return e.runWith(dir, mode, "", args...)
+}
+
+func (e *e2eEnv) runWith(dir, mode, prompt string, args ...string) string {
 	e.t.Helper()
 	cmd := exec.CommandContext(e.t.Context(), e.bin, args...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "HOME="+e.home, "PATH="+e.path, "E2E_CAPTURE="+e.capture, "E2E_MODE="+mode, "CODEFORGE_LAUNCH=", "CODEFORGE_GUARD=")
+	cmd.Env = append(os.Environ(), "HOME="+e.home, "PATH="+e.path, "E2E_CAPTURE="+e.capture, "E2E_MODE="+mode, "E2E_PROMPT="+prompt, "CODEFORGE_LAUNCH=", "CODEFORGE_GUARD=")
 	out, err := cmd.CombinedOutput()
 	require.NoError(e.t, err, string(out))
 	return string(out)

@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"syscall"
 )
 
@@ -368,7 +369,13 @@ func launchCommand(ctx context.Context, home, bin, mode string, args []string) (
 	if !userSystem && !resume && mode != modeReview {
 		args = withLearnedHabits(ctx, home, args)
 	}
-	env := append(os.Environ(), "EMPRYO_HOOK_ENV=CODEFORGE_*", launchMarker+"=1", "CODEFORGE_RESUME_HINT=launcher")
+	// The human marker is decided here, never inherited: an agent cannot claim it by exporting it first.
+	nested := os.Getenv(launchMarker) == "1"
+	env := slices.DeleteFunc(os.Environ(), func(kv string) bool { return strings.HasPrefix(kv, humanLaunchMarker+"=") })
+	env = append(env, "EMPRYO_HOOK_ENV=CODEFORGE_*", launchMarker+"=1", "CODEFORGE_RESUME_HINT=launcher")
+	if humanLaunch(interactive(), nested) {
+		env = append(env, humanLaunchMarker+"=1")
+	}
 	argv := append([]string{bin, "--profile", profileFor(mode)}, args...)
 	if mode == modeReview {
 		env = append(env, "CODEFORGE_GUARD=review")

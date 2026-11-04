@@ -22,12 +22,13 @@ import (
 )
 
 var (
-	errLearnUsage   = errors.New("usage: codeforge learn correct [--session ID] TEXT | outcome [--session ID] -- COMMAND [ARGS] | list [--all] | propose | habits | revert ID [ID]")
-	errLearnText    = errors.New("text must be one line of 1 to 2000 printable characters")
-	errLearnSecret  = errors.New("text looks like it contains a credential; nothing was saved")
-	errLearnSession = errors.New("unknown codeforge session for this repository")
-	errCheckFailed  = errors.New("check did not pass")
-	errLearnCwd     = errors.New("learn does not read --cwd; run it from the repository")
+	errLearnUsage    = errors.New("usage: codeforge learn correct [--session ID] TEXT | outcome [--session ID] -- COMMAND [ARGS] | list [--all] | propose | habits | proposals | rules | accept N | dismiss N | forget RN | revert ID")
+	errLearnText     = errors.New("text must be one line of 1 to 2000 printable characters")
+	errLearnSecret   = errors.New("text looks like it contains a credential; nothing was saved")
+	errLearnSession  = errors.New("unknown codeforge session for this repository")
+	errCheckFailed   = errors.New("check did not pass")
+	errCorrectionDir = errors.New("this directory cannot be placed inside the repository, so the correction cannot be recorded for it")
+	errLearnCwd      = errors.New("learn does not read --cwd; run it from the repository")
 )
 
 const (
@@ -70,6 +71,27 @@ func runLearn(ctx context.Context, home string, args []string, w io.Writer) erro
 			return errLearnUsage
 		}
 		return learnHabits(ctx, home, repo, w)
+	case "proposals":
+		if len(args) != 1 {
+			return errLearnUsage
+		}
+		return learnProposals(ctx, home, repo, w)
+	case "rules":
+		if len(args) != 1 {
+			return errLearnUsage
+		}
+		return learnRules(ctx, home, repo, w)
+	case "accept", "dismiss", "forget":
+		if len(args) != 1+1 {
+			return errLearnUsage
+		}
+		switch args[0] {
+		case "accept":
+			return learnAccept(ctx, home, repo, args[1], w)
+		case "dismiss":
+			return learnDismiss(ctx, home, repo, args[1], w)
+		}
+		return learnForget(ctx, home, repo, args[1], w)
 	case "revert":
 		ids := args[1:]
 		if len(ids) == 0 {
@@ -158,12 +180,17 @@ func learnCorrect(ctx context.Context, home, repo string, args []string, w io.Wr
 	if err := checkLearnText(text); err != nil {
 		return err
 	}
+	// A correction counts where it was typed, like one that arrives by hook.
+	dir, ok := launchDir(repo)
+	if !ok {
+		return errCorrectionDir
+	}
 	var id int64
 	if err := withLearning(ctx, home, func(s *store.Store) error {
 		if err := checkSession(ctx, s, repo, session); err != nil {
 			return err
 		}
-		id, err = s.Record(ctx, store.Observation{Kind: store.KindCorrection, Text: text, Repository: repo, SessionID: session, Origin: store.OriginCLI, CreatedAt: time.Now()})
+		id, err = s.RecordWithVector(ctx, store.Observation{Kind: store.KindCorrection, Text: text, Repository: repo, SessionID: session, Dir: dir, Origin: store.OriginCLI, CreatedAt: time.Now()}, embed(text))
 		return err
 	}); err != nil {
 		return err

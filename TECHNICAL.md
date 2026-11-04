@@ -162,6 +162,32 @@ commands the harness reports as succeeded or failed count; the agent's own claim
 the payload, a success event is stored as `incomplete` and does not count until the payload shape is confirmed
 from `~/.codeforge/observe-shape.log`, which logs event and key names only.
 
+### Corrections and rules
+
+The same observer is registered for `UserPromptSubmit`. A submitted prompt that starts with a correction cue
+(`correctionCues`, 8 to 300 printable characters, no credential shape) in a session codeforge launched is stored as a
+correction with origin `hook`; the shape log records only the event and a reason, never the text. Corrections are
+embedded locally (`embed`: 256-dimension feature hashing of word stems and trigrams, no provider call) and stored in
+the sqlite-vec table `correction_vec` (`modernc.org/sqlite/vec`, CGo-free; created from Go after migrating so a
+missing extension can never roll back the schema). `codeforge learn proposals` links corrections whose cosine
+similarity is at least 0.75 and offers groups seen at least twice across at least two sessions; without the extension
+it falls back to word overlap. At launch (`adoptRules`, not in review sessions) a group becomes a rule by itself only when the user typed the same
+sentence (case, punctuation and spacing aside) in two different recorded sessions, because no text comparison can
+prove that "enable X" and "disable X" mean the same; differently worded groups stay proposals for `learn accept`. At
+most 3 rules per launch and 10 per directory, each announced on stderr with its undo command. Corrections count only in the directory
+they were made in, so a root correction never creates a frontend rule. `learn forget RN` also declines the wording
+for good; `learn accept PN` and `learn dismiss PN` decide early, by stable group ID (the smallest correction ID in
+the group), never by list position. Rule text is checked again when it is loaded into a prompt. Opposite corrections
+("use X" and "do not use X", or "not X" versus "not Y") never group, and an accepted rule never suppresses its opposite. The embedding
+groups by shared wording, not by meaning ("avoid mocks" and "use real databases" will not group). sqlite-vec is MIT
+licensed; see THIRD_PARTY_NOTICES.md.
+
+Prompts count as the user's words only when the engine was started by a person: codeforge sets `CODEFORGE_HUMAN=1`
+for a launch with a terminal on both ends that is not nested in another codeforge session, and clears any inherited
+value, so a launch the agent makes from inside a session never earns it. This is process-environment provenance, not
+authentication: an agent that starts Empryo directly, outside codeforge, would not carry the marker either (Empryo
+reads the hook environment from codeforge), a headless launch has no terminal, so its prompts never count.
+
 Residual risk: habits come from commands the agent chose to run, so they are influenceable by the agent and
 not fully trusted. The agent cannot call `codeforge observe` (the guard refuses it), and a payload must name a
 session codeforge launched in the same repository, but it can still run its own verification commands. A habit may only

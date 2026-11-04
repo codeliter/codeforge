@@ -74,7 +74,7 @@ func TestMigration_UpgradesSessionsDatabase(t *testing.T) {
 	s, err := Open(t.Context(), dir)
 	require.NoError(t, err)
 	require.NoError(t, s.Put(t.Context(), Session{ID: "old", Mode: "chat", Profile: "codeforge-chat", Repository: "/repo"}))
-	for _, stmt := range []string{"DROP TABLE observations", "PRAGMA user_version = 1"} {
+	for _, stmt := range []string{"DROP TABLE observations", "DROP TABLE rules", "DROP TABLE dismissals", "PRAGMA user_version = 1"} {
 		_, err := s.db.ExecContext(t.Context(), stmt)
 		require.NoError(t, err)
 	}
@@ -88,7 +88,7 @@ func TestMigration_UpgradesSessionsDatabase(t *testing.T) {
 	require.Equal(t, "chat", got.Mode)
 	var version int
 	require.NoError(t, s.db.QueryRowContext(t.Context(), "PRAGMA user_version").Scan(&version))
-	require.Equal(t, 4, version)
+	require.Equal(t, 5, version)
 	_, err = s.Observations(t.Context(), "/repo", true)
 	require.NoError(t, err)
 }
@@ -124,7 +124,7 @@ func TestObservations_HookOutcomes(t *testing.T) {
 	for name, o := range map[string]Observation{
 		"passed with failure": {Kind: KindOutcome, Text: "x", Repository: "/repo", Origin: OriginHook, Status: StatusPassed, ExitCode: &one, CreatedAt: at},
 		"failed with success": {Kind: KindOutcome, Text: "x", Repository: "/repo", Origin: OriginHook, Status: StatusFailed, ExitCode: &zero, CreatedAt: at},
-		"hook correction":     {Kind: KindCorrection, Text: "x", Repository: "/repo", Origin: OriginHook, CreatedAt: at},
+		"unknown origin":      {Kind: KindCorrection, Text: "x", Repository: "/repo", Origin: "weird", CreatedAt: at},
 	} {
 		_, err := s.Record(t.Context(), o)
 		require.Error(t, err, name)
@@ -140,6 +140,8 @@ func TestMigration_KeepsObservationsWhenRebuilt(t *testing.T) {
 	// Return to the schema before the rebuild, as an upgrading user's database would be.
 	for _, stmt := range []string{
 		"DROP TABLE observations",
+		"DROP TABLE rules",
+		"DROP TABLE dismissals",
 		"CREATE TABLE observations (id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL, text TEXT NOT NULL, repository TEXT NOT NULL, session_id TEXT NOT NULL DEFAULT '', origin TEXT NOT NULL, status TEXT, exit_code INTEGER, duration_ms INTEGER, created_at TEXT NOT NULL, reverted_at TEXT)",
 		"INSERT INTO observations(kind, text, repository, origin, created_at) VALUES ('correction', 'keep me', '/repo', 'cli', '2026-11-02T13:00:00Z')",
 		"PRAGMA user_version = 3",

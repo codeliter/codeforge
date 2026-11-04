@@ -13,6 +13,7 @@ import (
 	migrationpath "path"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	// Register the pure-Go SQLite database/sql driver.
@@ -46,10 +47,18 @@ type Session struct {
 }
 
 // Store is a concrete SQLite session store.
-type Store struct{ db *sql.DB }
+type Store struct {
+	db  *sql.DB
+	vec atomic.Bool
+}
 
 // Open creates private storage and applies all pending migrations atomically.
 func Open(ctx context.Context, dir string) (*Store, error) {
+	return OpenWith(ctx, dir, Options{})
+}
+
+// OpenWith is Open with options.
+func OpenWith(ctx context.Context, dir string, opts Options) (*Store, error) {
 	ctx, cancel := context.WithTimeout(ctx, operationTimeout)
 	defer cancel()
 	if err := os.MkdirAll(dir, privateDir); err != nil {
@@ -87,6 +96,7 @@ func Open(ctx context.Context, dir string) (*Store, error) {
 	if err := s.initialize(ctx, migrations); err != nil {
 		return nil, errors.Join(err, s.Close())
 	}
+	s.initVector(ctx, opts)
 	return s, nil
 }
 

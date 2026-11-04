@@ -17,6 +17,16 @@ import (
 	"github.com/codeliter/codeforge/src/store"
 )
 
+const promptEvent = "UserPromptSubmit"
+
+// humanLaunchMarker is set in the environment of an engine that a person started from a terminal. It is what lets
+// a prompt count as the user's own words.
+const humanLaunchMarker = "CODEFORGE_HUMAN"
+
+// humanLaunch reports whether a launch was started by a person: there is a terminal on both ends, and codeforge
+// is not already running (a launch from inside a codeforge session is the agent's, whatever it claims).
+func humanLaunch(terminal, nested bool) bool { return terminal && !nested }
+
 const (
 	observeCommand    = "observe"
 	maxObserveBytes   = 256 * 1024
@@ -177,6 +187,7 @@ type observePayload struct {
 		Command string `json:"command"`
 	} `json:"tool_input"`
 	ToolResponse json.RawMessage `json:"tool_response"`
+	Prompt       string          `json:"prompt"`
 }
 
 // runObserve records one tool result. Only sessions codeforge launched are observed, never review sessions or
@@ -186,7 +197,14 @@ func runObserve(ctx context.Context, home string, stdin io.Reader) {
 		return
 	}
 	var in observePayload
-	if json.NewDecoder(io.LimitReader(stdin, maxObserveBytes)).Decode(&in) != nil || in.Tool != "Bash" {
+	if json.NewDecoder(io.LimitReader(stdin, maxObserveBytes)).Decode(&in) != nil {
+		return
+	}
+	if in.Event == promptEvent {
+		logPromptShape(home, in, observePrompt(ctx, home, in))
+		return
+	}
+	if in.Tool != "Bash" {
 		return
 	}
 	logShape(home, in, observeOne(ctx, home, in))
@@ -463,11 +481,23 @@ func withLearnedHabits(ctx context.Context, home string, args []string) []string
 		return args
 	}
 	habits := learnedHabits(ctx, home, repo, dir)
-	if len(habits) == 0 {
+	adoptRules(ctx, home, repo, dir, os.Stderr)
+	rules := learnedRules(ctx, home, repo, dir)
+	if len(habits) == 0 && len(rules) == 0 {
 		return args
 	}
-	block := habitsBlock(habits)
-	fmt.Fprintf(os.Stderr, "codeforge: using %d learned verification habit(s) (codeforge learn habits)\n", len(habits))
+	var block string
+	if len(habits) > 0 {
+		block = habitsBlock(habits)
+		fmt.Fprintf(os.Stderr, "codeforge: using %d learned verification habit(s) (codeforge learn habits)\n", len(habits))
+	}
+	if len(rules) > 0 {
+		if block != "" {
+			block += "\n"
+		}
+		block += rulesBlock(rules)
+		fmt.Fprintf(os.Stderr, "codeforge: using %d learned rule(s) (codeforge learn rules)\n", len(rules))
+	}
 	if i := slices.Index(args, "--system"); i >= 0 {
 		if i+1 >= len(args) {
 			return args // a --system with no value is Empryo's error to report, not ours to repair
