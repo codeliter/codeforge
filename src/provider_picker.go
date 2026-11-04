@@ -34,7 +34,7 @@ func pickProviderPolicy(cfg *Config, catalog []string) error {
 		if needsModelCatalog(*cfg) {
 			source := cloneConfig(*cfg)
 			if source.Providers != nil {
-				source.Providers.Fallback = ""
+				source.Providers.Fallback, source.Providers.Fallbacks = "", nil
 			}
 			plan, err := resolveModelPlan(source, catalog)
 			if err != nil {
@@ -49,7 +49,7 @@ func pickProviderPolicy(cfg *Config, catalog []string) error {
 	if len(ids) == 0 {
 		return errNoModels
 	}
-	primary, backup := ids[0], ""
+	primary, backup, extra := ids[0], "", []string(nil)
 	if slices.Contains(ids, "llmgateway") {
 		primary = "llmgateway"
 	} else if slices.Contains(ids, "copilot") {
@@ -59,7 +59,9 @@ func pickProviderPolicy(cfg *Config, catalog []string) error {
 		if slices.Contains(ids, providerID(cfg.Providers.Primary)) {
 			primary = providerID(cfg.Providers.Primary)
 		}
-		backup = providerID(cfg.Providers.Fallback)
+		if backups := cfg.Providers.Backups(); len(backups) > 0 {
+			backup, extra = backups[0], backups[1:]
+		}
 	} else if primary != "copilot" && slices.Contains(ids, "copilot") {
 		backup = "copilot"
 	}
@@ -83,16 +85,25 @@ func pickProviderPolicy(cfg *Config, catalog []string) error {
 			fallbacks = append(fallbacks, huh.NewOption(id, id))
 		}
 	}
-	if err := runForm("fallback provider", huh.NewSelect[string]().Title("Fallback provider").Description("Native settings stay untouched. A selected backup must already be configured in Empryo before a task starts.").Options(fallbacks...).Value(&backup)); err != nil {
+	if err := runForm("fallback provider", huh.NewSelect[string]().Title("First fallback provider").Description("Empryo switches to it when the primary fails or runs out of quota. Add more, in order, with codeforge provider set.").Options(fallbacks...).Value(&backup)); err != nil {
 		return err
 	}
-	useProviderDefaults(cfg, &ProviderPolicy{Primary: primary, Fallback: backup}, catalog)
+	var chain []string
+	if backup != "" {
+		chain = append(chain, backup)
+		// Keep further backups chosen with codeforge provider set, unless they are now primary or disconnected.
+		for _, id := range extra {
+			if id != primary && id != backup && slices.Contains(ids, id) && !slices.Contains(chain, id) {
+				chain = append(chain, id)
+			}
+		}
+	}
+	useProviderDefaults(cfg, newProviderPolicy(primary, chain), catalog)
 	return nil
 }
 func useProviderDefaults(cfg *Config, policy *ProviderPolicy, catalog []string) {
-	selected := *policy
-	cfg.Providers = &selected
-	primary := providerID(selected.Primary)
+	cfg.Providers = policy.clone()
+	primary := providerID(cfg.Providers.Primary)
 	for _, role := range roles {
 		refs := slices.Clone(current(*cfg, role.key))
 		for i, ref := range refs {
@@ -135,11 +146,20 @@ func providerModelOptions(catalog []string, policy *ProviderPolicy, saved ...str
 			continue
 		}
 		seen[value] = true
-		if value != id && policy.Fallback != "" {
-			if backup, err := catalogModel(value, policy.Fallback, catalog); err == nil {
-				label += " (backup: " + backup + ")"
+		if value != id && len(policy.Backups()) > 0 {
+			var backups []string
+			missing := false
+			for _, provider := range policy.Backups() {
+				if backup, err := catalogModel(value, provider, catalog); err == nil {
+					backups = append(backups, backup)
+				} else {
+					missing = true
+				}
+			}
+			if missing {
+				label += " (missing on a backup provider)"
 			} else {
-				label += " (no matching backup)"
+				label += " (backups: " + strings.Join(backups, " > ") + ")"
 			}
 		}
 		options = append(options, huh.NewOption(label, value))
@@ -162,7 +182,7 @@ func modelPlanPreview(plan ModelPlan) string {
 	var text strings.Builder
 	fmt.Fprintln(&text, "Resolved catalog IDs:")
 	for _, route := range plan.Routes {
-		backup := route.Fallback
+		backup := strings.Join(route.Fallbacks, " > ")
 		if backup == "" {
 			backup = "native policy (explicit override or no preference)"
 		}

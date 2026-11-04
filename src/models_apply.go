@@ -303,10 +303,13 @@ func plannedNativeFallbacks(plan ModelPlan, snapshot *nativeFallbackSnapshot, sc
 		desired[primary] = slices.Clone(backups)
 	}
 	for primary, backups := range plan.fallbackChains() {
-		for _, further := range desired[backups[0]] {
-			if further != primary {
-				desired[backups[0]] = []string{}
-				break
+		allowed := append([]string{primary}, backups...)
+		for _, backup := range backups {
+			for _, further := range desired[backup] {
+				if !slices.Contains(allowed, further) {
+					desired[backup] = []string{}
+					break
+				}
 			}
 		}
 	}

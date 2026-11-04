@@ -8,10 +8,7 @@ import (
 const inheritRouting = "@inherit"
 
 func cloneConfig(cfg Config) Config {
-	if cfg.Providers != nil {
-		policy := *cfg.Providers
-		cfg.Providers = &policy
-	}
+	cfg.Providers = cfg.Providers.clone()
 	cfg.Judges = slices.Clone(cfg.Judges)
 	cfg.Review.SecondOpinion = slices.Clone(cfg.Review.SecondOpinion)
 	cfg.Routing = maps.Clone(cfg.Routing)
@@ -23,7 +20,7 @@ func sameProviderPolicy(a, b *ProviderPolicy) bool {
 	if a == nil || b == nil {
 		return a == nil && b == nil
 	}
-	return providerID(a.Primary) == providerID(b.Primary) && providerID(a.Fallback) == providerID(b.Fallback)
+	return providerID(a.Primary) == providerID(b.Primary) && slices.Equal(a.Backups(), b.Backups())
 }
 func projectModelDelta(existing, baseline, edited Config) Config {
 	out := cloneConfig(existing)
@@ -31,8 +28,7 @@ func projectModelDelta(existing, baseline, edited Config) Config {
 		if edited.Providers == nil {
 			out.Providers = &ProviderPolicy{}
 		} else {
-			policy := *edited.Providers
-			out.Providers = &policy
+			out.Providers = edited.Providers.clone()
 		}
 	}
 	for _, role := range roles {

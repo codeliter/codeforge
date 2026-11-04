@@ -101,10 +101,13 @@ func Run(ctx context.Context, args []string) error {
 		args = slices.DeleteFunc(slices.Clone(args), func(a string) bool { return a == "--yes" || a == "-y" })
 	}
 
-	if len(args) > 0 && args[0] == "models" {
+	if len(args) > 0 && (args[0] == "models" || args[0] == "provider" || args[0] == "providers") {
 		bin, err := findEmpryo(filepath.Join(home, ".empryo"))
 		if err != nil {
 			return err
+		}
+		if args[0] != "models" {
+			return runProvider(ctx, home, bin, args[1:], os.Stdout)
 		}
 		return runModels(ctx, home, bin, args[1:])
 	}

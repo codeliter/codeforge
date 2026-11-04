@@ -71,10 +71,10 @@ func TestCheck_SelfStillGuarded(t *testing.T) {
 	for _, cmd := range []string{"codeforge trust", "codeforge init", "codeforge repair", "codeforge reinit", "codeforge learn correct x"} {
 		require.Equal(t, []string{RuleSelf}, rules(Check(cmd, false)), cmd)
 	}
-	for _, cmd := range []string{"codeforge models", "codeforge models recommend", "codeforge gate", "codeforge learn list"} {
+	for _, cmd := range []string{"codeforge models", "codeforge models recommend", "codeforge gate", "codeforge learn list", "codeforge provider", "codeforge provider show", "codeforge providers list"} {
 		require.Empty(t, rules(Check(cmd, false)), cmd)
 	}
-	for _, cmd := range []string{"codeforge models apply", "codeforge models fill", "codeforge models set model x/y", "codeforge models nope"} {
+	for _, cmd := range []string{"codeforge models apply", "codeforge models fill", "codeforge models set model x/y", "codeforge models nope", "codeforge provider set copilot", "codeforge providers clear", "codeforge provider show --global x"} {
 		require.Equal(t, []string{RuleSelf}, rules(Check(cmd, false)), cmd)
 	}
 	for _, cmd := range []string{

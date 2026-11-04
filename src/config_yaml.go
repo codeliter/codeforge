@@ -95,8 +95,7 @@ func decodeConfig(path string, data []byte) (Config, error) {
 
 func mergeConfig(base, local Config) Config {
 	if local.Providers != nil {
-		policy := *local.Providers
-		base.Providers = &policy
+		base.Providers = local.Providers.clone()
 	}
 	if local.Model != "" {
 		base.Model = local.Model

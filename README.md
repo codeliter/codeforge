@@ -109,7 +109,7 @@ codeforge models apply
 This changes two Empryo settings:
 
 - **`defaultModel`:** the model the Empryo screen selects when it opens. It is set to your coding model.
-- **`modelFallback`:** the backup for each model. Only changed if you chose a backup provider.
+- **`modelFallback`:** the backups for each model, in order. Only changed if you set backup providers.
 
 Here's what happens:
 
@@ -127,6 +127,40 @@ Nothing else is changed: other settings, logins, and billing are kept.
 **When does Codeforge change Empryo's settings?** Only during `models apply`. `models configure` and normal launches never do.
 
 **Using a backup provider?** Each launch checks that Empryo's backup settings match your choices. If they don't, Codeforge stops before using any model and asks you to run `models apply`. Empryo handles retries and switching to the backup.
+
+## Provider order and backups
+
+Connected to more than one provider? Choose which one Codeforge uses first, and which ones Empryo switches to when it fails or runs out of quota. The easiest way is the menu:
+
+```sh
+codeforge provider configure
+```
+
+It asks where to save (this project or all projects), then for the primary provider, then for backups one at a time in order. Pick **Done** when you have enough. Providers that lack one of your models are marked, so you can see which ones would fail before you choose. It shows the final order, saves it when you confirm, and offers to run `models apply` straight away.
+
+Prefer one line? This does the same without the menu:
+
+```sh
+codeforge provider set devpass copilot openrouter
+codeforge models apply
+```
+
+- The first name is the **primary**. Every model name, such as **Sonnet 5.5**, runs there.
+- The rest are **backups**, tried in the order you list them. You can list as many as you have connected.
+- `models apply` writes the order into Empryo and asks first. Until then, nothing changes in Empryo.
+
+Every backup must serve the same models as the primary, so a switch never changes which model does the work. If one doesn't, `provider set` names the missing model and saves nothing.
+
+| Command | What it does |
+| --- | --- |
+| `codeforge provider` | Shows the order and which providers are connected. |
+| `codeforge provider configure` | Picks the order from a menu. |
+| `codeforge provider set PRIMARY [BACKUP...]` | Saves a new order. |
+| `codeforge provider clear` | Removes the order. |
+
+Inside a Git project the order is saved for that project; add `--global` to save it for all projects, or `--project` to be explicit. Use `/login` in Empryo to connect another provider first.
+
+When Empryo switches, the chat says `Switched to fallback model: …`. It retries the same model a few times before switching, and tries a model that failed recently later than the others. See Empryo's [model fallback](https://empryo.com/docs/recipes/model-fallback) page for which errors cause a switch.
 
 ## 3. Give it a job
 

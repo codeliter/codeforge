@@ -14,17 +14,48 @@ var errAmbiguousModel = errors.New("model name is ambiguous; choose a primary pr
 var errProviderPolicy = errors.New("invalid provider policy")
 var errNativeFallback = errors.New("native fallback policy does not match Codeforge; native settings were not changed")
 
+// ProviderPolicy is the primary provider and the ordered backups Empryo switches to when it fails or runs out of quota.
+// Fallback is the original single-backup key; Fallbacks adds more. Backups() returns them in order, Fallback first.
 type ProviderPolicy struct {
-	Primary  string `json:"primary,omitempty" yaml:"primary,omitempty"`
-	Fallback string `json:"fallback,omitempty" yaml:"fallback,omitempty"`
+	Primary   string   `json:"primary,omitempty" yaml:"primary,omitempty"`
+	Fallback  string   `json:"fallback,omitempty" yaml:"fallback,omitempty"`
+	Fallbacks []string `json:"fallbacks,omitempty" yaml:"fallbacks,omitempty"`
+}
+
+// Backups is the ordered list of backup providers, with aliases normalised.
+func (policy *ProviderPolicy) Backups() []string {
+	if policy == nil {
+		return nil
+	}
+	var out []string
+	for _, id := range append([]string{policy.Fallback}, policy.Fallbacks...) {
+		if id = providerID(id); id != "" {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+func (policy *ProviderPolicy) clone() *ProviderPolicy {
+	if policy == nil {
+		return nil
+	}
+	out := *policy
+	out.Fallbacks = slices.Clone(policy.Fallbacks)
+	return &out
+}
+
+// newProviderPolicy stores an ordered chain in the list form.
+func newProviderPolicy(primary string, backups []string) *ProviderPolicy {
+	return &ProviderPolicy{Primary: providerID(primary), Fallbacks: slices.Clone(backups)}
 }
 
 type ModelRoute struct {
-	Role     string
-	Name     string
-	Primary  string
-	Fallback string
-	Explicit bool
+	Role      string
+	Name      string
+	Primary   string
+	Fallbacks []string
+	Explicit  bool
 }
 
 type ModelPlan struct {
@@ -51,15 +82,22 @@ func validateProviderPolicy(policy *ProviderPolicy) error {
 	if policy == nil {
 		return nil
 	}
-	primary, backup := providerID(policy.Primary), providerID(policy.Fallback)
-	if primary == "" && backup != "" {
+	primary, backups := providerID(policy.Primary), policy.Backups()
+	if primary == "" && len(backups) > 0 {
 		return fmt.Errorf("%w: fallback requires primary", errProviderPolicy)
 	}
-	if primary != "" && !validProviderID(primary) || backup != "" && !validProviderID(backup) {
+	if primary != "" && !validProviderID(primary) {
 		return errProviderPolicy
 	}
-	if backup != "" && primary == backup {
-		return fmt.Errorf("%w: primary and fallback must differ", errProviderPolicy)
+	seen := map[string]bool{primary: true}
+	for _, backup := range backups {
+		if !validProviderID(backup) {
+			return errProviderPolicy
+		}
+		if seen[backup] {
+			return fmt.Errorf("%w: %s is listed twice; primary and fallbacks must all differ", errProviderPolicy, backup)
+		}
+		seen[backup] = true
 	}
 	return nil
 }
@@ -127,20 +165,22 @@ func resolveModelReference(role, ref string, policy *ProviderPolicy, catalog []s
 		route.Primary, route.Explicit = ref, true
 		return route, nil
 	}
-	primary, backup := "", ""
+	primary := ""
 	if policy != nil {
-		primary, backup = providerID(policy.Primary), providerID(policy.Fallback)
+		primary = providerID(policy.Primary)
 	}
 	var err error
 	route.Primary, err = catalogModel(ref, primary, catalog)
 	if err != nil {
 		return route, fmt.Errorf("%s: %w", role, err)
 	}
-	if backup != "" {
-		route.Fallback, err = catalogModel(ref, backup, catalog)
+	// Every backup must serve the same model, so a switch never changes what the role runs.
+	for _, backup := range policy.Backups() {
+		id, err := catalogModel(ref, backup, catalog)
 		if err != nil {
 			return route, fmt.Errorf("%s fallback: %w", role, err)
 		}
+		route.Fallbacks = append(route.Fallbacks, id)
 	}
 	return route, nil
 }
@@ -196,8 +236,8 @@ func needsModelCatalog(cfg Config) bool {
 func (plan ModelPlan) fallbackChains() map[string][]string {
 	chains := make(map[string][]string)
 	for _, route := range plan.Routes {
-		if route.Fallback != "" {
-			chains[route.Primary] = []string{route.Fallback}
+		if len(route.Fallbacks) > 0 {
+			chains[route.Primary] = slices.Clone(route.Fallbacks)
 		}
 	}
 	return chains
@@ -216,9 +256,12 @@ func (plan ModelPlan) verifyFallbacks(native map[string][]string) error {
 		if !slices.Equal(native[primary], expected) {
 			failures = append(failures, fmt.Sprintf("%s needs exactly %v, found %v", primary, expected, native[primary]))
 		}
-		for _, further := range native[expected[0]] {
-			if further != primary {
-				failures = append(failures, fmt.Sprintf("backup %s also routes to undeclared model %s", expected[0], further))
+		allowed := append([]string{primary}, expected...)
+		for _, backup := range expected {
+			for _, further := range native[backup] {
+				if !slices.Contains(allowed, further) {
+					failures = append(failures, fmt.Sprintf("backup %s also routes to undeclared model %s", backup, further))
+				}
 			}
 		}
 	}

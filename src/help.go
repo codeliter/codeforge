@@ -33,6 +33,13 @@ Setup:
                                       Set Empryo's default model and backups after one confirmation; --recommended first saves recommendations
   models [recommend|set ROLE MODEL...]
                                      Show recommendations or set global Codeforge role choices
+  provider [show]                    Show the provider order and which providers are connected
+  provider configure [--project|--global]
+                                     Pick the primary and backups from a menu, in order, then optionally apply
+  provider set PRIMARY [BACKUP...] [--project|--global]
+                                     Use PRIMARY first; Empryo switches to each BACKUP in order on errors or quota
+  provider clear [--project|--global]
+                                     Remove the provider order
   trust                              Approve this repository's persona
   trust --models                     Approve this repository's model configuration by content hash
 

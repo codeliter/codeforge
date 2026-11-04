@@ -46,7 +46,7 @@ func nativeApplyFixture(t *testing.T, projectOverride bool) (bin, home, root str
 		require.NoError(t, err)
 		require.NoError(t, os.WriteFile(filepath.Join(dir, "config.json"), data, privateFile))
 	}
-	plan = ModelPlan{Routes: []ModelRoute{{Role: "model", Primary: "cf-config-probe/unit", Fallback: "cf-backup-probe/unit"}}}
+	plan = ModelPlan{Routes: []ModelRoute{{Role: "model", Primary: "cf-config-probe/unit", Fallbacks: []string{"cf-backup-probe/unit"}}}}
 	return bin, home, root, plan, calls
 }
 
@@ -127,7 +127,7 @@ func TestNativeDefaultModelApply(t *testing.T) {
 			if scope == "global" {
 				workspace = t.TempDir()
 			}
-			plan.Routes[0].Fallback = ""
+			plan.Routes[0].Fallbacks = nil
 			plan.Routes[0].Primary = "cf-backup-probe/unit"
 			globalBefore, projectBefore := nativeFixtureBytes(t, home), nativeFixtureBytes(t, root)
 			require.ErrorIs(t, applyModelPlan(t.Context(), bin, workspace, scope, plan, func(preview string) bool {
@@ -154,7 +154,7 @@ func TestNativeDefaultModelApply(t *testing.T) {
 
 func TestNativeModelApplyAsksOnceForFallbackAndDefaultModel(t *testing.T) {
 	bin, _, root, plan, calls := nativeApplyFixture(t, false)
-	plan.Routes[0].Primary, plan.Routes[0].Fallback = "cf-backup-probe/unit", "cf-config-probe/unit"
+	plan.Routes[0].Primary, plan.Routes[0].Fallbacks = "cf-backup-probe/unit", []string{"cf-config-probe/unit"}
 	approvals := 0
 	require.NoError(t, applyModelPlan(t.Context(), bin, root, "project", plan, func(preview string) bool {
 		approvals++

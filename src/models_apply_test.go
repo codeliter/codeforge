@@ -142,7 +142,7 @@ func TestModelApplyLoadsOnlySelectedSavedScope(t *testing.T) {
 }
 
 func TestPlannedNativeFallbacksPreserveUnrelatedRows(t *testing.T) {
-	plan := ModelPlan{Routes: []ModelRoute{{Role: "model", Primary: "primary/model", Fallback: "backup/model"}}}
+	plan := ModelPlan{Routes: []ModelRoute{{Role: "model", Primary: "primary/model", Fallbacks: []string{"backup/model"}}}}
 	native := &nativeFallbackSnapshot{Global: map[string][]string{"primary/model": {"old/model"}, "backup/model": {"extra/model"}, "other/model": {"other/backup"}}, Effective: map[string][]string{"primary/model": {"old/model"}, "backup/model": {"extra/model"}, "other/model": {"other/backup"}}}
 	global, err := plannedNativeFallbacks(plan, native, "global")
 	require.NoError(t, err)

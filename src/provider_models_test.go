@@ -21,13 +21,13 @@ func TestProviderModelResolution(t *testing.T) {
 		route, err := resolveModelReference("model", name, policy, providerTestCatalog())
 		require.NoError(t, err)
 		require.Equal(t, "llmgateway/claude-sonnet-5-5", route.Primary)
-		require.Equal(t, "copilot/claude-sonnet-5.5", route.Fallback)
+		require.Equal(t, []string{"copilot/claude-sonnet-5.5"}, route.Fallbacks)
 		require.False(t, route.Explicit)
 	}
 	route, err := resolveModelReference("expert", "custom/private-model", policy, nil)
 	require.NoError(t, err)
 	require.True(t, route.Explicit)
-	require.Empty(t, route.Fallback)
+	require.Empty(t, route.Fallbacks)
 	_, err = resolveModelReference("model", "Sonnet 5.5", nil, providerTestCatalog())
 	require.ErrorIs(t, err, errAmbiguousModel)
 	_, err = resolveModelReference("model", "unknown", policy, providerTestCatalog())
@@ -105,7 +105,7 @@ func TestProviderFallbackVerification(t *testing.T) {
 	chains[route.Primary] = append(chains[route.Primary], "custom/undeclared")
 	require.ErrorIs(t, plan.verifyFallbacks(chains), errNativeFallback)
 	chains = plan.fallbackChains()
-	chains[route.Fallback] = []string{"custom/undeclared"}
+	chains[route.Fallbacks[0]] = []string{"custom/undeclared"}
 	require.ErrorIs(t, plan.verifyFallbacks(chains), errNativeFallback)
 	require.NoError(t, verifyModelPlan(context.Background(), "/missing", "/missing", ModelPlan{}), "no preference requires no native process")
 }

@@ -3,11 +3,13 @@
 # Model names resolve through the primary provider; DevPass aliases llmgateway.
 providers:
   primary: devpass
-  fallback: copilot
+  fallbacks:   # tried in this order; set them with codeforge provider set
+    - copilot
 
-# A chosen backup must serve the same named model. Normal launches only verify.
+# Every backup must serve the same named model. Normal launches only verify.
 # Run codeforge models apply to choose scope, preview and confirm native fallback changes.
-# Omit fallback to inherit native policy without a Codeforge backup preference.
+# Omit fallbacks to inherit native policy without a Codeforge backup preference.
+# The older single "fallback: copilot" key still works and comes first.
 model: Sonnet 5.5
 expert: Opus 5.5
 judges:

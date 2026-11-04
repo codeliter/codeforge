@@ -64,7 +64,7 @@ func argumentsNeedCatalog(args []string) bool {
 func printModelPlan(w io.Writer, plan ModelPlan) {
 	fmt.Fprintln(w, "ROLE\tPRIMARY MODEL\tBACKUP")
 	for _, route := range plan.Routes {
-		backup := route.Fallback
+		backup := strings.Join(route.Fallbacks, " > ")
 		if backup == "" {
 			backup = "native Empryo policy"
 		}
