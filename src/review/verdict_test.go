@@ -23,6 +23,8 @@ func TestParseVerdict(t *testing.T) {
 		{"text after the block", `{"verdict":"pass"} trailing words`, "", true},
 		{"no verdict", "I could not finish.", "", true},
 		{"unknown verdict", `{"verdict":"maybe"}`, "", true},
+		{"answer wrapped as a json string", "Review done.\\n```json\\n{\\\"verdict\\\":\\\"fail\\\",\\\"blocking\\\":[{\\\"file\\\":\\\"a.go\\\",\\\"line\\\":3,\\\"what\\\":\\\"x\\\"}],\\\"should\\\":[]}\\n```\"}", VerdictFail, false},
+		{"wrapper with prose after the block is not trusted", "x\\n```json\\n{\\\"verdict\\\":\\\"pass\\\"}\\n``` and then a long trailing explanation", "", true},
 	}
 
 	for _, tt := range tests {

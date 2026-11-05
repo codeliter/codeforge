@@ -35,11 +35,51 @@ Keep the prose short. End your answer with exactly one fenced json block and not
 ` + "```json" + `
 {"verdict":"pass|fail","summary":"<one sentence>","blocking":[{"file":"path","line":1,"what":"what breaks and the fix"}],"should":[{"file":"path","line":1,"what":"..."}]}
 ` + "```" + `
-verdict is "fail" when and only when blocking is non-empty. Blocking means wrong behaviour, data loss, a security problem or an unsafe rollout. Style is never blocking.`
+verdict is "fail" when and only when blocking is non-empty. Blocking means wrong behaviour, data loss, a security problem or an unsafe rollout. Style is never blocking.
+A finding is Blocking, not a should, when the code produces a wrong result or crashes for some input, drops or reorders data, breaks a documented contract, or fails a test that ships with the change. "The tests would fail" or "the last line is lost" is Blocking even when no existing test covers that case. If you can state a concrete input that gets the wrong output, it is Blocking.`
+
+// stepBudget tells a reviewer how many tool steps it has. A run that reaches its limit without a verdict is a wasted
+// review, so it must answer before then.
+func stepBudget(steps int) string {
+	return fmt.Sprintf("\n\nYou have at most %d tool steps. Give your verdict by step %d at the latest: a review that runs out of steps returns nothing. "+
+		"The brief already holds the diff and changed files, so read more only when a finding depends on it.", steps, max(steps-1, 1))
+}
 
 // ParseVerdict reads only the final json object of the answer. Quoted diff content earlier in the answer
 // cannot spoof it, and a malformed final object is an error rather than a fall back to an older one.
+// One known wrapper is accepted: some models return the whole answer as a json string, so the verdict arrives
+// as an escaped fenced block at the very end of the answer.
 func ParseVerdict(out string) (Verdict, error) {
+	v, err := parseFinalObject(out)
+	if err == nil {
+		return v, nil
+	}
+	if inner, ok := escapedFencedBlock(out); ok {
+		if v2, err2 := parseFinalObject(inner); err2 == nil {
+			return v2, nil
+		}
+	}
+	return Verdict{}, err
+}
+
+// escapedFencedBlock extracts the last ` + "```json" + ` block when the answer is itself a json string, and only when
+// nothing but the wrapper's closing characters follows the block.
+func escapedFencedBlock(out string) (string, bool) {
+	const open, closing, maxTrailer = "```json", "```", 8
+	start := strings.LastIndex(out, open)
+	if start < 0 {
+		return "", false
+	}
+	rest := out[start+len(open):]
+	end := strings.LastIndex(rest, closing)
+	if end < 0 || len(strings.TrimSpace(rest[end+len(closing):])) > maxTrailer {
+		return "", false
+	}
+	block := strings.NewReplacer(`\"`, `"`, `\n`, "\n", `\t`, "\t", `\\`, `\`).Replace(rest[:end])
+	return strings.TrimSpace(block), true
+}
+
+func parseFinalObject(out string) (Verdict, error) {
 	body := strings.TrimSpace(out)
 	body = strings.TrimSpace(strings.TrimSuffix(body, "```"))
 

@@ -15,16 +15,16 @@ func TestRepoFromURL(t *testing.T) {
 }
 
 func TestReviewArgs_RejectsBadRef(t *testing.T) {
-	_, err := reviewArgs(t.Context(), ReviewConfig{}, []string{"42;rm"})
+	_, err := reviewArgs(t.Context(), ReviewConfig{}, nil, []string{"42;rm"})
 	require.ErrorIs(t, err, review.ErrNoPR)
 }
 
 func TestReviewArgs_RejectsEffortAboveCeiling(t *testing.T) {
-	_, err := reviewArgs(t.Context(), ReviewConfig{}, []string{"42", "--effort", "max"})
+	_, err := reviewArgs(t.Context(), ReviewConfig{}, nil, []string{"42", "--effort", "max"})
 	require.ErrorIs(t, err, errEffortAboveCeiling)
 }
 
 func TestReviewArgs_FlagValueIsNotThePR(t *testing.T) {
-	_, err := reviewArgs(t.Context(), ReviewConfig{}, []string{"--max-steps", "1", "x"})
+	_, err := reviewArgs(t.Context(), ReviewConfig{}, nil, []string{"--max-steps", "1", "x"})
 	require.ErrorIs(t, err, review.ErrNoPR, "x is the ref, not the --max-steps value")
 }

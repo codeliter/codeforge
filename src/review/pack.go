@@ -9,7 +9,6 @@ import (
 )
 
 const (
-	packFileBudget   = 60_000
 	maxFileBytes     = 20_000
 	maxSymbols       = 12
 	maxCallersPerSym = 8
@@ -18,11 +17,34 @@ const (
 // changedSymbol matches exported declarations on added or removed lines in Go, TS/JS and Python.
 var changedSymbol = regexp.MustCompile(`(?m)^[+-]\s*(?:func\s+(?:\([^)]*\)\s*)?([A-Z]\w*)|type\s+([A-Z]\w*)|export\s+(?:default\s+)?(?:async\s+)?(?:function|class|const|interface|type)\s+(\w+)|def\s+(\w+))`)
 
-// Pack front-loads what a juror would otherwise fetch with many tool calls: whole changed files and their callers.
-func Pack(ctx context.Context, r Runner, repo string, l Local) string {
+const (
+	docsPackBytes     = 10_000
+	smallPackBytes    = 20_000
+	standardPackBytes = 40_000
+	riskyPackBytes    = 60_000
+)
+
+// packBudget bounds the whole files sent with the brief: every byte is re-billed on each juror step, so a
+// small change gets a small pack and only risky ones get the full one. Docs-only changes get a little, because
+// a reviewer with no file in the brief spends its few steps fetching it and can run out before its verdict.
+func packBudget(t Tier) int {
+	switch t.Name {
+	case TierDocs.Name:
+		return docsPackBytes
+	case TierSmall.Name:
+		return smallPackBytes
+	case TierStandard.Name:
+		return standardPackBytes
+	}
+	return riskyPackBytes
+}
+
+// Pack front-loads what a juror would otherwise fetch with many tool calls: whole changed files and their callers,
+// within the tier's budget.
+func Pack(ctx context.Context, r Runner, repo string, l Local, t Tier) string {
 	var s strings.Builder
 
-	budget := packFileBudget
+	budget := packBudget(t)
 	s.WriteString("\n<changed_files>\n")
 	for _, f := range l.Files {
 		if secretName.MatchString(f) {

@@ -32,6 +32,48 @@ func repoWith(t *testing.T) string {
 	return dir
 }
 
+type seqReviewer struct {
+	name  string
+	outs  []string
+	calls *int
+}
+
+func (s seqReviewer) Name() string { return s.name }
+
+func (s seqReviewer) Review(context.Context, string) (string, error) {
+	i := min(*s.calls, len(s.outs)-1)
+	*s.calls++
+	return s.outs[i], nil
+}
+
+func TestJury_RetriesAReviewerThatReturnedNoVerdictOnce(t *testing.T) {
+	calls := 0
+	res, err := Jury(t.Context(), repoWith(t), "brief", []Reviewer{
+		seqReviewer{name: "x", outs: []string{"ran out of steps mid-sentence", pass}, calls: &calls},
+	}, JuryOptions{})
+	require.NoError(t, err)
+	require.True(t, res.Passed())
+	require.Equal(t, 2, calls)
+}
+
+func TestJury_RetryIsLimitedToOne(t *testing.T) {
+	calls := 0
+	_, err := Jury(t.Context(), repoWith(t), "brief", []Reviewer{
+		seqReviewer{name: "x", outs: []string{"no verdict", "still no verdict"}, calls: &calls},
+	}, JuryOptions{})
+	require.ErrorIs(t, err, ErrNoQuorum)
+	require.Equal(t, 2, calls, "one retry, never a loop")
+}
+
+func TestJury_AValidVerdictIsNotRetried(t *testing.T) {
+	calls := 0
+	_, err := Jury(t.Context(), repoWith(t), "brief", []Reviewer{
+		seqReviewer{name: "x", outs: []string{pass}, calls: &calls},
+	}, JuryOptions{})
+	require.NoError(t, err)
+	require.Equal(t, 1, calls)
+}
+
 func TestJury_AllPass(t *testing.T) {
 	res, err := Jury(t.Context(), repoWith(t), "brief", []Reviewer{
 		fakeReviewer{name: "x", out: pass}, fakeReviewer{name: "y", out: pass},

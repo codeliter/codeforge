@@ -323,9 +323,22 @@ flowchart TD
     Findings --> Draft
 ```
 
-Triage is based on actual files and diff content, not the PR title. A PR labelled “docs” can still be
-`standard`, for example when it also changes a root YAML configuration file. `docs` and `small` skip
-the jury; `standard` and `risky` request it.
+Triage sizes a review in two steps. File kinds that are infrastructure or schema (`.sql`, `.tf`, `.proto`,
+migrations, deploy and workflow folders, Dockerfiles) and docs-only changes are decided from paths alone. Every
+other change is scored by the cheap judges (`judges` in the config) on risk and complexity, from what the change
+does, not from which words it contains; the file-kind result is a floor the judges cannot lower. Ordinary
+behaviour changes get one reviewer; a second opinion needs a reason: one judge alarmed (risk 2) or logic the judges
+find hard to verify (complexity 2), and the full jury needs the judges to agree on risk 2. If no judge
+answers, the review uses the standard tier. `docs` and `small` skip the jury; `standard` asks one second opinion;
+`risky` asks all of them. `docs` and `small` get 4 and 5 tool steps, so cost stays bounded on the changes that need
+the least checking. Only `docs` uses `review.light_model`, because the reviewer rather than the classifier is most of
+a review's cost. Small code changes keep the normal reviewer: the light model let through a documented-contract
+violation there.
+
+After the reviewers answer, the gate runs the repository's own tests, whatever the reviewers voted: when a changed Go
+package fails `go test`, the gate blocks on that failure and caches no verdict. This is deterministic, costs no model
+call, and exists because a reviewer that found a defect could file it as a non-blocking finding while still returning
+pass.
 
 The interactive review's jury requirement is expressed in the brief and skill. The separate voluntary
 `codeforge gate` also has programmatic quorum, verdict parsing, cache, and finding-grounding checks.

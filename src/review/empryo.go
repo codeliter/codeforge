@@ -9,6 +9,8 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+
+	"github.com/codeliter/codeforge/src/effort"
 )
 
 var errEmpryoRun = errors.New("review: empryo run failed")
@@ -23,6 +25,8 @@ type EmpryoReviewer struct {
 	Tier  Tier
 	// Wrap runs the juror inside an OS sandbox that keeps the repository read-only.
 	Wrap func(ctx context.Context, dir string, argv []string) *exec.Cmd
+	// Sink, when set, receives the call's usage.
+	Sink func(effort.Usage)
 }
 
 func (r EmpryoReviewer) Name() string {
@@ -38,7 +42,7 @@ func (r EmpryoReviewer) Review(ctx context.Context, brief string) (string, error
 	if !r.Tier.Genome {
 		args = append(args, "--no-genome")
 	}
-	argv := append([]string{r.Bin}, append(args, brief+VerdictInstructions)...)
+	argv := append([]string{r.Bin}, append(args, brief+VerdictInstructions+stepBudget(r.Tier.MaxSteps))...)
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	if r.Wrap != nil {
 		cmd = r.Wrap(ctx, r.Dir, argv)
@@ -53,10 +57,7 @@ func (r EmpryoReviewer) Review(ctx context.Context, brief string) (string, error
 
 	// Empryo exits non-zero when a run hits its step limit but still prints the JSON result,
 	// often with a complete verdict, so the result is read before the exit code is judged.
-	var res struct {
-		Output string `json:"output"`
-		Error  string `json:"error"`
-	}
+	var res effort.EmpryoResult
 	if err := json.Unmarshal(out, &res); err != nil {
 		if runErr != nil {
 			msg := stderr.String()
@@ -66,6 +67,9 @@ func (r EmpryoReviewer) Review(ctx context.Context, brief string) (string, error
 			return "", fmt.Errorf("%w: %s: %w: %s", errEmpryoRun, r.Model, runErr, strings.TrimSpace(msg))
 		}
 		return "", fmt.Errorf("decoding %s result: %w", r.Model, err)
+	}
+	if r.Sink != nil {
+		r.Sink(effort.UsageOf(r.Model, res))
 	}
 	if _, err := ParseVerdict(res.Output); err == nil {
 		return res.Output, nil

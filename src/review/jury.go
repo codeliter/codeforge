@@ -15,6 +15,9 @@ import (
 
 var ErrNoQuorum = errors.New("review: too few reviewers returned a verdict")
 
+const retryNote = "\n\nYour previous answer to this review ended without a valid final json verdict block, so it could not be used. " +
+	"Review again, keep the prose to a few lines, and end with exactly one fenced json block."
+
 // Reviewer runs one independent review and returns its raw answer.
 type Reviewer interface {
 	Name() string
@@ -43,6 +46,11 @@ type JuryResult struct {
 	Blocking   []Finding
 	Unverified []Finding
 	Should     []Finding
+}
+
+// WithTests marks a result whose changed packages were verified by running their tests.
+func (r JuryResult) WithTests() bool {
+	return slices.ContainsFunc(r.Blocking, func(f Finding) bool { return strings.HasPrefix(f.What, "the repository's own tests fail") })
 }
 
 func (r JuryResult) Passed() bool {
@@ -81,6 +89,17 @@ func Jury(ctx context.Context, repo, brief string, reviewers []Reviewer, opts Ju
 			}
 
 			votes[i].Verdict, votes[i].Err = ParseVerdict(out)
+			// A review that ended without a readable verdict is paid for and worth nothing, and rerunning the whole
+			// gate costs far more than asking this one reviewer again. Once, and never after a cancel or a real error.
+			if errors.Is(votes[i].Err, ErrNoVerdict) && ctx.Err() == nil {
+				retry, rerr := rv.Review(ctx, brief+retryNote)
+				if rerr != nil {
+					votes[i].Err, votes[i].Cancelled = rerr, ctx.Err() != nil
+					return
+				}
+				out = retry
+				votes[i].Verdict, votes[i].Err = ParseVerdict(out)
+			}
 			if votes[i].Err != nil {
 				votes[i].Err = fmt.Errorf("%w; answer ended with: %q", votes[i].Err, tail(out))
 				return

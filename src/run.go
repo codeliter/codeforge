@@ -412,7 +412,7 @@ func modeArgs(ctx context.Context, bin string, cfg Config, cmd string, args []st
 	var err error
 	switch cmd {
 	case modeReview:
-		args, err = reviewArgs(ctx, cfg.Review, args)
+		args, err = reviewArgs(ctx, cfg.Review, judgesFor(bin, cfg.Judges, nil), args)
 		return modeReview, args, err
 	case modeWork:
 		// Skip effort judges for conversational work; explicit effort still wins.

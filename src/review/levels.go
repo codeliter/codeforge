@@ -47,16 +47,20 @@ func fitEffort(want string, supported []string) string {
 // supportedEfforts asks Empryo once per model and process; Empryo lists valid levels when it rejects one.
 func supportedEfforts(ctx context.Context, bin, model string) []string {
 	levelsMu.Lock()
-	defer levelsMu.Unlock()
-	if lv, ok := levelsCache[model]; ok {
+	lv, ok := levelsCache[model]
+	levelsMu.Unlock()
+	if ok {
 		return lv
 	}
 
+	// The probe runs without the lock so jurors for different models probe in parallel, not one after another.
 	var out bytes.Buffer
 	cmd := exec.CommandContext(ctx, bin, "--headless", "--no-profile", "--no-genome", "--model", model, "--effort", "codeforge-probe", "x")
 	cmd.Stdout, cmd.Stderr = &out, &out
 	if err := cmd.Run(); err == nil {
+		levelsMu.Lock()
 		levelsCache[model] = nil
+		levelsMu.Unlock()
 		return nil
 	}
 
@@ -66,6 +70,8 @@ func supportedEfforts(ctx context.Context, bin, model string) []string {
 			levels = append(levels, strings.TrimSpace(lvl))
 		}
 	}
+	levelsMu.Lock()
 	levelsCache[model] = levels
+	levelsMu.Unlock()
 	return levels
 }

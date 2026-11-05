@@ -16,6 +16,9 @@ var InitPrompt string
 //go:embed prompts/rubric.md
 var Rubric string
 
+//go:embed prompts/review-rubric.md
+var ReviewRubric string
+
 //go:embed prompts/repo-persona.md
 var RepoPersonaTemplate string
 

@@ -115,6 +115,9 @@ func mergeConfig(base, local Config) Config {
 	if local.Review.Model != "" {
 		base.Review.Model = local.Review.Model
 	}
+	if local.Review.Light != "" {
+		base.Review.Light = local.Review.Light
+	}
 	if local.Review.SecondOpinion != nil {
 		base.Review.SecondOpinion = local.Review.SecondOpinion
 	}

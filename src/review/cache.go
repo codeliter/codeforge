@@ -65,6 +65,11 @@ func (c Cache) Put(key string, v Verdict, now time.Time) error {
 	return nil
 }
 
+// Delete removes one cached verdict; a missing file is not an error.
+func (c Cache) Delete(key string) {
+	os.Remove(filepath.Join(c.Dir, key+".json"))
+}
+
 // Prune drops expired verdicts so the cache stays small.
 func (c Cache) Prune(now time.Time) {
 	entries, err := os.ReadDir(c.Dir)

@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
@@ -125,7 +126,8 @@ func TestModesCLI(t *testing.T) {
 				}
 				data, err := os.ReadFile(capture)
 				require.NoError(t, err)
-				calls := strings.Split(string(data), "BEGIN\n")[1:]
+				// Triage judges run with --no-profile before the launch; only launches count as submissions.
+				calls := slices.DeleteFunc(strings.Split(string(data), "BEGIN\n")[1:], func(c string) bool { return strings.Contains(c, "--no-profile\n") })
 				wantCalls := 1
 				if variant == "tui" {
 					wantCalls = 2

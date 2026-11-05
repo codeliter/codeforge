@@ -20,6 +20,10 @@ review:
   model: gpt-6.1-sol
   second_opinion:
     - gemini-3.8-flash
+  # Cheaper reviewer for docs-only changes; defaults to deepseek-v4.1-flash. The reviewer is most of a review's
+  # cost, so this is a big lever on gate spend. Code changes always use review.model. Set it to review.model's
+  # value to turn it off.
+  light_model: deepseek-v4.1-flash
 init: Sonnet 5.5
 
 # Explicit provider/model values are advanced overrides; they keep native fallback.

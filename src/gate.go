@@ -52,15 +52,49 @@ func runGate(ctx context.Context, home, bin string, cfg Config, w io.Writer) err
 		return fmt.Errorf("collecting changes: %w", err)
 	}
 
-	// Simple changes get one reviewer; complicated or high-risk ones get the whole jury.
-	tier := review.Triage(local.Diff, local.Files)
-	models := slices.Concat([]string{cfg.Review.Model}, review.JuryFor(tier, cfg.Review.SecondOpinion))
-	reviewers := make([]review.Reviewer, len(models))
-	for i, m := range models {
-		reviewers[i] = review.EmpryoReviewer{Bin: bin, Model: m, Dir: repo, Tier: tier, Wrap: sandboxCommand}
+	// A follow-up round after blocking findings sends the findings and only the files changed since, not the whole pack,
+	// and keeps the tier the earlier round was judged at instead of paying the judges to size the same work again.
+	usage := &gateUsage{}
+	rounds := review.Rounds{Dir: filepath.Join(configDir(home), "review-rounds")}
+	roundKey := review.RoundKey(repo, local.Branch, local.Base)
+	digests := review.FileDigests(repo, local.Files)
+	packed, note := local, ""
+	var tier review.Tier
+	var why string
+	followUp := false
+	if prev, ok := rounds.Load(roundKey, time.Now()); ok && len(prev.Blocking) > 0 && prev.Tree != tree {
+		if changed := prev.ChangedSince(digests); len(changed) > 0 && len(changed) < len(local.Files) {
+			packed.Files = changed
+			packed.Diff = review.FilterDiff(local.Diff, changed)
+			note = review.DeltaNote(prev, changed)
+			followUp = true
+			fmt.Fprintf(w, "codeforge gate: follow-up round, %d of %d files changed since the last review\n", len(changed), len(local.Files))
+			if t, ok := review.Reuse(prev.Tier, local.Diff, local.Files); ok {
+				tier, why = t, "tier kept from the previous round"
+			}
+		}
 	}
 
-	brief := review.PromptLocal(local, tier, nil) + review.Pack(ctx, review.ExecRunner{}, repo, local)
+	// Cheap judges read the change and size the review; simple changes get one reviewer, risky ones the jury.
+	if tier.Name == "" {
+		classes := review.TierCache{Dir: filepath.Join(configDir(home), "review-cache")}
+		classKey := review.CacheKey(tree, strings.Join(cfg.Judges, ","), assets.ReviewRubric)
+		var seen bool
+		if tier, why, seen = classes.Get(classKey, time.Now()); !seen {
+			tier, why = review.Classify(ctx, judgesFor(bin, cfg.Judges, usage.add), local.Diff, local.Files)
+			classes.Put(classKey, tier, why, time.Now())
+		}
+	}
+	if why != "" {
+		fmt.Fprintf(w, "codeforge gate: %s tier: %s\n", tier.Name, why)
+	}
+	models := slices.Concat([]string{reviewerFor(tier, cfg.Review)}, review.JuryFor(tier, cfg.Review.SecondOpinion))
+	reviewers := make([]review.Reviewer, len(models))
+	for i, m := range models {
+		reviewers[i] = review.EmpryoReviewer{Bin: bin, Model: m, Dir: repo, Tier: tier, Wrap: sandboxCommand, Sink: usage.add}
+	}
+
+	brief := review.PromptLocal(local, tier, nil) + note + review.Pack(ctx, review.ExecRunner{}, repo, packed, tier)
 	rubric := review.CacheKey(assets.Gate, review.VerdictInstructions, tier.Name)
 	opts := review.JuryOptions{
 		Cache:     &review.Cache{Dir: filepath.Join(configDir(home), "review-cache")},
@@ -74,8 +108,19 @@ func runGate(ctx context.Context, home, bin string, cfg Config, w io.Writer) err
 	fmt.Fprintf(w, "codeforge gate: %s tier (%s effort), %d reviewers on %s vs %s: %s\n",
 		tier.Name, tier.Effort, len(reviewers), orBranch(local.Branch), local.Base, strings.Join(models, ", "))
 	res, err := review.Jury(ctx, repo, brief, reviewers, opts)
+	// Deterministic backstop, run on every review rather than only on a pass: the code's own tests are evidence the
+	// repository gives, and a reviewer that missed a failing test is wrong however it voted. It runs after the Jury for
+	// the same packages, so most of the compile cost is already paid.
+	if err == nil {
+		if findings := review.Verify(ctx, review.ExecRunner{}, repo, packed.Files); len(findings) > 0 {
+			res.Blocking = append(res.Blocking, findings...)
+			fmt.Fprintf(w, "codeforge gate: the changed packages' tests fail, so the review cannot pass\n")
+		}
+	}
 	report(w, res)
-	fmt.Fprintf(w, "codeforge gate: done in %s\n", time.Since(start).Round(time.Second))
+	fmt.Fprintf(w, "codeforge gate: done in %s; %s\n", time.Since(start).Round(time.Second), usage.totals())
+	usage.record(gateRecord{At: time.Now(), Tier: tier.Name, Models: models, Files: len(packed.Files), Brief: len(brief),
+		Elapsed: time.Since(start).Seconds(), Passed: err == nil && res.Passed(), Blocking: len(res.Blocking), FollowUp: followUp})
 	if err != nil {
 		return fmt.Errorf("gate: %w", err)
 	}
@@ -83,6 +128,20 @@ func runGate(ctx context.Context, home, bin string, cfg Config, w io.Writer) err
 	// Verdicts are cached for either outcome, but only if the tree they describe is still the one on disk.
 	if after, err := guard.TreeID(ctx, repo); err == nil && after == tree {
 		review.SaveVerdicts(res, opts)
+		// The tests failed, so no verdict is cached: every rerun must re-verify instead of replaying a pass the repository
+		// has already contradicted.
+		if res.WithTests() {
+			for _, m := range models {
+				opts.Cache.Delete(opts.CacheKey(m))
+			}
+		}
+	}
+	if after, err := guard.TreeID(ctx, repo); err == nil && after == tree {
+		if res.Passed() {
+			rounds.Clear(roundKey)
+		} else if err := rounds.Save(roundKey, review.Round{Tree: tree, Tier: tier.Name, Files: digests, Blocking: res.Blocking, At: time.Now()}); err != nil {
+			fmt.Fprintln(w, "codeforge gate: could not save the review round:", err)
+		}
 	}
 	if !res.Passed() {
 		return fmt.Errorf("%w: %d blocking finding(s); fix them and run `codeforge gate` again", errGateFailed, len(res.Blocking))
@@ -111,12 +170,28 @@ func runGate(ctx context.Context, home, bin string, cfg Config, w io.Writer) err
 		return fmt.Errorf("gate: %w", err)
 	}
 
+	// A follow-up round only reviewed the files that changed since the last blocking review, so say so: the pass covers
+	// the tree, but nobody should read it as someone having read the whole change.
+	coverage := ""
+	if followUp {
+		coverage = fmt.Sprintf(" after a follow-up check of %d changed file(s)", len(packed.Files))
+	}
+
 	if commit == "" {
-		fmt.Fprintln(w, "codeforge gate: PASS for your uncommitted changes.")
+		fmt.Fprintf(w, "codeforge gate: PASS%s for your uncommitted changes.\n", coverage)
 		return nil
 	}
-	fmt.Fprintf(w, "codeforge gate: PASS for commit %.8s.\n", commit)
+	fmt.Fprintf(w, "codeforge gate: PASS%s for commit %.8s.\n", coverage, commit)
 	return nil
+}
+
+// reviewerFor picks the reviewer for a tier: the light model for docs when one is set, else the normal reviewer.
+// The jury for bigger tiers always keeps the normal reviewer first.
+func reviewerFor(t review.Tier, rc ReviewConfig) string {
+	if t.Light && rc.Light != "" {
+		return rc.Light
+	}
+	return rc.Model
 }
 
 func report(w io.Writer, res review.JuryResult) {
