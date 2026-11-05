@@ -75,6 +75,11 @@ func Run(ctx context.Context, args []string) error {
 		}
 	}
 
+	// A mistyped mode such as `codeforge zsh` stops here, before any repair, model lookup or paid judge call.
+	if err := unknownCommand(args); err != nil {
+		return err
+	}
+
 	// doctor only reads state, so it runs before automatic repair, project, config and Empryo preparation.
 	if len(args) > 0 && args[0] == "doctor" {
 		if len(args) > 1 {

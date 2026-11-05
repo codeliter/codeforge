@@ -17,6 +17,17 @@ func TestValidMode(t *testing.T) {
 	require.ErrorIs(t, validMode("pair"), errUnknownMode)
 }
 
+func TestUnknownCommand(t *testing.T) {
+	for _, args := range [][]string{{"zsh"}, {"chta"}, {"zsh", "--model", "x"}} {
+		err := unknownCommand(args)
+		require.ErrorIs(t, err, errUnknownMode, args)
+		require.ErrorContains(t, err, "codeforge chat "+args[0])
+	}
+	for _, args := range [][]string{nil, {"fix the login bug"}, {"fix", "the", "bug"}, {"--ticket", "ABC-1"}, {"#42"}, {"https://github.com/a/b/pull/1"}, {"Refactor"}, {"--resume", "abc"}} {
+		require.NoError(t, unknownCommand(args), args)
+	}
+}
+
 func TestPickMode(t *testing.T) {
 	got, err := pickMode(Config{DefaultMode: modeReview}, []string{"anything"})
 	require.NoError(t, err)

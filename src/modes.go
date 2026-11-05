@@ -7,6 +7,7 @@ import (
 	"os"
 	"regexp"
 	"slices"
+	"strings"
 
 	"github.com/charmbracelet/huh"
 	"golang.org/x/term"
@@ -51,6 +52,24 @@ func validMode(mode string) error {
 		return nil
 	}
 	return fmt.Errorf("%w %q; use %v", errUnknownMode, mode, modes)
+}
+
+// commands are the words Run handles before or instead of a mode; any of them is never a task.
+var commands = []string{"start", "respond", "init", "setup", "gate", "trust", "doctor", "repair", "reinit", "models",
+	"provider", "providers", "learn", "allow", "version", "help"}
+
+// commandWord is what a mistyped mode or command looks like: one lowercase word, as opposed to a task in prose.
+var commandWord = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
+
+// unknownCommand rejects a lone word that is not a mode or command, such as `codeforge zsh`. Without it the word
+// becomes a task and is sent to the judges and the model, which costs money and does nothing useful. A task of one
+// word can still be given after an explicit mode, as in `codeforge chat zsh`.
+func unknownCommand(args []string) error {
+	if len(args) == 0 || strings.HasPrefix(args[0], "-") || !commandWord.MatchString(args[0]) || promptOf(args) != args[0] ||
+		slices.Contains(modes, args[0]) || slices.Contains(commands, args[0]) {
+		return nil
+	}
+	return fmt.Errorf("%w %q; use one of %v or a command from `codeforge help`. For a one-word task, name the mode: codeforge chat %s", errUnknownMode, args[0], modes, args[0])
 }
 
 var (
