@@ -97,9 +97,10 @@ func runGate(ctx context.Context, home, bin string, cfg Config, w io.Writer) err
 	brief := review.PromptLocal(local, tier, nil) + note + review.Pack(ctx, review.ExecRunner{}, repo, packed, tier)
 	rubric := review.CacheKey(assets.Gate, review.VerdictInstructions, tier.Name)
 	opts := review.JuryOptions{
-		Cache:     &review.Cache{Dir: filepath.Join(configDir(home), "review-cache")},
-		CacheKey:  func(model string) string { return review.CacheKey(tree, model, rubric) },
-		StopEarly: true,
+		Cache:    &review.Cache{Dir: filepath.Join(configDir(home), "review-cache")},
+		CacheKey: func(model string) string { return review.CacheKey(tree, model, rubric) },
+		// Every reviewer finishes: cancelling the others at the first blocker is why findings arrived one round at a time.
+		StopEarly: false,
 		Now:       time.Now(),
 	}
 	opts.Cache.Prune(opts.Now)
