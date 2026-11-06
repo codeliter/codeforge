@@ -15,6 +15,8 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/huh"
+
+	"github.com/codeliter/codeforge/src/effort"
 )
 
 const empryoInstaller = "https://empryo.com/install.sh"
@@ -136,7 +138,10 @@ func ensureSignedIn(ctx context.Context, bin string, opts setupOptions) error {
 }
 
 func readyProviders(ctx context.Context, bin string) []string {
-	out, err := exec.CommandContext(ctx, bin, "--list-providers").Output()
+	cmd := exec.CommandContext(ctx, bin, "--list-providers")
+	effort.Bound(cmd)
+	out, err := cmd.Output()
+	effort.Reap(cmd)
 	if err != nil {
 		return nil
 	}

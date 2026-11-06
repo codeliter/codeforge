@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -218,4 +219,41 @@ func TestClassify_RiskyFloorSkipsTheJudges(t *testing.T) {
 	require.Equal(t, TierRisky.Name, tier.Name)
 	require.Zero(t, calls, "no judge is paid when no answer could change the tier")
 	require.Contains(t, why, "judges were skipped")
+}
+
+func TestTierTimed(t *testing.T) {
+	tests := []struct {
+		tier              Tier
+		wantSteps         int
+		wantEffort        string
+		wantJury, wantNam bool
+	}{
+		{TierDocs, 4, "low", false, true},
+		{TierSmall, 5, "medium", false, true},
+		{TierStandard, 8, "medium", true, true},
+		{TierRisky, 8, "medium", true, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.tier.Name, func(t *testing.T) {
+			got := tt.tier.Timed()
+			require.Equal(t, tt.wantSteps, got.MaxSteps)
+			require.Equal(t, tt.wantEffort, got.Effort)
+			require.Equal(t, tt.wantJury, got.Jury, "the tier still decides who reviews")
+			panel := got.Panel()
+			require.False(t, panel.Jury)
+			require.Empty(t, panel.Name, "no triage line, so the brief never asks the model for a jury")
+		})
+	}
+}
+
+func TestTimeNote(t *testing.T) {
+	require.Contains(t, TimeNote(75*time.Second), "75 seconds")
+	require.Contains(t, WithBudget("brief", TierRisky.Timed(), 60*time.Second), "at most 8 tool steps")
+	require.Equal(t, []string{"--max-steps", "8", "--timeout", "60000"}, TierRisky.Timed().Limits(60*time.Second))
+	require.Contains(t, LimitNote(), "120 seconds")
+}
+
+func TestEffortFor_FitsTheTimedDefaultToTheModel(t *testing.T) {
+	require.Equal(t, "low", fitEffort("medium", []string{"off", "low", "high", "max"}), "a model without medium gets the level below it")
+	require.Equal(t, "medium", EffortFor(t.Context(), "/nonexistent/empryo", "unprobed-model", "medium"), "a failed probe leaves the default")
 }

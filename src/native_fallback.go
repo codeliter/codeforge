@@ -10,6 +10,8 @@ import (
 	"os"
 	"os/exec"
 	"time"
+
+	"github.com/codeliter/codeforge/src/effort"
 )
 
 var errNativeConfigRead = errors.New("cannot verify Empryo's native fallback configuration")
@@ -62,6 +64,7 @@ func withNativeConfig(parent context.Context, bin, workspace string, use func(na
 	cmd.Dir = workspace
 	cmd.Env = append(os.Environ(), "EMPRYO_NO_GENOME=1", "CODEFORGE_GUARD=review", "EMPRYO_HOOK_ENV=CODEFORGE_*", "CODEFORGE_LAUNCH=0", "CODEFORGE_RESUME_HINT=launcher")
 	cmd.Stderr = io.Discard
+	effort.Bound(cmd)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return fmt.Errorf("%w: %w", errNativeConfigRead, err)
@@ -75,8 +78,13 @@ func withNativeConfig(parent context.Context, bin, workspace string, use func(na
 		_ = stdin.Close()
 		return fmt.Errorf("%w: %w", errNativeConfigRead, err)
 	}
+	// A child that keeps stdout open would leave the scanner blocked after the process is killed; closing the pipes on
+	// cancellation unblocks it.
+	stop := context.AfterFunc(ctx, func() { _ = stdin.Close(); _ = stdout.Close() })
+	defer stop()
 	defer func() {
 		_ = stdin.Close()
+		defer effort.Reap(cmd)
 		done := make(chan error, 1)
 		go func() { done <- cmd.Wait() }()
 		select {

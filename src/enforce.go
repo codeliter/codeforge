@@ -13,6 +13,8 @@ import (
 	"syscall"
 
 	"github.com/codeliter/codeforge/src/guard"
+
+	"github.com/codeliter/codeforge/src/effort"
 )
 
 const (
@@ -24,7 +26,10 @@ const (
 var errNoRealGH = errors.New("gh is not installed")
 
 func gitConfig(ctx context.Context, repo, key string) string {
-	out, err := exec.CommandContext(ctx, "git", "-C", repo, "config", "--get", key).Output()
+	cmd := exec.CommandContext(ctx, "git", "-C", repo, "config", "--get", key)
+	effort.Bound(cmd)
+	out, err := cmd.Output()
+	effort.Reap(cmd)
 	if err != nil {
 		return ""
 	}
@@ -112,7 +117,11 @@ func ensureEnforced(ctx context.Context, _ string) error {
 	if gitConfig(ctx, repo, "hook."+hookName+".command") == "" {
 		return nil
 	}
-	if err := exec.CommandContext(ctx, "git", "-C", repo, "config", "--local", "--remove-section", "hook."+hookName).Run(); err != nil {
+	remove := exec.CommandContext(ctx, "git", "-C", repo, "config", "--local", "--remove-section", "hook."+hookName)
+	effort.Bound(remove)
+	err = remove.Run()
+	effort.Reap(remove)
+	if err != nil {
 		return fmt.Errorf("removing the old codeforge pre-push hook: %w", err)
 	}
 	return nil

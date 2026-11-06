@@ -71,10 +71,12 @@ func (j EmpryoJudge) Ask(ctx context.Context, system, user string) (string, erro
 		"--headless", "--json", "--no-profile", "--no-genome",
 		"--model", j.Model, "--effort", "low", "--max-steps", "1",
 		"--system", system, user)
+	Bound(cmd)
 
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, runErr := cmd.Output()
+	Reap(cmd)
 
 	var res EmpryoResult
 	if err := json.Unmarshal(out, &res); err != nil {

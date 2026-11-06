@@ -126,8 +126,10 @@ func TestModesCLI(t *testing.T) {
 				}
 				data, err := os.ReadFile(capture)
 				require.NoError(t, err)
-				// Triage judges run with --no-profile before the launch; only launches count as submissions.
-				calls := slices.DeleteFunc(strings.Split(string(data), "BEGIN\n")[1:], func(c string) bool { return strings.Contains(c, "--no-profile\n") })
+				// Triage judges (--no-profile) and the parallel jurors (the gate profile) run before the launch; only launches count as submissions.
+				calls := slices.DeleteFunc(strings.Split(string(data), "BEGIN\n")[1:], func(c string) bool {
+					return strings.Contains(c, "--no-profile\n") || strings.Contains(c, "--profile\ncodeforge-gate\n")
+				})
 				wantCalls := 1
 				if variant == "tui" {
 					wantCalls = 2

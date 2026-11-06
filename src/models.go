@@ -13,6 +13,8 @@ import (
 	"slices"
 	"strings"
 	"text/tabwriter"
+
+	"github.com/codeliter/codeforge/src/effort"
 )
 
 var (
@@ -69,7 +71,10 @@ func suggestedModel(id string) bool {
 	return !strings.HasPrefix(modelReferenceKey(modelName(id)), "gemini-4-argon")
 }
 func availableModels(ctx context.Context, bin string) ([]string, error) {
-	out, err := exec.CommandContext(ctx, bin, "--list-models").Output()
+	cmd := exec.CommandContext(ctx, bin, "--list-models")
+	effort.Bound(cmd)
+	out, err := cmd.Output()
+	effort.Reap(cmd)
 	if err != nil {
 		return nil, fmt.Errorf("listing models: %w", err)
 	}

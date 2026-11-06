@@ -9,12 +9,17 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/codeliter/codeforge/src/effort"
 )
 
 // TreeID fingerprints HEAD plus every uncommitted and untracked change, so a gate pass covers exactly what was reviewed.
 func TreeID(ctx context.Context, repo string) (string, error) {
 	git := func(args ...string) ([]byte, error) {
-		out, err := exec.CommandContext(ctx, "git", append([]string{"-C", repo}, args...)...).Output()
+		cmd := exec.CommandContext(ctx, "git", append([]string{"-C", repo}, args...)...)
+		effort.Bound(cmd)
+		out, err := cmd.Output()
+		effort.Reap(cmd)
 		if err != nil {
 			return nil, fmt.Errorf("git %s: %w", args[0], err)
 		}
@@ -55,7 +60,11 @@ func TreeID(ctx context.Context, repo string) (string, error) {
 }
 
 func RepoRoot(ctx context.Context, dir string) (string, error) {
-	out, err := exec.CommandContext(ctx, "git", "-C", dir, "rev-parse", "--show-toplevel").Output()
+	cmd := exec.CommandContext(ctx, "git", "-C", dir, "rev-parse", "--show-toplevel")
+	// A git wrapper that leaves a child holding the pipe, or running on, must not outlive the context.
+	effort.Bound(cmd)
+	out, err := cmd.Output()
+	effort.Reap(cmd)
 	if err != nil {
 		return "", fmt.Errorf("finding repository root: %w", err)
 	}

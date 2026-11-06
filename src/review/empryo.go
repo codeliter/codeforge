@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/codeliter/codeforge/src/effort"
 )
@@ -42,11 +43,20 @@ func (r EmpryoReviewer) Review(ctx context.Context, brief string) (string, error
 	if !r.Tier.Genome {
 		args = append(args, "--no-genome")
 	}
-	argv := append([]string{r.Bin}, append(args, brief+VerdictInstructions+stepBudget(r.Tier.MaxSteps))...)
+	// A juror stops itself a little before the hard kill, so a slow one still hands back the text it has.
+	if d, ok := ctx.Deadline(); ok {
+		args = append(args, "--timeout", strconv.FormatInt(max(time.Until(d)-KillGrace, time.Second).Milliseconds(), 10))
+	}
+	prompt := brief + VerdictInstructions + stepBudget(r.Tier.MaxSteps)
+	if d, ok := ctx.Deadline(); ok {
+		prompt += "\n\n" + TimeNote(max(time.Until(d)-KillGrace, time.Second))
+	}
+	argv := append([]string{r.Bin}, append(args, prompt)...)
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	if r.Wrap != nil {
 		cmd = r.Wrap(ctx, r.Dir, argv)
 	}
+	Bound(cmd)
 	// CODEFORGE_LAUNCH=0: a juror inherits the marker when the gate runs inside a codeforge session, and must not
 	// print a resume hint for its throwaway session.
 	cmd.Env = append(cmd.Environ(), "CODEFORGE_GUARD=review", "EMPRYO_HOOK_ENV=CODEFORGE_*", "CODEFORGE_LAUNCH=0")
@@ -54,6 +64,7 @@ func (r EmpryoReviewer) Review(ctx context.Context, brief string) (string, error
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, runErr := cmd.Output()
+	Reap(cmd)
 
 	// Empryo exits non-zero when a run hits its step limit but still prints the JSON result,
 	// often with a complete verdict, so the result is read before the exit code is judged.

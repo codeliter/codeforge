@@ -19,9 +19,13 @@ func (ExecRunner) RunDir(ctx context.Context, dir, name string, args ...string) 
 	var stderr bytes.Buffer
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = dir
-	cmd.Env = slices.DeleteFunc(cmd.Environ(), func(kv string) bool { return strings.HasPrefix(kv, "GH_REPO=") })
+	cmd.Env = append(slices.DeleteFunc(cmd.Environ(), func(kv string) bool {
+		return strings.HasPrefix(kv, "GH_REPO=") || strings.HasPrefix(kv, "GH_PROMPT_DISABLED=") || strings.HasPrefix(kv, "GIT_TERMINAL_PROMPT=")
+	}), noPrompts...)
+	Bound(cmd)
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
+	Reap(cmd)
 	if err != nil {
 		return out, fmt.Errorf("%s %s in %s: %w: %s", name, args[0], dir, err, strings.TrimSpace(stderr.String()))
 	}

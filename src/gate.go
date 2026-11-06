@@ -16,6 +16,8 @@ import (
 	"github.com/codeliter/codeforge/assets"
 	"github.com/codeliter/codeforge/src/guard"
 	"github.com/codeliter/codeforge/src/review"
+
+	"github.com/codeliter/codeforge/src/effort"
 )
 
 var errGateFailed = errors.New("review gate failed")
@@ -240,11 +242,17 @@ func report(w io.Writer, res review.JuryResult) {
 
 // cleanHead is the HEAD commit when the tree has no uncommitted or untracked changes, otherwise "".
 func cleanHead(ctx context.Context, repo string) string {
-	status, err := exec.CommandContext(ctx, "git", "-C", repo, "status", "--porcelain", "--", ".", ":(exclude).empryo").Output()
+	statusCmd := exec.CommandContext(ctx, "git", "-C", repo, "status", "--porcelain", "--", ".", ":(exclude).empryo")
+	effort.Bound(statusCmd)
+	status, err := statusCmd.Output()
+	effort.Reap(statusCmd)
 	if err != nil || len(status) > 0 {
 		return ""
 	}
-	head, err := exec.CommandContext(ctx, "git", "-C", repo, "rev-parse", "HEAD").Output()
+	headCmd := exec.CommandContext(ctx, "git", "-C", repo, "rev-parse", "HEAD")
+	effort.Bound(headCmd)
+	head, err := headCmd.Output()
+	effort.Reap(headCmd)
 	if err != nil {
 		return ""
 	}

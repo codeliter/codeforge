@@ -56,8 +56,11 @@ func supportedEfforts(ctx context.Context, bin, model string) []string {
 	// The probe runs without the lock so jurors for different models probe in parallel, not one after another.
 	var out bytes.Buffer
 	cmd := exec.CommandContext(ctx, bin, "--headless", "--no-profile", "--no-genome", "--model", model, "--effort", "codeforge-probe", "x")
+	Bound(cmd)
 	cmd.Stdout, cmd.Stderr = &out, &out
-	if err := cmd.Run(); err == nil {
+	err := cmd.Run()
+	Reap(cmd)
+	if err == nil {
 		levelsMu.Lock()
 		levelsCache[model] = nil
 		levelsMu.Unlock()
@@ -74,4 +77,10 @@ func supportedEfforts(ctx context.Context, bin, model string) []string {
 	levelsCache[model] = levels
 	levelsMu.Unlock()
 	return levels
+}
+
+// EffortFor lowers want to the nearest level model supports, asking Empryo once per model, so a time-boxed default never
+// makes the engine reject a reviewer that lacks it. An unanswered probe leaves want unchanged.
+func EffortFor(ctx context.Context, bin, model, want string) string {
+	return fitEffort(want, supportedEfforts(ctx, bin, model))
 }

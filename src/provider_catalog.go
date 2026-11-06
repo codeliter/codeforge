@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+
+	"github.com/codeliter/codeforge/src/effort"
 )
 
 func connectedModelCatalog(ctx context.Context, bin string) ([]string, error) {
@@ -14,14 +16,18 @@ func connectedModelCatalog(ctx context.Context, bin string) ([]string, error) {
 func connectedModelCatalogAt(ctx context.Context, bin, workspace string) ([]string, error) {
 	modelsCommand := exec.CommandContext(ctx, bin, "--list-models")
 	modelsCommand.Dir = workspace
+	effort.Bound(modelsCommand)
 	output, err := modelsCommand.Output()
+	effort.Reap(modelsCommand)
 	if err != nil {
 		return nil, fmt.Errorf("listing models: %w", err)
 	}
 	ids := parseModelList(bytes.NewReader(output))
 	providersCommand := exec.CommandContext(ctx, bin, "--list-providers")
 	providersCommand.Dir = workspace
+	effort.Bound(providersCommand)
 	providers, err := providersCommand.Output()
+	effort.Reap(providersCommand)
 	if err != nil {
 		return nil, fmt.Errorf("listing connected providers: %w", err)
 	}

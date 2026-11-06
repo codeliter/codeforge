@@ -268,3 +268,24 @@ func TestLaunchTitleAndEmptySessionInTerminal(t *testing.T) {
 		})
 	}
 }
+
+func TestRunEngineStopsTheWholeTreeAtItsDeadline(t *testing.T) {
+	dir := t.TempDir()
+	child := filepath.Join(dir, "child")
+	engine := filepath.Join(dir, "engine")
+	require.NoError(t, os.WriteFile(engine, []byte("#!/bin/sh\n(sleep 1; touch \""+child+"\") &\nsleep 30\n"), execPerm))
+	start := time.Now()
+	err := runEngine(t.Context(), []string{engine}, os.Environ(), time.Now().Add(300*time.Millisecond))
+	var exit *EngineExitError
+	require.ErrorAs(t, err, &exit)
+	require.Equal(t, deadlineExit, exit.Code)
+	require.Less(t, time.Since(start), 900*time.Millisecond)
+	time.Sleep(1500 * time.Millisecond)
+	require.NoFileExists(t, child, "the engine's background child outlived the deadline")
+}
+
+func TestRunEngineWithoutDeadlineIsRunInteractive(t *testing.T) {
+	engine := filepath.Join(t.TempDir(), "engine")
+	require.NoError(t, os.WriteFile(engine, []byte("#!/bin/sh\nexit 0\n"), execPerm))
+	require.NoError(t, runEngine(t.Context(), []string{engine}, os.Environ(), time.Time{}))
+}

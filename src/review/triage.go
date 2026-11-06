@@ -1,9 +1,12 @@
 package review
 
 import (
+	"fmt"
 	"path"
 	"regexp"
+	"strconv"
 	"strings"
+	"time"
 )
 
 // Tier sizes one review: effort and step budget scale with how much can go wrong, never above high.
@@ -17,6 +20,53 @@ type Tier struct {
 	Genome   bool
 	Jury     bool
 	Light    bool
+}
+
+// maxTimedSteps and maxTimedEffort bound a review that has a clock: a long thinking budget or a deep tool loop is how
+// a review runs out of time without a verdict.
+const (
+	maxTimedSteps  = 8
+	maxTimedEffort = "medium"
+)
+
+// Timed returns the tier a time-boxed review runs at: the same files and jury, but a shallower loop.
+func (t Tier) Timed() Tier {
+	t.MaxSteps = min(t.MaxSteps, maxTimedSteps)
+	if t.Effort == "high" {
+		t.Effort = maxTimedEffort
+	}
+	return t
+}
+
+// Panel returns t without its jury wording. The panel is run by codeforge, in parallel, so the brief must not tell the
+// model to dispatch a jury of its own.
+func (t Tier) Panel() Tier {
+	t.Name, t.Jury = "", false
+	return t
+}
+
+// Limits are the Empryo flags that bound one review run: a step budget and a wall-clock timeout in milliseconds.
+func (t Tier) Limits(left time.Duration) []string {
+	return []string{"--max-steps", strconv.Itoa(t.MaxSteps), "--timeout", strconv.FormatInt(left.Milliseconds(), 10)}
+}
+
+// LimitNote is the standing time rule of every review session, the interactive one that follows included.
+func LimitNote() string {
+	return fmt.Sprintf("The review run must be complete within %d seconds of wall clock, and a run that is slower is killed with nothing saved; the interactive session that follows is not timed. "+
+		"Work from the diff and files already in the brief, read more only for a finding that depends on it, and give the verdict early rather than perfect.",
+		int(HardLimit/time.Second))
+}
+
+// WithBudget tells the reviewer its step budget and how long it has, so it answers before it is cut off.
+func WithBudget(prompt string, t Tier, left time.Duration) string {
+	return prompt + stepBudget(t.MaxSteps) + "\n\n" + TimeNote(left)
+}
+
+// TimeNote tells a reviewer how long it has, so it can plan its steps and answer before the clock ends.
+func TimeNote(left time.Duration) string {
+	return fmt.Sprintf("Time limit: you have %d seconds of wall clock for this whole review, and a run that exceeds it is killed with nothing saved. "+
+		"Work from the diff and files already in the brief, read more only for a finding that depends on it, and give your verdict early rather than perfect.",
+		int(left/time.Second))
 }
 
 const (
