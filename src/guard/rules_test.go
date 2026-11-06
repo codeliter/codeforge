@@ -124,6 +124,26 @@ func TestCheck_PRTarget(t *testing.T) {
 	require.Empty(t, rules(Check("gh pr create --fill --base main", false)))
 }
 
+func TestCheck_EscapedBackticksAreText(t *testing.T) {
+	cmd := "git commit -m \"sync \\`scripts/sync.py\\` and \\`/v1/models\\` for \\`openai/\\`\""
+	require.Empty(t, rules(checkIn(cmd, false, t.TempDir())), cmd)
+	require.Equal(t, []string{RuleScript}, rules(checkIn("git commit -m \"$(scripts/sync.py)\"", false, t.TempDir())))
+}
+
+func TestCheck_EscapedSubstitutionInInnerShell(t *testing.T) {
+	for _, inner := range []string{"gh pr merge 1", "codeforge trust"} {
+		for _, cmd := range []string{
+			"sh -c \"echo \\$(" + inner + ")\"",
+			"bash -c \"echo \\`" + inner + "\\`\"",
+			"sh -c \"echo \\\\$(" + inner + ")\"",
+		} {
+			require.NotEmpty(t, rules(checkIn(cmd, true, t.TempDir())), cmd)
+		}
+	}
+	require.NotEmpty(t, rules(checkIn("sh -c \"echo \\$(codeforge trust)\"", false, t.TempDir())))
+	require.Empty(t, rules(checkIn("sh -c 'echo \\$(gh pr merge 1)'", true, t.TempDir())), "single quotes keep the backslash")
+}
+
 func TestCheck_ScriptsAreInspected(t *testing.T) {
 	dir := t.TempDir()
 	write := func(name, body string) {
@@ -134,9 +154,10 @@ func TestCheck_ScriptsAreInspected(t *testing.T) {
 	write("build.sh", "#!/bin/sh\ngo build ./...\ngit push\n")
 	write("bin", "\x00\x01binary")
 
-	for _, cmd := range []string{"./publish.sh", "bash ./publish.sh", "sh allow.sh", ". ./publish.sh", "./bin", "./missing.sh"} {
+	for _, cmd := range []string{"./publish.sh", "bash ./publish.sh", ". ./publish.sh", "./bin", "./missing.sh"} {
 		require.Equal(t, []string{RuleScript}, rules(checkIn(cmd, false, dir)), cmd)
 	}
+	require.Equal(t, []string{RuleLearning}, rules(checkIn("sh allow.sh", false, dir)), "a script naming codeforge is refused")
 	require.Empty(t, rules(checkIn("./build.sh", false, dir)), "a script that only uses git is fine")
 	require.Empty(t, rules(checkIn("go test ./...", false, dir)), "go test is not a script path")
 }

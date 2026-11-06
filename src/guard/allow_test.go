@@ -68,9 +68,10 @@ func TestCheck_OpeningPRsNeedsNoGate(t *testing.T) {
 }
 
 func TestCheck_SelfStillGuarded(t *testing.T) {
-	for _, cmd := range []string{"codeforge trust", "codeforge init", "codeforge repair", "codeforge reinit", "codeforge learn correct x"} {
+	for _, cmd := range []string{"codeforge trust", "codeforge init", "codeforge repair", "codeforge reinit"} {
 		require.Equal(t, []string{RuleSelf}, rules(Check(cmd, false)), cmd)
 	}
+	require.Equal(t, []string{RuleLearning}, rules(Check("codeforge learn correct x", false)))
 	for _, cmd := range []string{"codeforge models", "codeforge models recommend", "codeforge gate", "codeforge learn list", "codeforge provider", "codeforge provider show", "codeforge providers list"} {
 		require.Empty(t, rules(Check(cmd, false)), cmd)
 	}
@@ -125,7 +126,7 @@ func TestCheck_SelfStillGuarded(t *testing.T) {
 	for _, cmd := range []string{"script -q /dev/null codeforge trust", "expect drive.exp", "tmux new -d 'codeforge trust'"} {
 		require.Equal(t, []string{RuleSelf}, rules(Check(cmd, false)), cmd)
 	}
-	require.Equal(t, []string{RuleOpaque}, rules(Check(`python3 -c 'import pty; pty.spawn(["codeforge","trust"])'`, false)))
+	require.Equal(t, []string{RuleLearning}, rules(Check(`python3 -c 'import pty; pty.spawn(["codeforge","trust"])'`, false)), "naming codeforge in code the guard cannot read is refused")
 }
 
 func TestCheckTool_MessagesAreNotCommands(t *testing.T) {

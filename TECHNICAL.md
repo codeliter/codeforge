@@ -125,9 +125,11 @@ That migrates only exact executable/Codeforge-subcommand matches in the global h
 a missing match produces a warning to inspect project or other agent settings. It does not disable
 fail-closed behaviour or indiscriminately delete missing security hooks.
 
-The `PreToolUse` guard is registered globally and is **fail-closed**. In every session it enforces the
-self-protection rules (no settings changes, no `codeforge trust`, no editing the guard); only review sessions
-(`CODEFORGE_GUARD=review`) also get the read-only rules. If the guard cannot run, the tool call is not allowed through. There is no managed `gh` shim:
+The `PreToolUse` guard is registered globally and is **fail-closed**. In review sessions
+(`CODEFORGE_GUARD=review`) it enforces read-only plus the self-protection rules (no settings changes, no
+`codeforge trust`, no editing the guard). Every other session is not gated, except that the agent may not write
+learning evidence (`codeforge observe`, `codeforge learn`, directly or through an interpreter or script), because
+that would record its own words as the user's corrections. In review sessions, if the guard cannot run, the tool call is not allowed through; elsewhere an unreadable call passes. Outside review, interpreter code, wrapped commands and readable scripts that mention `codeforge` (and scripts too large to read) are refused, as are commands the guard cannot parse (process substitution, git aliases that run programs), since they could build `codeforge observe` in ways no pattern reads. This is a heuristic: a name carried across a `sh -c` boundary in an environment variable, or piped into a bare shell, is not caught. Outside review the guard no longer blocks `codeforge trust`, settings changes or terminal drivers such as `script` and `tmux`, so an agent there could approve its own trust; that is the accepted cost of gating review mode only. There is no managed `gh` shim:
 `repair` deletes one that earlier versions installed, only if it carries Codeforge's marker (the `gh-shim`
 subcommand remains for a stale copy). The `SessionEnd` resume-hint hook is fail-open because shutdown must not
 wait on a hint. In review, agent tools may not alter the guard, its helper, its configuration, or run

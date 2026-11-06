@@ -12,6 +12,7 @@ import (
 const (
 	RuleReadOnly = "read-only"
 	RuleSelf     = "codeforge-config"
+	RuleLearning = "learning-evidence"
 	RuleOpaque   = "opaque"
 	RuleScript   = "script"
 )
@@ -36,7 +37,13 @@ func Check(command string, readOnly bool) Result {
 
 // checkIn is Check with the tool's working directory, so script files named in the command can be read.
 func checkIn(command string, readOnly bool, cwd string) Result {
+	// A backslash-newline is a line continuation: the shell joins the lines, so the guard must too.
+	command = strings.ReplaceAll(command, "\\\n", "")
 	r := Result{cwd: cwd}
+	if !readOnly && substitutedLearning(command) {
+		r.Blocked = append(r.Blocked, Finding{RuleLearning, learningReason})
+		return r
+	}
 	dir := ""
 	for _, seg := range segments(command) {
 		// Every check reads the same redirect-free words, so an operator such as `>/dev/null` placed among
@@ -67,9 +74,26 @@ func checkIn(command string, readOnly bool, cwd string) Result {
 			continue
 		}
 
+		// A wrapper such as tmux or script can hand a quoted `codeforge observe` to a shell the guard never sees.
+		if !readOnly && mentionsLearningWrite(words, seg) {
+			r.Blocked = append(r.Blocked, Finding{RuleLearning, learningReason})
+			continue
+		}
+
+		// A command name built from a variable can spell `codeforge observe` where no pattern reads it. This only
+		// sees the name in the same command string; one carried across a shell boundary in the environment is not caught.
+		if !readOnly && strings.HasPrefix(words[0], "$") && learningText.MatchString(command) {
+			r.Blocked = append(r.Blocked, Finding{RuleLearning, learningReason})
+			continue
+		}
+
 		if opaque {
 			if readOnly {
 				r.Blocked = append(r.Blocked, Finding{RuleReadOnly, "the command is wrapped in a way the read-only check cannot inspect"})
+				continue
+			}
+			if learningText.MatchString(seg) {
+				r.Blocked = append(r.Blocked, Finding{RuleLearning, learningReason})
 				continue
 			}
 			if guardedTool.MatchString(seg) {
@@ -111,6 +135,10 @@ func checkIn(command string, readOnly bool, cwd string) Result {
 
 		// A script file runs commands the hook never sees, so it must not contain guarded tools.
 		if path, ok := scriptPath(unwrapped(raw)); ok && !readOnly {
+			if scriptWritesLearning(joinDir(dir, path), r.cwd) {
+				r.Blocked = append(r.Blocked, Finding{RuleLearning, learningReason})
+				continue
+			}
 			if f, bad := scriptCallsGuarded(joinDir(dir, path), r.cwd); bad {
 				r.Blocked = append(r.Blocked, f)
 				continue
@@ -120,6 +148,10 @@ func checkIn(command string, readOnly bool, cwd string) Result {
 		if inner, ok := interpreterCode(words); ok {
 			if readOnly {
 				r.Blocked = append(r.Blocked, Finding{RuleReadOnly, words[0] + " runs code that can change files"})
+				continue
+			}
+			if learningText.MatchString(inner) {
+				r.Blocked = append(r.Blocked, Finding{RuleLearning, learningReason})
 				continue
 			}
 			if guardedTool.MatchString(inner) {
@@ -244,11 +276,15 @@ func classify(w []string) []Finding {
 		// These give a program a pseudo-terminal the agent controls, which could answer codeforge trust's prompt.
 		return []Finding{{RuleSelf, w[0] + " can drive a terminal prompt such as codeforge trust; run it yourself if you need it"}}
 	case "codeforge":
-		if len(w) > 1 && (hasAny(w[1:2], "trust", "init", "repair", "reinit", "observe") || w[1] == "models" && !printsModels(w[2:]) || (w[1] == "provider" || w[1] == "providers") && !printsProviders(w[2:])) {
+		if len(w) > 1 && (hasAny(w[1:2], "trust", "init", "repair", "reinit") || w[1] == "models" && !printsModels(w[2:]) || (w[1] == "provider" || w[1] == "providers") && !printsProviders(w[2:])) {
 			return []Finding{{RuleSelf, "only you can change codeforge settings"}}
 		}
-		if len(w) > 1 && w[1] == "learn" && !readsLearning(w[2:]) {
-			return []Finding{{RuleSelf, "only you can record or revert codeforge learning evidence"}}
+		// A subcommand built from a variable (`o=observe; codeforge $o`) can name observe or learn where no literal shows.
+		if len(w) > 1 && strings.ContainsAny(w[1], "$`") {
+			return []Finding{{RuleLearning, learningReason}}
+		}
+		if len(w) > 1 && (w[1] == "observe" || w[1] == "learn" && !readsLearning(w[2:])) {
+			return []Finding{{RuleLearning, "only you can record or revert codeforge learning evidence"}}
 		}
 	case "gh":
 		return classifyGH(w)
@@ -360,6 +396,136 @@ func apiWrites(args []string) bool {
 
 func readMethod(m string) bool {
 	return strings.EqualFold(m, "GET") || strings.EqualFold(m, "HEAD")
+}
+
+// learningText spots codeforge named in code the guard cannot parse, such as interpreter code, a script file or a
+// wrapped command. Such code could build `codeforge observe` in ways no pattern reads (concatenation, variables,
+// line continuations), so any mention is refused outside review mode. Review mode refuses far more.
+var learningText = regexp.MustCompile(`\bcodeforge\b`)
+
+const learningReason = "only you can record or revert codeforge learning evidence"
+
+var learningWriteWord = regexp.MustCompile(`\b(observe|correct|outcome|revert|accept|dismiss|forget|approve)\b`)
+
+// mentionsLearningWrite reports a command that is not codeforge, git or a read-only tool but names codeforge together
+// with a learning write word, as in `tmux new -d 'codeforge observe'`. Direct codeforge calls are classified exactly.
+func mentionsLearningWrite(words []string, seg string) bool {
+	if words[0] == "git" || words[0] == "codeforge" || readOnlyCommands[words[0]] {
+		return false
+	}
+	return learningText.MatchString(seg) && learningWriteWord.MatchString(seg)
+}
+
+var learningWord = regexp.MustCompile(`\b(observe|learn)\b`)
+
+// substitutedLearning reports a command that mentions codeforge and runs a substitution where it can build the call:
+// at command position (`$(echo codeforge) observe`) or as an argument of codeforge (`codeforge $(echo observe)`).
+// A substitution inside an argument of another command, such as git commit -m "... $(date)", only makes text.
+func substitutedLearning(command string) bool {
+	return (learningText.MatchString(command) || learningWord.MatchString(command)) && buildsCommand(command)
+}
+
+var commandWrappers = map[string]bool{"env": true, "sudo": true, "command": true, "exec": true, "nohup": true, "time": true, "xargs": true, "nice": true}
+
+// buildsCommand scans for an executable $(...) or backtick substitution (not in single quotes, not escaped) and
+// reports one that sits at the start of a simple command, glued to a command name, or after codeforge.
+func buildsCommand(command string) bool {
+	var quote byte
+	start := 0
+	check := func(i int) bool {
+		prefix := command[start:i]
+		var words []string
+		assigns := false
+		for _, w := range strings.Fields(prefix) {
+			switch {
+			case isAssignment(w):
+				assigns = true
+			case commandWrappers[strings.TrimLeft(w, "\"'")]:
+			default:
+				words = append(words, w)
+			}
+		}
+		glued := i > start && !strings.HasSuffix(prefix, " ") && !strings.HasSuffix(prefix, "\t")
+		switch {
+		case len(words) == 0:
+			return !assigns
+		case len(words) == 1 && glued:
+			return true
+		}
+		first := strings.Trim(words[0], "\"'")
+		return first[strings.LastIndex(first, "/")+1:] == "codeforge"
+	}
+	for i := 0; i < len(command); i++ {
+		c := command[i]
+		switch {
+		case quote == '\'':
+			if c == '\'' {
+				quote = 0
+			}
+		case c == '\\':
+			i++
+		case quote == 0 && (c == '\'' || c == '"'):
+			quote = c
+		case quote == '"' && c == '"':
+			quote = 0
+		case quote == 0 && (c == ';' || c == '|' || c == '&' || c == '\n' || c == '('):
+			start = i + 1
+		case c == '`':
+			if check(i) {
+				return true
+			}
+			end := i + 1
+			for end < len(command) && command[end] != '`' {
+				if command[end] == '\\' {
+					end++
+				}
+				end++
+			}
+			i = end
+			start = min(end+1, len(command))
+		case c == '$' && i+1 < len(command) && command[i+1] == '(':
+			if check(i) {
+				return true
+			}
+			start = i + len("$(")
+			i++
+		}
+	}
+	return false
+}
+
+const binarySniffBytes = 8 << 10
+
+// looksBinary reports a file whose first block holds a NUL byte, as every native executable does. A file that
+// cannot be read counts as binary: there is nothing the guard could inspect.
+func looksBinary(p string) bool {
+	f, err := os.Open(p)
+	if err != nil {
+		return true
+	}
+	defer f.Close()
+	head := make([]byte, binarySniffBytes)
+	n, err := f.Read(head)
+	return err != nil && n == 0 || slices.Contains(head[:n], 0)
+}
+
+// scriptWritesLearning reports a local script that names codeforge or is too large to read.
+func scriptWritesLearning(path, cwd string) bool {
+	p := path
+	if !strings.HasPrefix(p, "/") {
+		p = cwd + "/" + p
+	}
+	info, err := os.Stat(p)
+	if err != nil || !info.Mode().IsRegular() {
+		return false
+	}
+	// A text script too large to read could hold the call anywhere, so it is refused. Native executables such as
+	// /usr/bin/curl are large but not scripts: a NUL byte in the first block marks them as binary.
+	if info.Size() > maxScriptBytes {
+		return !looksBinary(p)
+	}
+	data, err := os.ReadFile(p)
+	return err == nil && learningText.Match(data)
 }
 
 // guardedTool spots guarded tools named anywhere in interpreter code, however the call is spelled.
@@ -514,6 +680,11 @@ func segments(command string) []string {
 		switch {
 		case quote == '\'' && c != '\'':
 			cur.WriteByte(c)
+		case c == '\\' && i+1 < len(command):
+			// An escaped backtick, $, quote or separator is literal text, not command substitution or a split.
+			cur.WriteByte(c)
+			i++
+			cur.WriteByte(command[i])
 		case c == '\'' || c == '"':
 			switch quote {
 			case 0:
@@ -718,6 +889,11 @@ func shellTokens(s string) (words []string, redirect []bool) {
 		switch {
 		case quote != 0 && c == quote:
 			quote = 0
+		case quote == '"' && c == '\\' && i+1 < len(s) && strings.IndexByte("$`\"\\", s[i+1]) >= 0:
+			// Inside double quotes a backslash only escapes $, `, " and \; the shell drops it, so an inner
+			// shell (sh -c "echo \$(x)") sees the unescaped text and the guard must inspect that same text.
+			i++
+			cur.WriteByte(s[i])
 		case quote != 0:
 			cur.WriteByte(c)
 		case c == '"' || c == '\'':

@@ -11,8 +11,9 @@ import (
 )
 
 // installHooks merges codeforge's guard and resume hint into ~/.empryo/hooks.json, keeping any hooks the user added.
-// The guard is global and fail-closed: the trust and self-protection rules must hold in every session, and in
-// review mode (see runHook) the read-only promise must hold even when the model ignores its instructions.
+// The guard is registered globally and fail-closed, but runHook enforces the full rules only in review mode, where the
+// read-only promise must hold even when the model ignores its instructions. Other sessions are gated only against
+// the agent writing learning evidence (see DecideOutsideReview).
 // The resume hint is fail-open: a shutdown must never wait on it.
 func installHooks(empryoDir, self string, legacyHooks ...string) error {
 	path := filepath.Join(empryoDir, "hooks.json")

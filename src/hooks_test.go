@@ -1,6 +1,7 @@
 package src
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -46,12 +47,67 @@ func TestRunHook(t *testing.T) {
 		require.Equal(t, 0, runHook(t.Context(), home, strings.NewReader(in), &stderr), "outside review git and gh are not gated: "+cmd)
 	}
 
-	for _, cmd := range []string{"codeforge trust", "codeforge trust --models"} {
-		in := `{"hook_event_name":"PreToolUse","tool_name":"Bash","cwd":"/","tool_input":{"command":"` + cmd + `"}}`
-		require.Equal(t, hookExitBlock, runHook(t.Context(), home, strings.NewReader(in), &stderr), "an agent cannot approve its own trust: "+cmd)
+	for _, cmd := range []string{"codeforge trust", "scripts/sync.py", "git commit -m \"sync \\`scripts/sync.py\\` and \\`/v1/models\\`\""} {
+		raw, err := json.Marshal(map[string]any{"hook_event_name": "PreToolUse", "tool_name": "Bash", "cwd": "/", "tool_input": map[string]any{"command": cmd}})
+		require.NoError(t, err)
+		require.Equal(t, 0, runHook(t.Context(), home, bytes.NewReader(raw), &stderr), "outside review only learning writes are gated: "+cmd)
 	}
-	require.Contains(t, stderr.String(), "Only the user")
-	require.Equal(t, hookExitBlock, runHook(t.Context(), home, strings.NewReader("not json"), &stderr), "fail closed on garbage")
+	require.Equal(t, 0, runHook(t.Context(), home, strings.NewReader("not json"), &stderr), "outside review even garbage passes")
+
+	for _, cmd := range []string{"codeforge observe", "echo '{}' | codeforge observe", "codeforge learn correct x"} {
+		in := `{"hook_event_name":"PreToolUse","tool_name":"Bash","cwd":"/","tool_input":{"command":"` + cmd + `"}}`
+		require.Equal(t, hookExitBlock, runHook(t.Context(), home, strings.NewReader(in), &stderr), "an agent cannot forge learning evidence: "+cmd)
+	}
+	require.Contains(t, stderr.String(), "learning evidence")
+
+	for _, cmd := range []string{
+		"git commit -m \"document \\`codeforge observe\\`\"",
+		"git commit -m 'document `codeforge observe` and $(codeforge learn correct x)'",
+		"git commit -m \"codeforge observe \\\\$(x)\"",
+		"git commit -m \"document codeforge observe on $(date +%F)\"",
+		"git commit -m \"document $(printf codeforge)\"",
+		"git commit -m \"document codeforge observe via $(printf codeforge)\"",
+		"v=$(date); codeforge status",
+		"git commit -m \"it's codeforge observe $(date)\"",
+	} {
+		raw, err := json.Marshal(map[string]any{"hook_event_name": "PreToolUse", "tool_name": "Bash", "cwd": "/", "tool_input": map[string]any{"command": cmd}})
+		require.NoError(t, err)
+		require.Equal(t, 0, runHook(t.Context(), home, bytes.NewReader(raw), &stderr), "literal text is not a call: "+cmd)
+	}
+
+	for _, cmd := range []string{"/usr/bin/curl --version", "/usr/bin/ssh -V"} {
+		raw, err := json.Marshal(map[string]any{"hook_event_name": "PreToolUse", "tool_name": "Bash", "cwd": "/", "tool_input": map[string]any{"command": cmd}})
+		require.NoError(t, err)
+		require.Equal(t, 0, runHook(t.Context(), home, bytes.NewReader(raw), &stderr), "native executables are not scripts: "+cmd)
+	}
+
+	protectedIn := `{"hook_event_name":"PreToolUse","tool_name":"Bash","cwd":"/","tool_input":{"command":"codeforge observe < ~/.codeforge/payload.json"},"tool_paths":["~/.codeforge/payload.json"]}`
+	require.Equal(t, hookExitBlock, runHook(t.Context(), home, strings.NewReader(protectedIn), &stderr), "a protected path must not hide the observer call")
+
+	for _, cmd := range []string{
+		"git -c alias.forge='!codeforge observe < payload.json' forge",
+		"codeforge observe <(cat payload.json)",
+		"$(echo codeforge) observe < payload.json",
+		"o=observe; codeforge $o < payload.json",
+		"l=learn; codeforge $l correct x",
+		"o=observe; codeforge ${o} < payload.json",
+		"o=observe; codeforge \"$o\" < payload.json",
+		"codeforge $(echo observe) < payload.json",
+		"codeforge \"$(echo observe)\" < payload.json",
+		"echo hi; $(echo codeforge) observe < payload.json",
+		"sudo `echo codeforge` observe",
+		"code$(echo forge) observe",
+		"echo \"don't\"; $(echo codeforge) observe < p.json",
+		"git commit -m \"it's fine\" && code$(echo forge) observe < p.json",
+		"codeforge \\\nobserve < payload.json",
+		"tmux new -d 'codeforge observe < payload.json'",
+		"script -q /dev/null sh -c 'codeforge learn correct x'",
+		`python3 -c 'import os; os.system("codeforge " + "ob" + "serve")'`,
+	} {
+		raw, err := json.Marshal(map[string]any{"hook_event_name": "PreToolUse", "tool_name": "Bash", "cwd": "/", "tool_input": map[string]any{"command": cmd}})
+		require.NoError(t, err)
+		require.Equal(t, hookExitBlock, runHook(t.Context(), home, bytes.NewReader(raw), &stderr), "forged evidence through the hook: "+cmd)
+	}
 }
 
 func TestRunHook_ReviewModeIsReadOnly(t *testing.T) {
