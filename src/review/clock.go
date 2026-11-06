@@ -18,11 +18,6 @@ var (
 	// KillGrace is how long before a hard kill an agent is told to stop on its own, so a slow one still saves its
 	// session and returns the text it has instead of being killed mid-sentence.
 	KillGrace = 5 * time.Second
-	// JurorLimit is how long the jurors, which run in parallel before the main reviewer, get in all. The main reviewer
-	// then has the rest, up to AgentLimit, and checks their findings as leads.
-	JurorLimit = 45 * time.Second
-	// ReviewerShare is the least the main reviewer must keep after the jurors: AgentLimit is its maximum, not its reservation.
-	ReviewerShare = 55 * time.Second
 	// MinRun is the least time worth launching a reviewer for: Empryo's start-up alone takes several seconds.
 	MinRun = 20 * time.Second
 )

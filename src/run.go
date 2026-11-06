@@ -317,9 +317,10 @@ func Run(ctx context.Context, args []string) error {
 	// the jurors and the engine.
 	if cmd == modeReview && !resumed && !review.HasDeadline(ctx) {
 		end := time.Now().Add(review.HardLimit)
-		base = review.WithDeadline(base, end)
+		pipe := &review.Pipeline{}
+		base = review.WithPipeline(review.WithDeadline(base, end), pipe)
 		var cancel context.CancelFunc
-		ctx, cancel = context.WithDeadline(review.WithDeadline(ctx, end), end)
+		ctx, cancel = context.WithDeadline(review.WithPipeline(review.WithDeadline(ctx, end), pipe), end)
 		defer cancel()
 	}
 	mode, args, err := modeArgs(ctx, bin, cfg, cmd, rest)
@@ -366,7 +367,11 @@ func launchWith(ctx context.Context, home, bin, mode string, args []string, afte
 	}
 	// A review has a hard limit that only a supervising parent can enforce, so it is never handed over with exec.
 	if mode == modeReview && review.HasDeadline(ctx) && hasFlag(args, "--headless") {
-		return runEngine(ctx, argv, env, review.AgentEnd(ctx))
+		err := runEngine(ctx, argv, env, review.AgentEnd(ctx))
+		if err == nil {
+			printLeads(ctx)
+		}
+		return err
 	}
 	if !hasFlag(args, "--headless") {
 		_, resume, err := sessionID(args)
@@ -385,6 +390,7 @@ func launchWith(ctx context.Context, home, bin, mode string, args []string, afte
 			if err := runEngine(ctx, initial, env, limit); err != nil {
 				return err
 			}
+			printLeads(ctx)
 			id := flagValue(argv, "--session-id")
 			if after != nil {
 				after(ctx, id)
@@ -504,4 +510,15 @@ func modeArgs(ctx context.Context, bin string, cfg Config, cmd string, args []st
 	}
 	args, err = taskArgs(ctx, bin, cfg, args)
 	return modeTicket, args, err
+}
+
+// printLeads prints what the second-opinion jurors found, after the review they ran alongside. It waits for them only
+// until the review's own time limit.
+func printLeads(ctx context.Context) {
+	if pipe := review.PipelineOf(ctx); pipe != nil {
+		if leads := pipe.Leads(ctx); leads != "" {
+			// Standard error, so a --json run keeps a machine-readable standard output.
+			fmt.Fprint(os.Stderr, "\n"+leads)
+		}
+	}
 }

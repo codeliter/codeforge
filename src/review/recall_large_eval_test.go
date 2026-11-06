@@ -24,10 +24,10 @@ import (
 //
 //	CODEFORGE_EVAL_MODEL=provider/model go test -tags eval ./src/review -run TestEvalLargeDiff -v -timeout 60m
 //
-// Optional: CODEFORGE_EVAL_BIN, CODEFORGE_EVAL_RUNS (default 6 runs per setup, run in parallel).
+// Optional: CODEFORGE_EVAL_SETUPS (comma list of setup names), CODEFORGE_EVAL_BIN, CODEFORGE_EVAL_RUNS (default 6 runs per setup, run in parallel).
 // Spurious blockers are not all false positives here: the real diff has defects of its own that nobody labelled, so
-// spurious is reported, never gated. Gated: every timed run returns a verdict, and timed recall stays at recallFloor of
-// the unbounded review's.
+// spurious is reported, never gated. Gated when both setups ran: every parallel run returns a verdict, and parallel recall stays
+// at recallFloor of the lone reviewer's.
 
 const (
 	largeBase      = "v0.10.3~8"
@@ -99,6 +99,7 @@ type runResult struct {
 	elapsed  time.Duration
 	err      error
 	blocking int
+	tail     string
 }
 
 func TestEvalLargeDiff(t *testing.T) {
@@ -123,51 +124,37 @@ func TestEvalLargeDiff(t *testing.T) {
 	one := func(m string, tier Tier) Reviewer {
 		return EmpryoReviewer{Bin: bin, Model: m, Dir: dir, Tier: tier}
 	}
-	panel := func(tier Tier) Panel {
-		rs := make([]Reviewer, len(jurors))
-		for i, m := range jurors {
-			rs[i] = one(m, tier)
-		}
-		return Panel{Repo: dir, Reviewers: rs}
-	}
 	setups := []lsetup{
 		{"alone", timedTier, AgentLimit, func(ctx context.Context, brief string) (string, error) {
 			return one(model, timedTier).Review(ctx, brief)
 		}},
-		// Today: the jurors run first, then the main reviewer, which is given what they found.
-		{"sequential", timedTier, JurorLimit + AgentLimit, func(ctx context.Context, brief string) (string, error) {
-			leads, _ := panel(timedTier).Collect(ctx, brief, JurorLimit)
-			mctx, cancel := context.WithTimeout(ctx, AgentLimit)
-			defer cancel()
-			return one(model, timedTier).Review(mctx, brief+"\n\n"+leads)
-		}},
-		// Proposed: the main reviewer starts at once and never waits; the jurors' blocking findings are added unverified.
+		// What codeforge review does with a jury: the reviewer starts at once and never waits; the jurors run beside it
+		// and their blocking findings are added unverified.
 		{"parallel", timedTier, AgentLimit, func(ctx context.Context, brief string) (string, error) {
-			type jr struct{ blocking []Finding }
-			ch := make(chan jr, 1)
-			go func() {
-				jctx, cancel := context.WithTimeout(ctx, AgentLimit)
-				defer cancel()
-				res, _ := Jury(jctx, dir, brief, panel(timedTier).Reviewers, JuryOptions{})
-				var all []Finding
-				for _, v := range res.Votes {
-					all = append(all, v.Verdict.Blocking...)
-				}
-				ch <- jr{all}
-			}()
+			rs := make([]Reviewer, len(jurors))
+			for i, m := range jurors {
+				rs[i] = one(m, timedTier)
+			}
+			var pipe Pipeline
+			pipe.Start(ctx, dir, brief, rs, func() {})
 			text, err := one(model, timedTier).Review(ctx, brief)
-			j := <-ch
+			res, _ := pipe.Wait(ctx)
 			v, perr := ParseVerdict(text)
 			if perr != nil {
 				return text, err
 			}
-			v.Blocking = append(v.Blocking, j.blocking...)
+			for _, vote := range res.Votes {
+				v.Blocking = append(v.Blocking, vote.Verdict.Blocking...)
+			}
 			out, merr := json.Marshal(v)
 			if merr != nil {
-				return text, merr
+				return text, fmt.Errorf("encoding the merged verdict: %w", merr)
 			}
 			return string(out), err
 		}},
+	}
+	if only := os.Getenv("CODEFORGE_EVAL_SETUPS"); only != "" {
+		setups = slices.DeleteFunc(setups, func(s lsetup) bool { return !slices.Contains(strings.Split(only, ","), s.name) })
 	}
 	results := map[string][]runResult{}
 	for _, s := range setups {
@@ -182,7 +169,7 @@ func TestEvalLargeDiff(t *testing.T) {
 				defer cancel()
 				start := time.Now()
 				text, rerr := s.run(ctx, brief)
-				r := runResult{elapsed: time.Since(start), err: rerr}
+				r := runResult{elapsed: time.Since(start), err: rerr, tail: tail(text)}
 				if v, perr := ParseVerdict(text); perr == nil {
 					r.verdict, r.blocking = true, len(v.Blocking)
 					r.score = ScoreBlocking(defects, v.Blocking)
@@ -206,7 +193,7 @@ func TestEvalLargeDiff(t *testing.T) {
 		for i, r := range results[s.name] {
 			times = append(times, r.elapsed)
 			if !r.verdict {
-				t.Logf("%-5s run %d: no verdict after %s (%v)", s.name, i, r.elapsed.Round(time.Second), r.err)
+				t.Logf("%-5s run %d: no verdict after %s (%v) output ends: %q", s.name, i, r.elapsed.Round(time.Second), r.err, r.tail)
 				continue
 			}
 			verdicts++
@@ -228,16 +215,21 @@ func TestEvalLargeDiff(t *testing.T) {
 	}
 	t.Log(report.String())
 
-	timed := results["timed"]
+	// The gate applies when both setups ran: parallel is what codeforge review does, alone is the baseline it must not lose to.
+	treated, base := results["parallel"], results["alone"]
+	if treated == nil || base == nil {
+		t.Log("a filtered run compares nothing: run both setups to apply the gate")
+		return
+	}
 	var verdicts int
-	for _, r := range timed {
+	for _, r := range treated {
 		if r.verdict {
 			verdicts++
 		}
 	}
-	require.GreaterOrEqual(t, float64(verdicts)/float64(runs), minVerdictRate, "timed reviews must return a verdict")
-	require.Positive(t, recall["full"], "the unbounded review found nothing, so recall cannot be compared")
-	require.GreaterOrEqual(t, recall["timed"], recall["full"]*recallFloor, "timed recall must stay within %.0f%% of unbounded", recallFloor*100)
+	require.GreaterOrEqual(t, float64(verdicts)/float64(runs), minVerdictRate, "reviews must return a verdict")
+	require.Positive(t, recall["alone"], "the baseline found nothing, so recall cannot be compared")
+	require.GreaterOrEqual(t, recall["parallel"], recall["alone"]*recallFloor, "recall must stay within %.0f%% of the baseline", recallFloor*100)
 }
 
 func cmpOr(a, b string) string {

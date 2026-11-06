@@ -60,23 +60,24 @@ func jurorsFor(bin string) jurorFactory {
 // jurorFactory builds the independent jurors for a tier. Nil means the review has no panel.
 type jurorFactory func(ctx context.Context, models []string, tier review.Tier, scratch bool) ([]review.Reviewer, func())
 
-// panelBrief runs the second-opinion jurors in parallel, each on the shared clock, and returns their findings for the
-// reviewer to verify. scratch is set when the change is not in this checkout. Without a panel the brief carries no jury
-// wording at all when the jury cannot run in time, and the old dispatch wording when there is simply no factory.
+// panelBrief starts the second-opinion jurors in the background and returns the reviewer's brief at once: the reviewer
+// never waits for them. Their findings are printed after the review (see printLeads). scratch is set when the change is
+// not in this checkout. Without a pipeline or a factory the brief carries the old dispatch wording, and with no time for
+// the jurors it carries no jury wording at all.
 func panelBrief(ctx context.Context, rc ReviewConfig, jurors jurorFactory, tier review.Tier, scratch bool, brief func(tier review.Tier, jury []string) string) string {
 	models := review.JuryFor(tier, rc.SecondOpinion)
-	if jurors == nil || len(models) == 0 {
+	pipe := review.PipelineOf(ctx)
+	if jurors == nil || pipe == nil || len(models) == 0 {
 		return brief(tier, models)
 	}
 	// Without a jury wording of its own the brief never tells the reviewer to dispatch jurors it has no time for.
 	plainTier := tier.Panel()
-	window := min(review.JurorLimit, max(time.Until(review.WorkDeadline(ctx))-review.ReviewerShare-review.KillGrace, 0))
-	if window < review.MinRun {
+	if time.Until(review.WorkDeadline(ctx))-review.KillGrace < review.MinRun {
 		return brief(plainTier, nil)
 	}
 	reviewers, cleanup := jurors(ctx, models, tier.Timed(), scratch)
-	defer cleanup()
 	if len(reviewers) == 0 {
+		cleanup()
 		return brief(plainTier, nil)
 	}
 	repoDir := ""
@@ -84,7 +85,8 @@ func panelBrief(ctx context.Context, rc ReviewConfig, jurors jurorFactory, tier 
 		repoDir = first.Dir
 	}
 	plain := brief(plainTier, nil)
-	return plain + "\n\n" + review.Panel{Repo: repoDir, Reviewers: reviewers}.Run(ctx, plain, window)
+	pipe.Start(ctx, repoDir, plain, reviewers, cleanup)
+	return plain
 }
 
 // clampFlag sets --name to limit unless the caller asked for something stricter, in either --name v or --name=v form.
