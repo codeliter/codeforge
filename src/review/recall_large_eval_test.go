@@ -5,6 +5,7 @@ package review
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -118,33 +119,55 @@ func TestEvalLargeDiff(t *testing.T) {
 	risky := TierRisky
 	risky.Jury = false
 	timedTier := risky.Timed()
-	jurors := strings.Split(cmpOr(os.Getenv("CODEFORGE_EVAL_JURORS"), "litellm/llmgateway/gpt-6.1-sol,litellm/llmgateway/kimi-k3"), ",")
+	jurors := strings.Split(cmpOr(os.Getenv("CODEFORGE_EVAL_JURORS"), "litellm/llmgateway/kimi-k3"), ",")
 	one := func(m string, tier Tier) Reviewer {
 		return EmpryoReviewer{Bin: bin, Model: m, Dir: dir, Tier: tier}
 	}
+	panel := func(tier Tier) Panel {
+		rs := make([]Reviewer, len(jurors))
+		for i, m := range jurors {
+			rs[i] = one(m, tier)
+		}
+		return Panel{Repo: dir, Reviewers: rs}
+	}
 	setups := []lsetup{
-		{"timed", timedTier, AgentLimit, func(ctx context.Context, brief string) (string, error) {
+		{"alone", timedTier, AgentLimit, func(ctx context.Context, brief string) (string, error) {
 			return one(model, timedTier).Review(ctx, brief)
 		}},
-		{"full", risky, 10 * time.Minute, func(ctx context.Context, brief string) (string, error) {
-			return one(model, risky).Review(ctx, brief)
-		}},
-		// What codeforge review does with a jury: the jurors run in parallel, then the main reviewer checks their leads.
-		{"jury", timedTier, JurorLimit + AgentLimit, func(ctx context.Context, brief string) (string, error) {
-			rs := make([]Reviewer, len(jurors))
-			for i, m := range jurors {
-				rs[i] = one(m, timedTier)
-			}
-			leads, _ := Panel{Repo: dir, Reviewers: rs}.Collect(ctx, brief, JurorLimit)
+		// Today: the jurors run first, then the main reviewer, which is given what they found.
+		{"sequential", timedTier, JurorLimit + AgentLimit, func(ctx context.Context, brief string) (string, error) {
+			leads, _ := panel(timedTier).Collect(ctx, brief, JurorLimit)
 			mctx, cancel := context.WithTimeout(ctx, AgentLimit)
 			defer cancel()
 			return one(model, timedTier).Review(mctx, brief+"\n\n"+leads)
 		}},
-	}
-	for _, m := range jurors {
-		setups = append(setups, lsetup{"solo " + m[strings.LastIndex(m, "/")+1:], timedTier, AgentLimit, func(ctx context.Context, brief string) (string, error) {
-			return one(m, timedTier).Review(ctx, brief)
-		}})
+		// Proposed: the main reviewer starts at once and never waits; the jurors' blocking findings are added unverified.
+		{"parallel", timedTier, AgentLimit, func(ctx context.Context, brief string) (string, error) {
+			type jr struct{ blocking []Finding }
+			ch := make(chan jr, 1)
+			go func() {
+				jctx, cancel := context.WithTimeout(ctx, AgentLimit)
+				defer cancel()
+				res, _ := Jury(jctx, dir, brief, panel(timedTier).Reviewers, JuryOptions{})
+				var all []Finding
+				for _, v := range res.Votes {
+					all = append(all, v.Verdict.Blocking...)
+				}
+				ch <- jr{all}
+			}()
+			text, err := one(model, timedTier).Review(ctx, brief)
+			j := <-ch
+			v, perr := ParseVerdict(text)
+			if perr != nil {
+				return text, err
+			}
+			v.Blocking = append(v.Blocking, j.blocking...)
+			out, merr := json.Marshal(v)
+			if merr != nil {
+				return text, merr
+			}
+			return string(out), err
+		}},
 	}
 	results := map[string][]runResult{}
 	for _, s := range setups {
