@@ -41,10 +41,10 @@ Each finding: `path:line`, a label, the reason with evidence (the caller, the in
 - `nitpick (non-blocking):` style only. At most three.
 - `praise:` one specific thing worth repeating, at most one.
 
-Keep at most eight findings; drop the weakest. Never invent a file or line: every `path:line` must exist, or the finding is discarded.
+List every blocking issue you find, without a cap; keep at most eight suggestions, dropping the weakest. Never invent a file or line: every `path:line` must exist, or the finding is discarded.
 
 ## 6. Jury
-The brief states the triage tier. A simple change (`docs`, `small`; the brief says to skip the jury) is reviewed by you alone. A complicated or high-risk change (`standard`, `risky`) goes to the jury: dispatch one read-only subagent per named model, in parallel, with the same brief, and ask each for its top three risks with `path:line`. If a complicated or high-risk brief names no models, use one model from a different family than yours. Re-check every finding they return against the code; keep what holds, drop what you can disprove, and say which model raised each kept finding. Approve only when no kept jury finding is blocking.
+The brief states the triage tier. A simple change (`docs`, `small`; the brief says to skip the jury) is reviewed by you alone. A complicated or high-risk change (`standard`, `risky`) goes to the jury: dispatch one read-only subagent per named model, in parallel, with the same brief, and ask each for every blocking risk with `path:line`, plus its top suggestions. If a complicated or high-risk brief names no models, use one model from a different family than yours. Re-check every finding they return against the code; keep what holds, drop what you can disprove, and say which model raised each kept finding. Approve only when no kept jury finding is blocking.
 
 ## 7. Output
 1. **Verdict:** Approve, Comment or Request changes, with the main reason, in two or three sentences.

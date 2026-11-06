@@ -127,6 +127,6 @@ func DeltaNote(prev Round, changed []string) string {
 	}
 	fmt.Fprintf(&s, "\nSince then these files changed: %s\n", strings.Join(changed, ", "))
 	s.WriteString("First check that each previous finding is fixed or wrong. Then review the changed files and what they affect. ")
-	s.WriteString("Files not listed were already reviewed and are unchanged: the pack below holds only the changed files, so read others only if a finding depends on them.\n")
+	s.WriteString("Files not listed are unchanged since that review, which may not have finished every reviewer, so do not assume they are correct. The brief above holds the diff of the whole change. The pack below holds the changed files that fit its size budget and up to 8 git grep hits per changed exported symbol; other callers are not in it, so check them when a finding depends on them and your step budget allows.\n")
 	return s.String()
 }

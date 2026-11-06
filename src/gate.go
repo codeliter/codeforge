@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -95,7 +96,7 @@ func runGate(ctx context.Context, home, bin string, cfg Config, w io.Writer) err
 	}
 
 	brief := review.PromptLocal(local, tier, nil) + note + review.Pack(ctx, review.ExecRunner{}, repo, packed, tier)
-	rubric := review.CacheKey(assets.Gate, review.VerdictInstructions, tier.Name)
+	rubric := review.CacheKey(assets.Gate, review.VerdictInstructions, tier.Name, strconv.FormatBool(followUp))
 	opts := review.JuryOptions{
 		Cache:    &review.Cache{Dir: filepath.Join(configDir(home), "review-cache")},
 		CacheKey: func(model string) string { return review.CacheKey(tree, model, rubric) },
@@ -108,15 +109,25 @@ func runGate(ctx context.Context, home, bin string, cfg Config, w io.Writer) err
 	start := time.Now()
 	fmt.Fprintf(w, "codeforge gate: %s tier (%s effort), %d reviewers on %s vs %s: %s\n",
 		tier.Name, tier.Effort, len(reviewers), orBranch(local.Branch), local.Base, strings.Join(models, ", "))
+
+	// The tests need no verdict from anyone, so they run while the reviewers work instead of after them. The reviewers
+	// are read-only and the tree is re-checked after the review, so nothing they do can change what the tests see.
+	verifyCtx, stopVerify := context.WithCancel(ctx)
+	defer stopVerify()
+	verified := make(chan []review.Finding, 1)
+	go func() { verified <- review.Verify(verifyCtx, review.ExecRunner{}, repo, local.Files) }()
+
 	res, err := review.Jury(ctx, repo, brief, reviewers, opts)
-	// Deterministic backstop, run on every review rather than only on a pass: the code's own tests are evidence the
-	// repository gives, and a reviewer that missed a failing test is wrong however it voted. It runs after the Jury for
-	// the same packages, so most of the compile cost is already paid.
-	if err == nil {
-		if findings := review.Verify(ctx, review.ExecRunner{}, repo, packed.Files); len(findings) > 0 {
-			res.Blocking = append(res.Blocking, findings...)
-			fmt.Fprintf(w, "codeforge gate: the changed packages' tests fail, so the review cannot pass\n")
-		}
+	// Deterministic backstop, collected on every review rather than only on a pass: the code's own tests are evidence the
+	// repository gives, and a reviewer that missed a failing test is wrong however it voted. They cover every changed
+	// package even in a follow-up round, because a fix can break a package whose files did not change since the last
+	// round. A jury error leaves nothing to add them to, so it stops the tests instead of waiting for them.
+	if err != nil {
+		stopVerify()
+		<-verified
+	} else if findings := <-verified; len(findings) > 0 {
+		res.Blocking = append(res.Blocking, findings...)
+		fmt.Fprintf(w, "codeforge gate: the changed packages' tests fail, so the review cannot pass\n")
 	}
 	report(w, res)
 	fmt.Fprintf(w, "codeforge gate: done in %s; %s\n", time.Since(start).Round(time.Second), usage.totals())
@@ -215,6 +226,10 @@ func report(w io.Writer, res review.JuryResult) {
 		}
 		fmt.Fprintf(w, "\n%s:\n", title)
 		for _, f := range fs {
+			if f.Invariant != "" {
+				fmt.Fprintf(w, "- %s:%d %s (breaks: %s)\n", f.File, f.Line, f.What, f.Invariant)
+				continue
+			}
 			fmt.Fprintf(w, "- %s:%d %s\n", f.File, f.Line, f.What)
 		}
 	}

@@ -210,3 +210,12 @@ func TestFitEffort(t *testing.T) {
 	require.Equal(t, "medium", fitEffort("medium", nil), "unknown support passes through")
 	require.Equal(t, "high", fitEffort("low", []string{"high", "max"}), "lowest supported when nothing fits below")
 }
+
+func TestClassify_RiskyFloorSkipsTheJudges(t *testing.T) {
+	calls := 0
+	judge := flakyJudge{answers: []string{`{"risk":0,"complexity":0,"reason":"r"}`}, calls: &calls}
+	tier, why := Classify(t.Context(), []Judge{judge, judge}, "+++ b/db/0001.sql\n+ALTER TABLE a DROP COLUMN b;\n", []string{"db/migrations/0001.sql"})
+	require.Equal(t, TierRisky.Name, tier.Name)
+	require.Zero(t, calls, "no judge is paid when no answer could change the tier")
+	require.Contains(t, why, "judges were skipped")
+}

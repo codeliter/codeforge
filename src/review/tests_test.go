@@ -35,6 +35,13 @@ func TestTestPackages(t *testing.T) {
 func TestVerify_PassesWhenTestsPass(t *testing.T) {
 	r := &fakeTests{out: "ok  \texample.com/shop/internal/a\t0.1s"}
 	require.Empty(t, Verify(t.Context(), r, "/repo", []string{"internal/a/a.go"}))
+	require.Equal(t, []string{"/repo go test ./internal/a"}, r.calls, "go test's own result cache is used")
+}
+
+func TestVerify_NoCacheEnvForcesAFreshRun(t *testing.T) {
+	t.Setenv(verifyNoCacheEnv, "1")
+	r := &fakeTests{out: "ok  \texample.com/shop/internal/a\t0.1s"}
+	require.Empty(t, Verify(t.Context(), r, "/repo", []string{"internal/a/a.go"}))
 	require.Equal(t, []string{"/repo go test -count=1 ./internal/a"}, r.calls)
 }
 
@@ -153,4 +160,30 @@ func TestVerify_SkipsNonGoChanges(t *testing.T) {
 	r := &fakeTests{}
 	require.Empty(t, Verify(t.Context(), r, "/repo", []string{"README.md"}))
 	require.Empty(t, r.calls, "no test run for a docs change")
+}
+
+func TestVerify_EachFailingPackageNamesItsOwnTest(t *testing.T) {
+	r := &fakeTests{
+		out: "--- FAIL: TestA (0.00s)\nFAIL\texample.com/shop/internal/a\t0.1s\nok  \texample.com/shop/internal/c\t0.1s\n--- FAIL: TestB (0.00s)\nFAIL\texample.com/shop/internal/b\t0.1s\n",
+		err: errExit,
+	}
+	got := Verify(t.Context(), r, "/repo", []string{"internal/a/a.go", "internal/b/b.go", "internal/c/c.go"})
+	require.Len(t, got, 2)
+	require.Contains(t, got[0].What, "TestA")
+	require.NotContains(t, got[0].What, "TestB")
+	require.Contains(t, got[1].What, "TestB")
+	require.NotContains(t, got[1].What, "TestA")
+}
+
+func TestTruncateRunes_NeverSplitsACharacter(t *testing.T) {
+	require.Equal(t, "ab", truncateRunes("abÃ©", 3))
+	require.Equal(t, "abc", truncateRunes("abc", 5))
+}
+
+func TestVerify_CompileFailureKeepsItsReason(t *testing.T) {
+	r := &fakeTests{out: "# example.com/shop/internal/a\ninternal/a/a.go:3:1: undefined: Foo\nFAIL\texample.com/shop/internal/a [build failed]\n", err: errExit}
+	got := Verify(t.Context(), r, "/repo", []string{"internal/a/a.go"})
+	require.Len(t, got, 1)
+	require.Contains(t, got[0].What, "build failed")
+	require.True(t, JuryResult{Blocking: got}.WithTests(), "a toolchain failure also clears the cached verdicts")
 }

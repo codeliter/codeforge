@@ -22,8 +22,8 @@ type Tier struct {
 const (
 	docsSteps     = 4
 	smallSteps    = 5
-	standardSteps = 14
-	riskySteps    = 20
+	standardSteps = 20
+	riskySteps    = 30
 )
 
 var (

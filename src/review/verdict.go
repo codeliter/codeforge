@@ -18,6 +18,9 @@ type Finding struct {
 	File string `json:"file"`
 	Line int    `json:"line"`
 	What string `json:"what"`
+	// Invariant names the contract or documented behaviour the finding breaks. Optional: a concrete input with a wrong
+	// result is Blocking whether or not any invariant names it.
+	Invariant string `json:"invariant,omitempty"`
 }
 
 type Verdict struct {
@@ -31,12 +34,12 @@ type Verdict struct {
 const VerdictInstructions = `
 
 You are a gate reviewer. Do not dispatch other agents; the gate already runs each reviewer independently.
-Keep the prose short. End your answer with exactly one fenced json block and nothing after it:
+Keep the prose short, but list EVERY blocking issue you find: never stop at the first, never cap the count, and report each distinct input or spelling that triggers a bug once it is known. Later rounds only confirm fixes, so what you leave out now is found one round late. End your answer with exactly one fenced json block and nothing after it:
 ` + "```json" + `
-{"verdict":"pass|fail","summary":"<one sentence>","blocking":[{"file":"path","line":1,"what":"what breaks and the fix"}],"should":[{"file":"path","line":1,"what":"..."}]}
+{"verdict":"pass|fail","summary":"<one sentence>","blocking":[{"file":"path","line":1,"what":"what breaks and the fix","invariant":"the documented behaviour or contract it breaks"}],"should":[{"file":"path","line":1,"what":"..."}]}
 ` + "```" + `
 verdict is "fail" when and only when blocking is non-empty. Blocking means wrong behaviour, data loss, a security problem or an unsafe rollout. Style is never blocking.
-A finding is Blocking, not a should, when the code produces a wrong result or crashes for some input, drops or reorders data, breaks a documented contract, or fails a test that ships with the change. "The tests would fail" or "the last line is lost" is Blocking even when no existing test covers that case. If you can state a concrete input that gets the wrong output, it is Blocking.`
+A finding is Blocking, not a should, when the code produces a wrong result or crashes for some input, drops or reorders data, breaks a documented contract, or fails a test that ships with the change. "The tests would fail" or "the last line is lost" is Blocking even when no existing test covers that case. If you can state a concrete input that gets the wrong output, it is Blocking, and its what names that input.`
 
 // stepBudget tells a reviewer how many tool steps it has. A run that reaches its limit without a verdict is a wasted
 // review, so it must answer before then.

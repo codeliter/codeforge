@@ -85,4 +85,6 @@ func TestDeltaNote(t *testing.T) {
 	require.Contains(t, note, "a.go:7 nil deref")
 	require.Contains(t, note, "these files changed: a.go")
 	require.Contains(t, note, "unchanged")
+	require.NotContains(t, note, "were already reviewed")
+	require.Contains(t, note, "git grep hits per changed exported symbol")
 }

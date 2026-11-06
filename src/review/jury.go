@@ -50,7 +50,7 @@ type JuryResult struct {
 
 // WithTests marks a result whose changed packages were verified by running their tests.
 func (r JuryResult) WithTests() bool {
-	return slices.ContainsFunc(r.Blocking, func(f Finding) bool { return strings.HasPrefix(f.What, "the repository's own tests fail") })
+	return slices.ContainsFunc(r.Blocking, func(f Finding) bool { return strings.HasPrefix(f.What, "the repository's own tests") })
 }
 
 func (r JuryResult) Passed() bool {

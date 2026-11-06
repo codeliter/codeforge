@@ -56,6 +56,10 @@ func Classify(ctx context.Context, judges []Judge, diff string, files []string) 
 	if base.Name == TierDocs.Name || len(judges) == 0 {
 		return base, ""
 	}
+	// Risky is the top tier and file kinds are a floor the judges cannot lower, so no answer could change the result.
+	if base.Name == TierRisky.Name {
+		return base, "infrastructure or schema files set the floor, so the judges were skipped"
+	}
 	if changedLines(diff) <= tinyDiffLines {
 		judges = judges[:1]
 	}

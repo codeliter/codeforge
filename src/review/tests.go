@@ -2,10 +2,12 @@ package review
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 const (
@@ -44,7 +46,7 @@ func Verify(ctx context.Context, r DirRunner, repo string, files []string) []Fin
 	ctx, cancel := context.WithTimeout(ctx, verifyTimeout)
 	defer cancel()
 
-	args := append([]string{"test", "-count=1"}, prefixed(dirs)...)
+	args := slices.Concat([]string{"test"}, cacheFlags(), prefixed(dirs))
 	out, err := r.RunDir(ctx, repo, "go", args...)
 	if err == nil {
 		return nil
@@ -52,22 +54,47 @@ func Verify(ctx context.Context, r DirRunner, repo string, files []string) []Fin
 
 	text := string(out)
 	var findings []Finding
-	for pkg := range strings.SplitSeq(text, "\n") {
-		rest, ok := strings.CutPrefix(pkg, "FAIL\t")
+	// go test prints a package's output, then its ok or FAIL line, so each section belongs to the line that closes it.
+	var section []string
+	for line := range strings.SplitSeq(text, "\n") {
+		rest, ok := strings.CutPrefix(line, "FAIL\t")
 		if !ok {
+			if isPackageResult(line) {
+				section = section[:0]
+			} else {
+				section = append(section, line)
+			}
 			continue
 		}
 		name, _, _ := strings.Cut(rest, "\t")
 		findings = append(findings, Finding{
 			File: fileIn(dirs, files, name),
-			What: "the repository's own tests fail for " + strings.TrimSpace(name) + reason(text),
+			What: "the repository's own tests fail for " + strings.TrimSpace(name) + reason(strings.Join(append(section, line), "\n")),
 		})
+		section = section[:0]
 	}
 	if len(findings) == 0 {
 		// A build failure or a missing toolchain prints no FAIL line; it still means the change is unverified.
-		findings = append(findings, Finding{File: fileIn(dirs, files, ""), What: "the repository's tests could not be run: " + tail(text)})
+		findings = append(findings, Finding{File: fileIn(dirs, files, ""), What: "the repository's own tests could not be run: " + tail(text)})
 	}
 	return findings
+}
+
+// isPackageResult is the line go test prints when a package passes or has no tests.
+func isPackageResult(line string) bool {
+	return strings.HasPrefix(line, "ok  \t") || strings.HasPrefix(line, "?   \t")
+}
+
+// verifyNoCacheEnv turns off go test's result cache for the gate. By default an unchanged package replays its last
+// passing result: go keys the cache on the package's files and the files and variables its tests read, and a failing
+// run is never cached.
+const verifyNoCacheEnv = "CODEFORGE_VERIFY_NOCACHE"
+
+func cacheFlags() []string {
+	if os.Getenv(verifyNoCacheEnv) != "" {
+		return []string{"-count=1"}
+	}
+	return nil
 }
 
 func prefixed(dirs []string) []string {
@@ -102,14 +129,22 @@ func fileIn(dirs, files []string, pkg string) string {
 
 // reason names the first failing test or build error, so the finding says what broke rather than only which package.
 func reason(out string) string {
-	if len(out) > maxVerifyShown {
-		out = out[:maxVerifyShown]
-	}
 	for line := range strings.SplitSeq(out, "\n") {
 		line = strings.TrimSpace(line)
 		if strings.Contains(line, "--- FAIL") || strings.Contains(line, "build failed") || strings.Contains(line, "cannot find") {
-			return ": " + line
+			return ": " + truncateRunes(line, maxVerifyShown)
 		}
 	}
 	return ""
+}
+
+// truncateRunes cuts at a rune boundary, so a multi-byte character is never split.
+func truncateRunes(s string, limit int) string {
+	if len(s) <= limit {
+		return s
+	}
+	for limit > 0 && !utf8.RuneStart(s[limit]) {
+		limit--
+	}
+	return s[:limit]
 }

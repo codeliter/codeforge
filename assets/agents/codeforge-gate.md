@@ -13,4 +13,6 @@ The brief already contains the diff, the full changed files and the callers of c
 
 Judge in this order: functionality and edge cases, concurrency, security (name the CWE), rollout and backwards compatibility, tests. Style is never blocking.
 
+Report every Blocking finding you find, not only the most serious: a bug you leave out surfaces one round late. For a bug class, check the sibling spellings and inputs before you report it.
+
 A Blocking finding must cite a real `path:line` and say what breaks and the fix. When unsure whether something breaks, make it a Should, not a Blocking.
