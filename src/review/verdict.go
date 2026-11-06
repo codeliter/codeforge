@@ -43,9 +43,17 @@ A finding is Blocking, not a should, when the code produces a wrong result or cr
 
 // stepBudget tells a reviewer how many tool steps it has. A run that reaches its limit without a verdict is a wasted
 // review, so it must answer before then.
+// answerSteps are kept back from the tool budget for the answer itself.
+const answerSteps = 3
+
 func stepBudget(steps int) string {
-	return fmt.Sprintf("\n\nYou have at most %d tool steps. Give your verdict by step %d at the latest: a review that runs out of steps returns nothing. "+
-		"The brief already holds the diff and changed files, so read more only when a finding depends on it.", steps, max(steps-1, 1))
+	calls := max(steps-answerSteps, 1)
+	unit := "tool calls"
+	if calls == 1 {
+		unit = "tool call"
+	}
+	return fmt.Sprintf("\n\nYou have at most %d tool steps, and the answer itself is one of them: make at most %d %s, then write the review. "+
+		"A review that runs out of steps returns nothing, whatever you found. The brief already holds the diff and the changed files in full, so read more only when a finding depends on it.", steps, calls, unit)
 }
 
 // ParseVerdict reads only the final json object of the answer. Quoted diff content earlier in the answer

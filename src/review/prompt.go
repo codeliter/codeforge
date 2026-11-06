@@ -61,6 +61,9 @@ func writeJury(s *strings.Builder, tier Tier, jury []string) {
 		s.WriteString("Approve only if no jury finding holds; a Blocking jury finding you cannot disprove means Request changes.\n")
 	case tier.Name != "":
 		fmt.Fprintf(s, "Triage: %s, a simple change. Review it alone; skip the jury.\n", tier.Name)
+	default:
+		// The panel is codeforge's to run, in parallel and on the clock. A dispatched subagent costs most of the time limit.
+		s.WriteString("Review this alone: do not dispatch a jury, explore agents or any other subagent. Any juror findings below are leads to check against the code.\n")
 	}
 }
 

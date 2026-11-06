@@ -116,7 +116,7 @@ func runGate(ctx context.Context, home, bin string, cfg Config, w io.Writer) err
 
 	// The tests need no verdict from anyone, so they run while the reviewers work instead of after them. The reviewers
 	// are read-only and the tree is re-checked after the review, so nothing they do can change what the tests see.
-	panelCtx, stopPanel := context.WithDeadline(ctx, review.PanelDeadline(ctx))
+	panelCtx, stopPanel := context.WithDeadline(ctx, review.AgentEnd(ctx))
 	defer stopPanel()
 	verifyCtx, stopVerify := context.WithCancel(panelCtx)
 	defer stopVerify()

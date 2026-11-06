@@ -66,6 +66,27 @@ func Pack(ctx context.Context, r Runner, repo string, l Local, t Tier) string {
 	return s.String()
 }
 
+// PackRef is Pack for a PR whose head is fetched as ref: the changed files are read from that ref, because the working
+// tree is not the change. Without them a reviewer spends its few steps fetching files and can run out before its verdict.
+func PackRef(ctx context.Context, r Runner, ref string, files []string, t Tier) string {
+	var s strings.Builder
+	budget := packBudget(t)
+	s.WriteString("\n<changed_files>\n")
+	for _, f := range files {
+		if secretName.MatchString(f) || budget <= 0 {
+			continue
+		}
+		data, err := r.Run(ctx, "git", "show", ref+":"+f)
+		if err != nil || len(data) > maxFileBytes || len(data) > budget || !isText(data) {
+			continue
+		}
+		budget -= len(data)
+		fmt.Fprintf(&s, "=== %s ===\n%s\n", f, numbered(string(data)))
+	}
+	s.WriteString("</changed_files>\n")
+	return s.String()
+}
+
 // Callers lists where changed exported symbols are used outside the changed files.
 func Callers(ctx context.Context, r Runner, repo, diff string, changed []string) string {
 	var s strings.Builder

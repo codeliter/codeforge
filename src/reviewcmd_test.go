@@ -72,28 +72,3 @@ func TestClampFlag(t *testing.T) {
 		})
 	}
 }
-
-func TestStartsReview(t *testing.T) {
-	tests := []struct {
-		name        string
-		args        []string
-		defaultMode string
-		want        bool
-	}{
-		{"explicit", []string{"review", "42"}, "", true},
-		{"pr number", []string{"#42"}, "", true},
-		{"pr url", []string{"https://github.com/o/r/pull/7"}, "", true},
-		{"default mode review", []string{"look at the auth change"}, modeReview, true},
-		{"default mode with a command word", []string{"work", "fix it"}, modeReview, false},
-		{"default mode with the picker", nil, modeReview, true},
-		{"plain task", []string{"fix the bug"}, modeChat, false},
-		{"resume", []string{"review", "--resume", "abc"}, modeReview, false},
-		{"gate", []string{"gate"}, modeReview, false},
-		{"ticket flag under a review default", []string{"--ticket", "ABC-1", "fix it"}, modeReview, false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			require.Equal(t, tt.want, startsReview(tt.args, tt.defaultMode))
-		})
-	}
-}

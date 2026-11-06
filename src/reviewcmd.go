@@ -70,7 +70,7 @@ func panelBrief(ctx context.Context, rc ReviewConfig, jurors jurorFactory, tier 
 	}
 	// Without a jury wording of its own the brief never tells the reviewer to dispatch jurors it has no time for.
 	plainTier := tier.Panel()
-	window := min(review.PanelWindow, max(time.Until(review.PanelDeadline(ctx))-review.MinRun-review.KillGrace, 0))
+	window := min(review.JurorLimit, max(time.Until(review.WorkDeadline(ctx))-review.ReviewerShare-review.KillGrace, 0))
 	if window < review.MinRun {
 		return brief(plainTier, nil)
 	}
@@ -144,7 +144,10 @@ func reviewArgs(ctx context.Context, bin string, rc ReviewConfig, judges []revie
 	// reserve, so a review ends inside review.HardLimit however slow gh or the model is.
 	// Limits the caller passed are clamped to the bound, never trusted: a stricter one stays, a looser one is lowered.
 	bound := func(rest []string, tier review.Tier) ([]string, string) {
-		left := max(time.Until(review.PanelDeadline(ctx))-review.KillGrace, review.MinRun)
+		left := min(review.AgentLimit, time.Until(review.WorkDeadline(ctx))) - review.KillGrace
+		if left < review.MinRun {
+			return rest, review.TimeNote(max(left, time.Second))
+		}
 		timed := tier.Timed()
 		limits := timed.Limits(left)
 		for i := 0; i+1 < len(limits); i += 2 {
@@ -191,7 +194,14 @@ func reviewArgs(ctx context.Context, bin string, rc ReviewConfig, judges []revie
 	cctx, ccancel := context.WithTimeout(ctx, review.LoadLimit)
 	defer ccancel()
 	tier, _ := review.Classify(cctx, judges, b.Diff, b.Files())
-	prompt := panelBrief(ctx, rc, jurors, tier, b.HeadRef == "", func(t review.Tier, jury []string) string { return review.Prompt(b, t, jury) })
+	// The changed files come with the brief, so the jurors and the reviewer read instead of fetching and still reach a verdict.
+	packed := ""
+	if b.HeadRef != "" {
+		pctx, pcancel := context.WithTimeout(ctx, review.LoadLimit)
+		defer pcancel()
+		packed = review.PackRef(pctx, review.ExecRunner{}, b.HeadRef, b.Files(), tier)
+	}
+	prompt := panelBrief(ctx, rc, jurors, tier, b.HeadRef == "", func(t review.Tier, jury []string) string { return review.Prompt(b, t, jury) + packed })
 	rest, note := bound(rest, tier)
 	return append(rest, prompt+"\n\n"+note), nil
 }

@@ -42,6 +42,8 @@ func TestPanel_RunsJurorsInParallelAndRendersFindings(t *testing.T) {
 	require.Less(t, time.Since(start), 280*time.Millisecond, "jurors overlap")
 	require.Contains(t, got, "blocking a.go:3 drops data")
 	require.Contains(t, got, "do not dispatch jurors yourself")
+	require.Contains(t, got, "stays a blocking finding")
+	require.Contains(t, got, "the change is not approved")
 }
 
 func TestPanel_SlowJurorIsNamedNotAwaited(t *testing.T) {

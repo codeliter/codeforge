@@ -5,19 +5,24 @@ import (
 	"time"
 )
 
-// The review clock. HardLimit is the longest `codeforge review` may take from the moment it starts, for any reason.
-// These are variables only so tests can shrink them.
+// The review clock. HardLimit is the longest `codeforge review` may take in all, from the moment its clock starts, for any
+// reason; setup before that moment is not counted. AgentLimit is the longest any one reviewer or juror runs, from its
+// own start, and is always cut short by HardLimit. These are variables only so tests can shrink them.
 var (
-	HardLimit = 120 * time.Second
-	// Reserve is kept after the reviewers' deadline for killing stragglers, writing the draft and opening the session.
-	Reserve = 15 * time.Second
-	// LoadLimit caps the gh and git calls that collect the change.
-	LoadLimit = 15 * time.Second
-	// KillGrace is how long before the hard kill a reviewer is told to stop on its own, so a slow one still returns the
-	// text it has instead of being killed mid-sentence.
-	KillGrace = 8 * time.Second
-	// PanelWindow is how long the parallel jurors get, counted from when they start.
-	PanelWindow = 35 * time.Second
+	HardLimit  = 180 * time.Second
+	AgentLimit = 120 * time.Second
+	// Reserve is kept after the agents' deadline for killing stragglers, writing the draft and opening the session.
+	Reserve = 10 * time.Second
+	// LoadLimit caps all the gh and git calls that collect the change together.
+	LoadLimit = 20 * time.Second
+	// KillGrace is how long before a hard kill an agent is told to stop on its own, so a slow one still saves its
+	// session and returns the text it has instead of being killed mid-sentence.
+	KillGrace = 5 * time.Second
+	// JurorLimit is how long the jurors, which run in parallel before the main reviewer, get in all. The main reviewer
+	// then has the rest, up to AgentLimit, and checks their findings as leads.
+	JurorLimit = 45 * time.Second
+	// ReviewerShare is the least the main reviewer must keep after the jurors: AgentLimit is its maximum, not its reservation.
+	ReviewerShare = 55 * time.Second
 	// MinRun is the least time worth launching a reviewer for: Empryo's start-up alone takes several seconds.
 	MinRun = 20 * time.Second
 )
@@ -44,12 +49,24 @@ func Deadline(ctx context.Context) time.Time {
 	return time.Now().Add(HardLimit)
 }
 
-// PanelDeadline is when every reviewer is killed: Reserve before the end of the review.
-func PanelDeadline(ctx context.Context) time.Time {
+// WorkDeadline is when every agent is over: Reserve before the end of the review.
+func WorkDeadline(ctx context.Context) time.Time {
 	return Deadline(ctx).Add(-Reserve)
 }
 
 // Elapsed is how long the review has been running.
 func Elapsed(ctx context.Context) time.Duration {
 	return HardLimit - time.Until(Deadline(ctx))
+}
+
+// AgentEnd is when an agent that starts now must be over: AgentLimit from now, never past WorkDeadline.
+func AgentEnd(ctx context.Context) time.Time {
+	return minTime(time.Now().Add(AgentLimit), WorkDeadline(ctx))
+}
+
+func minTime(a, b time.Time) time.Time {
+	if a.Before(b) {
+		return a
+	}
+	return b
 }

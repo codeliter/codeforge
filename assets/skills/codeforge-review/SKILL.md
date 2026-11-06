@@ -5,7 +5,7 @@ description: Review a PR or local work like a senior colleague, to industry stan
 
 # Review a PR or local work
 
-The standard: approve when the change improves the overall health of the codebase, even if it isn't perfect. Block only for real problems. Read like the person who will be paged for it.
+The standard: approve when the change improves the overall health of the codebase, even if it isn't perfect. Block only for real problems: technical facts and data overrule opinion and personal preference. Read like the person who will be paged for it.
 
 ## 1. Intent before the diff
 - Read the title, description, ticket and commits (for local work: branch and commits). Write one sentence: what this solves and how.
@@ -34,17 +34,21 @@ Google's engineering practices order, from most to least important. Skip what do
 - **Change-failure risk:** what is the blast radius if this is wrong, and how fast would we know? Large, risky diffs should be split.
 
 ## 5. Write findings as Conventional Comments
-Each finding: `path:line`, a label, the reason with evidence (the caller, the input, the number), and a concrete fix (a short suggestion block when useful).
+Each finding: `path:line`, a label, and the reason with evidence (the caller, the input, the number). The fix is the author's job (Google: "it is the developer's responsibility to fix a CL, not the reviewer's"): name the problem and let the author choose, and suggest a fix only where the problem does not make it obvious or there is a trap in the obvious one. Never write the patch for a whole change, and never edit anything.
 - `issue (blocking):` wrong behaviour, data loss, security, unsafe rollout. Only these block.
 - `suggestion:` a real improvement worth doing in this change.
 - `question:` you can't tell the intent. Ask; don't assume it's wrong.
-- `nitpick (non-blocking):` style only. At most three.
+- `nitpick (non-blocking):` polish the author may ignore, labelled `Nit:`. Style the guide does not require is never blocking. At most three.
+- `optional:` / `fyi:` a good idea that is not required, or something to think about later, so no comment reads as mandatory by accident.
 - `praise:` one specific thing worth repeating, at most one.
 
 List every blocking issue you find, without a cap; keep at most eight suggestions, dropping the weakest. Never invent a file or line: every `path:line` must exist, or the finding is discarded.
 
 ## 6. Jury
 The brief states the triage tier. A simple change (`docs`, `small`; the brief says to skip the jury) is reviewed by you alone. A complicated or high-risk change (`standard`, `risky`) goes to the jury: dispatch one read-only subagent per named model, in parallel, with the same brief, and ask each for every blocking risk with `path:line`, plus its top suggestions. If a complicated or high-risk brief names no models, use one model from a different family than yours. Re-check every finding they return against the code; keep what holds, drop what you can disprove, and say which model raised each kept finding. Approve only when no kept jury finding is blocking.
+
+## 6a. Short on time
+When the brief gives a time limit, spend it in the order of section 3: design and functionality first, then concurrency and security, then tests. Write each blocking issue as soon as you have it, and the verdict first. Foresight, suggestions, nits and praise come last and are dropped when time runs out. A cut-off review that has the blockers is useful; one that has only a polished opening is not.
 
 ## 7. Output
 1. **Verdict:** Approve, Comment or Request changes, with the main reason, in two or three sentences.

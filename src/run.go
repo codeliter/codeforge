@@ -45,8 +45,6 @@ func GHShim(ctx context.Context, args []string) int {
 
 // Run dispatches a codeforge command and launches Empryo.
 func Run(ctx context.Context, args []string) error {
-	// The invocation time anchors a review's hard limit, so repository discovery and config loading spend from it.
-	invoked := time.Now()
 	if len(args) > 0 && isHelp(args[0]) {
 		printHelp(os.Stdout, wantsAllHelp(args[1:]))
 		return nil
@@ -80,18 +78,7 @@ func Run(ctx context.Context, args []string) error {
 		}
 	}
 
-	// A new review has one clock for everything it does, started before the first subprocess: repair, catalog lookups,
-	// repository discovery, collection, classification and the jurors all run under a real cancellation at that
-	// deadline. The launch keeps only the clock, because the engine is supervised by runEngine and must be allowed to
-	// save its session; interrupts still reach it through base.
 	base := ctx
-	if startsReview(args, "") {
-		end := invoked.Add(review.HardLimit)
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithDeadline(review.WithDeadline(base, end), end)
-		defer cancel()
-		base = review.WithDeadline(base, end)
-	}
 
 	// A mistyped mode such as `codeforge zsh` stops here, before any repair, model lookup or paid judge call.
 	if err := unknownCommand(args); err != nil {
@@ -111,6 +98,7 @@ func Run(ctx context.Context, args []string) error {
 		return err
 	}
 	// After an upgrade, refresh managed hooks and profiles once, before any mode or command runs.
+	// Repair runs in every mode, review included, and before a review's clock starts, so it never costs review time.
 	if !repair.enabled {
 		wd, err := os.Getwd()
 		if err != nil {
@@ -210,28 +198,12 @@ func Run(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	// cfg is the effective configuration (environment and trusted project settings included), so default_mode = review
-	// is known here: a review that no command word names still gets its clock before the first listing subprocess.
-	if !review.HasDeadline(ctx) && startsReview(args, cfg.DefaultMode) {
-		end := invoked.Add(review.HardLimit)
-		base = review.WithDeadline(base, end)
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithDeadline(review.WithDeadline(ctx, end), end)
-		defer cancel()
-	}
 	// A person choosing a mode must never wait on subprocess preparation, and their thinking time is not review time:
 	// the picker runs first, and a review chosen there starts its clock at the choice.
 	picked := ""
 	if _, resume, serr := sessionID(args); serr == nil && !resume && !isModeWord(args) {
 		if picked, err = pickMode(cfg, args); err != nil {
 			return err
-		}
-		if picked == modeReview && !review.HasDeadline(ctx) {
-			end := time.Now().Add(review.HardLimit)
-			base = review.WithDeadline(base, end)
-			var cancel context.CancelFunc
-			ctx, cancel = context.WithDeadline(review.WithDeadline(ctx, end), end)
-			defer cancel()
 		}
 	}
 	bin, err := findEmpryo(empryoDir)
@@ -340,8 +312,9 @@ func Run(ctx context.Context, args []string) error {
 	if !resumed {
 		acknowledgeTask(os.Stderr, cmd, rest)
 	}
-	// Every route into a new review gets the clock: an explicit `review` started it at the top, the implicit ones
-	// (a PR number or URL, default_mode, the picker) start it here, before collection, classification and launch.
+	// The review's clock starts here, after the setup above (repair, model catalog, enforcement, mode choice), so setup
+	// time is never charged to it. It covers everything the review itself does: collecting the change, classifying it,
+	// the jurors and the engine.
 	if cmd == modeReview && !resumed && !review.HasDeadline(ctx) {
 		end := time.Now().Add(review.HardLimit)
 		base = review.WithDeadline(base, end)
@@ -372,38 +345,6 @@ func isModeWord(args []string) bool {
 	return false
 }
 
-// startsReview reports whether args begin a new review: the review command, a lone PR link or number, or no command
-// at all under the effective default_mode = review. A resume never does. The picker does not either, because it waits
-// on a person and nothing has asked for a review yet; a review picked there gets its clock once the pick is made.
-func startsReview(args []string, defaultMode string) bool {
-	if _, resume, err := sessionID(args); err != nil || resume {
-		return false
-	}
-	if len(args) > 0 && args[0] == modeReview {
-		return true
-	}
-	if mode, _ := suggestMode(args); mode == modeReview {
-		return true
-	}
-	if hasCommandWord(args) || hasFlag(args, "--ticket") {
-		return false
-	}
-	return defaultMode == modeReview
-}
-
-// hasCommandWord reports whether the first argument names a command or mode rather than being part of a task.
-func hasCommandWord(args []string) bool {
-	if len(args) == 0 {
-		return false
-	}
-	switch args[0] {
-	case modeTicket, "start", modeChat, modeWork, modeReview, "gate", "respond", "init", "setup", "models", "provider",
-		"providers", "doctor", "learn", "trust", "allow", "version", "--version":
-		return true
-	}
-	return isHelp(args[0])
-}
-
 // launch supervises the terminal UI so the resume hint appears after it closes.
 func launch(ctx context.Context, home, bin, mode string, args []string) error {
 	return launchWith(ctx, home, bin, mode, args, nil)
@@ -425,7 +366,7 @@ func launchWith(ctx context.Context, home, bin, mode string, args []string, afte
 	}
 	// A review has a hard limit that only a supervising parent can enforce, so it is never handed over with exec.
 	if mode == modeReview && review.HasDeadline(ctx) && hasFlag(args, "--headless") {
-		return runEngine(ctx, argv, env, review.Deadline(ctx))
+		return runEngine(ctx, argv, env, review.AgentEnd(ctx))
 	}
 	if !hasFlag(args, "--headless") {
 		_, resume, err := sessionID(args)
@@ -439,7 +380,7 @@ func launchWith(ctx context.Context, home, bin, mode string, args []string, afte
 			initial := append(append([]string(nil), argv...), "--headless", "--save-session")
 			var limit time.Time
 			if mode == modeReview && review.HasDeadline(ctx) {
-				limit = review.Deadline(ctx)
+				limit = review.AgentEnd(ctx)
 			}
 			if err := runEngine(ctx, initial, env, limit); err != nil {
 				return err

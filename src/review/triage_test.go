@@ -127,8 +127,8 @@ func TestOnlyDocsUseTheLightReviewer(t *testing.T) {
 
 func TestStepBudget_NamesTheLimit(t *testing.T) {
 	require.Contains(t, stepBudget(8), "at most 8 tool steps")
-	require.Contains(t, stepBudget(8), "by step 7")
-	require.Contains(t, stepBudget(1), "by step 1")
+	require.Contains(t, stepBudget(8), "at most 5 tool calls, then write the review")
+	require.Contains(t, stepBudget(1), "at most 1 tool call,")
 }
 
 func TestPackBudget_ScalesWithTier(t *testing.T) {
@@ -230,8 +230,8 @@ func TestTierTimed(t *testing.T) {
 	}{
 		{TierDocs, 4, "low", false, true},
 		{TierSmall, 5, "medium", false, true},
-		{TierStandard, 8, "medium", true, true},
-		{TierRisky, 8, "medium", true, true},
+		{TierStandard, 14, "medium", true, true},
+		{TierRisky, 14, "medium", true, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.tier.Name, func(t *testing.T) {
@@ -248,8 +248,8 @@ func TestTierTimed(t *testing.T) {
 
 func TestTimeNote(t *testing.T) {
 	require.Contains(t, TimeNote(75*time.Second), "75 seconds")
-	require.Contains(t, WithBudget("brief", TierRisky.Timed(), 60*time.Second), "at most 8 tool steps")
-	require.Equal(t, []string{"--max-steps", "8", "--timeout", "60000"}, TierRisky.Timed().Limits(60*time.Second))
+	require.Contains(t, WithBudget("brief", TierRisky.Timed(), 60*time.Second), "at most 14 tool steps")
+	require.Equal(t, []string{"--max-steps", "14", "--timeout", "60000"}, TierRisky.Timed().Limits(60*time.Second))
 	require.Contains(t, LimitNote(), "120 seconds")
 }
 
