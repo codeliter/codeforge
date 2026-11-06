@@ -49,7 +49,7 @@ func TestWithSystemNote(t *testing.T) {
 }
 
 func TestReviewTimeNote(t *testing.T) {
-	require.Contains(t, review.LimitNote(), "within 120 seconds")
+	require.Contains(t, review.LimitNote(), "within 180 seconds")
 	require.Contains(t, review.WithBudget("brief", review.TierRisky, 60*time.Second), "Time limit")
 }
 

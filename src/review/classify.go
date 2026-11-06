@@ -14,7 +14,7 @@ import (
 
 const (
 	maxJudgedDiffBytes = 12_000
-	// 15s: classification shares the review's 120s clock, and a judge is normally done in 5 to 10s. A judge that is
+	// 15s: classification shares the review's clock, and a judge is normally done in 5 to 10s. A judge that is
 	// late is dropped and the tier is raised, which costs less than spending the reviewers' time waiting for it.
 	classifyTimeout = 15 * time.Second
 	maxScore        = 2

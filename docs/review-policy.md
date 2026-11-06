@@ -62,7 +62,7 @@ Findings from lenses and the probe are clustered by root cause (same file, symbo
 ### 5. Saturate inside the run
 After the first merge, run another pass with the full finding list in the prompt: "what is still missing?" Each pass must bypass the verdict cache, or it replays the same verdict and "converges" instantly and falsely. Repeat until two consecutive passes add no new confirmed cluster, or the budget is spent. The author never sees the intermediate passes.
 
-No coverage estimate. Capture-recapture needs independent samples; lenses are built to find different issue classes and share one diff and rubric, so low overlap is expected and the number would turn "we do not know" into false confidence. The report shows lens overlap descriptively. Model nondeterminism (same tree, different findings) is not fixed by saturation, so the late-finding metric is measured over N samples. All stages must fit the review clock (`review.HardLimit`, 180 seconds, with at most `review.AgentLimit`, 120 seconds, for any one reviewer or juror, src/review/clock.go): the panel ends at `WorkDeadline`, and the reserve after it is for the tree checks and recording the pass.
+No coverage estimate. Capture-recapture needs independent samples; lenses are built to find different issue classes and share one diff and rubric, so low overlap is expected and the number would turn "we do not know" into false confidence. The report shows lens overlap descriptively. Model nondeterminism (same tree, different findings) is not fixed by saturation, so the late-finding metric is measured over N samples. All stages must fit the review clock (`review.HardLimit`, 270 seconds, with at most `review.AgentLimit`, 180 seconds, for any one reviewer or juror, src/review/clock.go): each agent ends at `AgentEnd` (never past `WorkDeadline`), and the reserve after it is for the tree checks and recording the pass.
 
 ### 6. Report once
 One list, grouped by invariant, each item with a reproducing input and the fix. Blocking = confirmed breach of the contract or a confirmed wrong result. Should and Notes are separate and never block. The report ends with the budget used.
@@ -105,11 +105,11 @@ From Opus 5.5, ranked by value over effort. Items 1 to 3 are built; the rest are
 3. **Built:** `Verify` no longer passes `-count=1`, so go's test cache serves unchanged packages. Set `CODEFORGE_VERIFY_NOCACHE=1` to force a fresh run. Go keys its cache on the files and variables a test opens, but a test that shells out to a child process can read things go does not track, so set the variable when a gate must not trust a replayed pass.
 4. Pack the enclosing function or type of each changed hunk plus other signatures, whole files only under about 4 KB (src/review/pack.go:49-59). Files over 20 KB are dropped today.
 5. Stable prompt prefix first, diff last, to raise the cached share above 84% (src/review/empryo.go:45, local.go:203-227).
-6. A cheap no-verdict retry: resume the session or rerun with about 3 steps, and reserve the last 2 steps for the verdict in `stepBudget`.
+6. A cheap no-verdict retry: resume the session or rerun with about 3 steps, and reserve the last 3 steps for the verdict in `stepBudget`.
 7. Carry per-file findings across rounds, re-checked with `grounded()`, so every outstanding finding shows in one pass.
 8. Record per-stage timings in `gateRecord` (src/gateusage.go) to measure each gain.
 
-Do not: re-enable `StopEarly`; raise the time-boxed caps in `Tier.Timed` (8 steps, medium effort) without raising `HardLimit`, since every review must end within it; use the light model for small or standard code; skip Verify when reviewers pass or reviewers when tests fail; drop second opinions on risky changes; reuse whole-tree verdicts per file (reuse findings, never a pass).
+Do not: re-enable `StopEarly`; raise the time-boxed caps in `Tier.Timed` (20 steps, medium effort) without raising `HardLimit`, since every review must end within it; use the light model for small or standard code; skip Verify when reviewers pass or reviewers when tests fail; drop second opinions on risky changes; reuse whole-tree verdicts per file (reuse findings, never a pass).
 
 ## What this does not claim
 

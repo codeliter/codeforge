@@ -25,7 +25,7 @@ type Tier struct {
 // maxTimedSteps and maxTimedEffort bound a review that has a clock: a long thinking budget or a deep tool loop is how
 // a review runs out of time without a verdict.
 const (
-	maxTimedSteps  = 14
+	maxTimedSteps  = 20
 	maxTimedEffort = "medium"
 )
 

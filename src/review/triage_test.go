@@ -230,8 +230,8 @@ func TestTierTimed(t *testing.T) {
 	}{
 		{TierDocs, 4, "low", false, true},
 		{TierSmall, 5, "medium", false, true},
-		{TierStandard, 14, "medium", true, true},
-		{TierRisky, 14, "medium", true, true},
+		{TierStandard, 20, "medium", true, true},
+		{TierRisky, 20, "medium", true, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.tier.Name, func(t *testing.T) {
@@ -248,9 +248,9 @@ func TestTierTimed(t *testing.T) {
 
 func TestTimeNote(t *testing.T) {
 	require.Contains(t, TimeNote(75*time.Second), "75 seconds")
-	require.Contains(t, WithBudget("brief", TierRisky.Timed(), 60*time.Second), "at most 14 tool steps")
-	require.Equal(t, []string{"--max-steps", "14", "--timeout", "60000"}, TierRisky.Timed().Limits(60*time.Second))
-	require.Contains(t, LimitNote(), "120 seconds")
+	require.Contains(t, WithBudget("brief", TierRisky.Timed(), 60*time.Second), "at most 20 tool steps")
+	require.Equal(t, []string{"--max-steps", "20", "--timeout", "60000"}, TierRisky.Timed().Limits(60*time.Second))
+	require.Contains(t, LimitNote(), "180 seconds")
 }
 
 func TestEffortFor_FitsTheTimedDefaultToTheModel(t *testing.T) {

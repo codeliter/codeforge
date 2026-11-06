@@ -9,8 +9,8 @@ import (
 // reason; setup before that moment is not counted. AgentLimit is the longest any one reviewer or juror runs, from its
 // own start, and is always cut short by HardLimit. These are variables only so tests can shrink them.
 var (
-	HardLimit  = 180 * time.Second
-	AgentLimit = 120 * time.Second
+	HardLimit  = 270 * time.Second
+	AgentLimit = 180 * time.Second
 	// Reserve is kept after the agents' deadline for killing stragglers, writing the draft and opening the session.
 	Reserve = 10 * time.Second
 	// LoadLimit caps all the gh and git calls that collect the change together.

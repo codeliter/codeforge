@@ -116,7 +116,7 @@ func runEngine(ctx context.Context, argv, env []string, limit time.Time) error {
 		}
 	}
 	if timedOut {
-		fmt.Fprintf(os.Stderr, "codeforge: the run passed its %s limit and was stopped.\n", review.HardLimit)
+		fmt.Fprintf(os.Stderr, "codeforge: the run passed its time limit (%s per reviewer, %s in all) and was stopped.\n", review.AgentLimit, review.HardLimit)
 		return errors.Join(&EngineExitError{Code: deadlineExit}, forwardErr)
 	}
 	var exit *exec.ExitError
