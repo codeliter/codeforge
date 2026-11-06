@@ -2,7 +2,7 @@
 
 Status: design, revised after review by Opus 5.5 and Kimi K3. Replaces the round-cap proposal, which hid late findings instead of finding them.
 
-Shipped so far: stop-early disabled at the gate (src/gate.go:103); no finding cap and an `invariant` field in the verdict format; follow-up rounds run the tests of every changed package and tell reviewers to check callers when a finding depends on them (dependents are not yet in the pack). Everything below is still to build.
+Shipped so far: stop-early disabled at the gate (src/gate.go:108); no finding cap and an `invariant` field in the verdict format; follow-up rounds run the tests of every changed package and tell reviewers to check callers when a finding depends on them (dependents are not yet in the pack). Everything below is still to build.
 
 ## Goal
 
@@ -14,7 +14,7 @@ No review can prove a change has no bugs. What we can do is make the search exha
 
 Read from the code and from the ten failed runs:
 
-1. **Stop-early cut the search (fixed).** `StopEarly: true` cancelled every other reviewer as soon as one grounded blocker appeared, so each round showed one reviewer's partial list. It is now `false` at src/gate.go:103. `JuryOptions.StopEarly` still exists, so nothing but that literal pins the choice.
+1. **Stop-early cut the search (fixed).** `StopEarly: true` cancelled every other reviewer as soon as one grounded blocker appeared, so each round showed one reviewer's partial list. It is now `false` at src/gate.go:108. `JuryOptions.StopEarly` still exists, so nothing but that literal pins the choice.
 2. **Reviewers were told to stop (fixed).** The skill capped findings ("at most eight", "top three") and the verdict prompt asked for short output. Both now ask for every blocking issue; the prompt still asks for short prose, qualified by "list EVERY blocking issue". The step budget still limits how much a reviewer can explore; standard and risky tiers now get 20 and 30 steps.
 3. **Open-ended exploration, no contract.** Reviewers get a diff and no statement of purpose, invariants or threat model, so each invents its own attack and the space never closes. Every round found "one more spelling".
 4. **Delta-only follow-ups.** Round 2+ reviews only files changed since the last round. Issues in unchanged callers, and issues the fix introduced elsewhere, are outside the search.
@@ -62,7 +62,7 @@ Findings from lenses and the probe are clustered by root cause (same file, symbo
 ### 5. Saturate inside the run
 After the first merge, run another pass with the full finding list in the prompt: "what is still missing?" Each pass must bypass the verdict cache, or it replays the same verdict and "converges" instantly and falsely. Repeat until two consecutive passes add no new confirmed cluster, or the budget is spent. The author never sees the intermediate passes.
 
-No coverage estimate. Capture-recapture needs independent samples; lenses are built to find different issue classes and share one diff and rubric, so low overlap is expected and the number would turn "we do not know" into false confidence. The report shows lens overlap descriptively. Model nondeterminism (same tree, different findings) is not fixed by saturation, so the late-finding metric is measured over N samples. All stages must fit `gateTimeout` (15 minutes, src/gate.go:22): raise it or budget the stages against it.
+No coverage estimate. Capture-recapture needs independent samples; lenses are built to find different issue classes and share one diff and rubric, so low overlap is expected and the number would turn "we do not know" into false confidence. The report shows lens overlap descriptively. Model nondeterminism (same tree, different findings) is not fixed by saturation, so the late-finding metric is measured over N samples. All stages must fit the gate's 120-second review clock (`review.HardLimit`, src/review/clock.go): the panel ends at `PanelDeadline`, and the reserve after it is for the tree checks and recording the pass.
 
 ### 6. Report once
 One list, grouped by invariant, each item with a reproducing input and the fix. Blocking = confirmed breach of the contract or a confirmed wrong result. Should and Notes are separate and never block. The report ends with the budget used.
@@ -86,7 +86,7 @@ Per risky change, roughly: contract (flash), 4 to 6 lenses (frontier, parallel),
 
 Ordered by value over effort, after the Opus and Kimi review:
 
-1. **Done:** stop-early removed (src/gate.go:103); no finding cap and an `invariant` field in the verdict format; follow-up rounds verify every changed package.
+1. **Done:** stop-early removed (src/gate.go:108); no finding cap and an `invariant` field in the verdict format; follow-up rounds verify every changed package.
 2. **Follow-up scope:** add callers and dependents of changed symbols to the follow-up pack (src/gate.go:65-71).
 3. **Guard differential harness** as a checked-in Go test (section 3).
 4. **Replay benchmark** from the ten rounds, so every later change can be scored. Needs the ledger first.
@@ -94,7 +94,7 @@ Ordered by value over effort, after the Opus and Kimi review:
 6. **Contract step**, author-confirmed, hashed into `rubric`.
 7. **Lens reviewers** with lens in the cache key and every lens required.
 8. **Verifier** that reproduces claims, extending `grounded`.
-9. **Saturation loop**, cache-bypassing, within `gateTimeout`.
+9. **Saturation loop**, cache-bypassing, within `review.HardLimit`.
 
 ## Speed and cost backlog
 
@@ -109,7 +109,7 @@ From Opus 5.5, ranked by value over effort. Items 1 to 3 are built; the rest are
 7. Carry per-file findings across rounds, re-checked with `grounded()`, so every outstanding finding shows in one pass.
 8. Record per-stage timings in `gateRecord` (src/gateusage.go) to measure each gain.
 
-Do not: re-enable `StopEarly`; lower the 20 and 30 step caps; use the light model for small or standard code; skip Verify when reviewers pass or reviewers when tests fail; drop second opinions on risky changes; reuse whole-tree verdicts per file (reuse findings, never a pass).
+Do not: re-enable `StopEarly`; raise the time-boxed caps in `Tier.Timed` (8 steps, medium effort) without raising `HardLimit`, since every review must end within it; use the light model for small or standard code; skip Verify when reviewers pass or reviewers when tests fail; drop second opinions on risky changes; reuse whole-tree verdicts per file (reuse findings, never a pass).
 
 ## What this does not claim
 

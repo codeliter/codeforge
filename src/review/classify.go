@@ -14,9 +14,9 @@ import (
 
 const (
 	maxJudgedDiffBytes = 12_000
-	// 90s: a judge is normally done in 5 to 15s, but a busy machine with reviewers running alongside it can take much longer.
-	// A kill at the deadline is a paid call turned into a raised tier, which costs more than waiting.
-	classifyTimeout = 90 * time.Second
+	// 15s: classification shares the review's 120s clock, and a judge is normally done in 5 to 10s. A judge that is
+	// late is dropped and the tier is raised, which costs less than spending the reviewers' time waiting for it.
+	classifyTimeout = 15 * time.Second
 	maxScore        = 2
 	// judgeFloorLines is the diff size from which the judges can no longer lower a review below standard.
 	judgeFloorLines = 400

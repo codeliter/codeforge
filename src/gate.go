@@ -22,8 +22,6 @@ import (
 
 var errGateFailed = errors.New("review gate failed")
 
-const gateTimeout = 15 * time.Minute
-
 func stateDir(home string) string {
 	return configDir(home)
 }
@@ -31,7 +29,10 @@ func stateDir(home string) string {
 // runGate reviews the current branch and uncommitted work and records a pass. It is voluntary: nothing,
 // pushing and opening a PR included, waits for it.
 func runGate(ctx context.Context, home, bin string, cfg Config, w io.Writer) error {
-	ctx, cancel := context.WithTimeout(ctx, gateTimeout)
+	// The gate is a review, so it has the same hard limit as codeforge review: one clock for collecting, classifying,
+	// the reviewers and the tests. The reserve after the panel deadline is for the tree checks and recording the pass.
+	end := time.Now().Add(review.HardLimit)
+	ctx, cancel := context.WithDeadline(review.WithDeadline(ctx, end), end)
 	defer cancel()
 
 	wd, err := os.Getwd()
@@ -91,10 +92,11 @@ func runGate(ctx context.Context, home, bin string, cfg Config, w io.Writer) err
 	if why != "" {
 		fmt.Fprintf(w, "codeforge gate: %s tier: %s\n", tier.Name, why)
 	}
+	timed := tier.Timed()
 	models := slices.Concat([]string{reviewerFor(tier, cfg.Review)}, review.JuryFor(tier, cfg.Review.SecondOpinion))
 	reviewers := make([]review.Reviewer, len(models))
 	for i, m := range models {
-		reviewers[i] = review.EmpryoReviewer{Bin: bin, Model: m, Dir: repo, Tier: tier, Wrap: sandboxCommand, Sink: usage.add}
+		reviewers[i] = review.EmpryoReviewer{Bin: bin, Model: m, Dir: repo, Tier: timed, Wrap: sandboxCommand, Sink: usage.add}
 	}
 
 	brief := review.PromptLocal(local, tier, nil) + note + review.Pack(ctx, review.ExecRunner{}, repo, packed, tier)
@@ -114,12 +116,14 @@ func runGate(ctx context.Context, home, bin string, cfg Config, w io.Writer) err
 
 	// The tests need no verdict from anyone, so they run while the reviewers work instead of after them. The reviewers
 	// are read-only and the tree is re-checked after the review, so nothing they do can change what the tests see.
-	verifyCtx, stopVerify := context.WithCancel(ctx)
+	panelCtx, stopPanel := context.WithDeadline(ctx, review.PanelDeadline(ctx))
+	defer stopPanel()
+	verifyCtx, stopVerify := context.WithCancel(panelCtx)
 	defer stopVerify()
 	verified := make(chan []review.Finding, 1)
 	go func() { verified <- review.Verify(verifyCtx, review.ExecRunner{}, repo, local.Files) }()
 
-	res, err := review.Jury(ctx, repo, brief, reviewers, opts)
+	res, err := review.Jury(panelCtx, repo, brief, reviewers, opts)
 	// Deterministic backstop, collected on every review rather than only on a pass: the code's own tests are evidence the
 	// repository gives, and a reviewer that missed a failing test is wrong however it voted. They cover every changed
 	// package even in a follow-up round, because a fix can break a package whose files did not change since the last
@@ -163,7 +167,7 @@ func runGate(ctx context.Context, home, bin string, cfg Config, w io.Writer) err
 
 	// The pass, and any cached verdict, only counts if nothing changed while the reviewers worked.
 
-	unlock, err := guard.Lock(stateDir(home))
+	unlock, err := guard.LockContext(ctx, stateDir(home))
 	if err != nil {
 		return fmt.Errorf("gate: %w", err)
 	}
@@ -178,6 +182,10 @@ func runGate(ctx context.Context, home, bin string, cfg Config, w io.Writer) err
 	st, err := guard.Load(stateDir(home))
 	if err != nil {
 		return fmt.Errorf("gate: %w", err)
+	}
+	// A pass is never recorded after the review's deadline or a cancel, however it was reached.
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("gate: not recording a pass: %w", err)
 	}
 	st.PassGate(repo, tree, commit, fmt.Sprintf("%d reviewers passed", len(reviewers)), time.Now())
 	if err := st.Save(stateDir(home)); err != nil {
