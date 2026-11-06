@@ -23,7 +23,7 @@ import (
 //
 //	CODEFORGE_EVAL_MODEL=provider/model go test -tags eval ./src/review -run TestEvalLargeDiff -v -timeout 60m
 //
-// Optional: CODEFORGE_EVAL_BIN, CODEFORGE_EVAL_RUNS (default 3 runs per setup, run in parallel).
+// Optional: CODEFORGE_EVAL_BIN, CODEFORGE_EVAL_RUNS (default 6 runs per setup, run in parallel).
 // Spurious blockers are not all false positives here: the real diff has defects of its own that nobody labelled, so
 // spurious is reported, never gated. Gated: every timed run returns a verdict, and timed recall stays at recallFloor of
 // the unbounded review's.
@@ -85,6 +85,13 @@ func buildLargeRepo(t *testing.T) (string, []Defect) {
 	return dir, defects
 }
 
+type lsetup struct {
+	name    string
+	tier    Tier
+	timeout time.Duration
+	run     func(ctx context.Context, brief string) (string, error)
+}
+
 type runResult struct {
 	score    Score
 	verdict  bool
@@ -99,7 +106,7 @@ func TestEvalLargeDiff(t *testing.T) {
 		t.Skip("set CODEFORGE_EVAL_MODEL=provider/model")
 	}
 	bin := cmpOr(os.Getenv("CODEFORGE_EVAL_BIN"), "empryo")
-	runs := 3
+	runs := 6
 	if v, err := strconv.Atoi(os.Getenv("CODEFORGE_EVAL_RUNS")); err == nil && v > 0 {
 		runs = v
 	}
@@ -110,9 +117,34 @@ func TestEvalLargeDiff(t *testing.T) {
 
 	risky := TierRisky
 	risky.Jury = false
-	setups := []setup{
-		{"timed", risky.Timed(), AgentLimit},
-		{"full", risky, 10 * time.Minute},
+	timedTier := risky.Timed()
+	jurors := strings.Split(cmpOr(os.Getenv("CODEFORGE_EVAL_JURORS"), "litellm/llmgateway/gpt-6.1-sol,litellm/llmgateway/kimi-k3"), ",")
+	one := func(m string, tier Tier) Reviewer {
+		return EmpryoReviewer{Bin: bin, Model: m, Dir: dir, Tier: tier}
+	}
+	setups := []lsetup{
+		{"timed", timedTier, AgentLimit, func(ctx context.Context, brief string) (string, error) {
+			return one(model, timedTier).Review(ctx, brief)
+		}},
+		{"full", risky, 10 * time.Minute, func(ctx context.Context, brief string) (string, error) {
+			return one(model, risky).Review(ctx, brief)
+		}},
+		// What codeforge review does with a jury: the jurors run in parallel, then the main reviewer checks their leads.
+		{"jury", timedTier, JurorLimit + AgentLimit, func(ctx context.Context, brief string) (string, error) {
+			rs := make([]Reviewer, len(jurors))
+			for i, m := range jurors {
+				rs[i] = one(m, timedTier)
+			}
+			leads, _ := Panel{Repo: dir, Reviewers: rs}.Collect(ctx, brief, JurorLimit)
+			mctx, cancel := context.WithTimeout(ctx, AgentLimit)
+			defer cancel()
+			return one(model, timedTier).Review(mctx, brief+"\n\n"+leads)
+		}},
+	}
+	for _, m := range jurors {
+		setups = append(setups, lsetup{"solo " + m[strings.LastIndex(m, "/")+1:], timedTier, AgentLimit, func(ctx context.Context, brief string) (string, error) {
+			return one(m, timedTier).Review(ctx, brief)
+		}})
 	}
 	results := map[string][]runResult{}
 	for _, s := range setups {
@@ -126,7 +158,7 @@ func TestEvalLargeDiff(t *testing.T) {
 				ctx, cancel := context.WithTimeout(t.Context(), s.timeout)
 				defer cancel()
 				start := time.Now()
-				text, rerr := EmpryoReviewer{Bin: bin, Model: model, Dir: dir, Tier: s.tier}.Review(ctx, brief)
+				text, rerr := s.run(ctx, brief)
 				r := runResult{elapsed: time.Since(start), err: rerr}
 				if v, perr := ParseVerdict(text); perr == nil {
 					r.verdict, r.blocking = true, len(v.Blocking)
