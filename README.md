@@ -108,8 +108,8 @@ codeforge models apply
 
 This changes two Empryo settings:
 
-- **`defaultModel`:** the model the Empryo screen selects when it opens. It is set to your coding model.
-- **`modelFallback`:** the backups for each model, in order. Only changed if you set backup providers.
+- **`defaultModel`:** the model the Empryo screen selects when it opens. It is set to your coding model. With a model rule, that is the provider the rule picks: a `claude-*` rule on `subscriptions` makes Empryo open on `subscriptions/claude-sonnet-5-5`.
+- **`modelFallback`:** the backups for each model, in order. Only changed if you set backup providers. Each model gets the backups of the order that applies to it, so Claude models can fall back to one provider and GPT models to another.
 
 Here's what happens:
 
@@ -178,6 +178,16 @@ codeforge provider set devpass copilot --for 'claude-*' anthropic,openrouter
 - A project's `providers` block replaces the global one, rules included.
 
 Inside a Git project the order is saved for that project; add `--global` to save it for all projects, or `--project` to be explicit. Use `/login` in Empryo to connect another provider first.
+
+**Use the same scope for `provider set` and `models apply`.** `models apply` reads the order from the scope you choose. If you saved it with `provider set` in a project but apply globally, `models apply` shows your old global order and says `nothing was written`. Check with `codeforge provider`, then apply the same scope:
+
+```sh
+codeforge provider set litellm-llmgateway --for 'claude-*' subscriptions,litellm-llmgateway --global
+codeforge models plan
+codeforge models apply --global
+```
+
+`models plan` shows each model on its own order, and the backups it prints are what `models apply` writes to `modelFallback`. Models outside every rule keep the default order, with no backup from another family.
 
 When Empryo switches, the chat says `Switched to fallback model: …`. It retries the same model a few times before switching, and tries a model that failed recently later than the others. See Empryo's [model fallback](https://empryo.com/docs/recipes/model-fallback) page for which errors cause a switch.
 
