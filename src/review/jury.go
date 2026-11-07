@@ -83,6 +83,14 @@ func Jury(ctx context.Context, repo, brief string, reviewers []Reviewer, opts Ju
 
 		wg.Go(func() {
 			out, err := rv.Review(ctx, brief)
+			// One retry in all per reviewer, for either kind of failure: a run the engine failed outright with nothing to
+			// show and room left, or (below) a run that ended without a readable verdict. The engine sometimes fails at
+			// once for reasons that are gone a moment later, and a review without a verdict is worth nothing.
+			retried := false
+			if err != nil && retryableRun(ctx, out, err) {
+				retried = true
+				out, err = rv.Review(ctx, brief)
+			}
 			if err != nil {
 				votes[i].Err, votes[i].Cancelled = err, ctx.Err() != nil
 				return
@@ -91,7 +99,7 @@ func Jury(ctx context.Context, repo, brief string, reviewers []Reviewer, opts Ju
 			votes[i].Verdict, votes[i].Err = ParseVerdict(out)
 			// A review that ended without a readable verdict is paid for and worth nothing, and rerunning the whole
 			// gate costs far more than asking this one reviewer again. Once, and never after a cancel or a real error.
-			if errors.Is(votes[i].Err, ErrNoVerdict) && ctx.Err() == nil {
+			if errors.Is(votes[i].Err, ErrNoVerdict) && ctx.Err() == nil && !retried {
 				retry, rerr := rv.Review(ctx, brief+retryNote)
 				if rerr != nil {
 					votes[i].Err, votes[i].Cancelled = rerr, ctx.Err() != nil
@@ -139,6 +147,17 @@ func Jury(ctx context.Context, repo, brief string, reviewers []Reviewer, opts Ju
 		return res, fmt.Errorf("%w: %d of %d", ErrNoQuorum, ok, len(reviewers))
 	}
 	return res, nil
+}
+
+// retryableRun reports whether a failed run is worth one more try: the engine itself failed and produced nothing, nothing
+// cancelled the review, and there is room left for a fresh run to finish. A run that used up its time leaves no room,
+// and one that ended with partial text (a step limit) is not repeated here.
+func retryableRun(ctx context.Context, out string, err error) bool {
+	if !errors.Is(err, errEmpryoRun) || strings.TrimSpace(out) != "" || ctx.Err() != nil {
+		return false
+	}
+	deadline, ok := ctx.Deadline()
+	return !ok || time.Until(deadline) >= 2*MinRun
 }
 
 // SaveVerdicts caches fresh verdicts. The caller runs it only after confirming the reviewed tree did not change,

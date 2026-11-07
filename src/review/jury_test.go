@@ -201,3 +201,92 @@ func TestGrounded_RejectsDirectories(t *testing.T) {
 	require.False(t, grounded(repo, Finding{File: "pkg", Line: 0}))
 	require.True(t, grounded(repo, Finding{File: "a.go", Line: 0}))
 }
+
+type failingThen struct {
+	name  string
+	fails int
+	calls *int
+}
+
+func (f failingThen) Name() string { return f.name }
+
+func (f failingThen) Review(context.Context, string) (string, error) {
+	*f.calls++
+	if *f.calls <= f.fails {
+		return "", fmt.Errorf("%w: %s: Timeout after 2m 54s", errEmpryoRun, f.name)
+	}
+	return pass, nil
+}
+
+func TestJury_RetriesAnEngineFailureOnceWhenThereIsTime(t *testing.T) {
+	calls := 0
+	res, err := Jury(t.Context(), repoWith(t), "brief", []Reviewer{failingThen{name: "x", fails: 1, calls: &calls}}, JuryOptions{})
+	require.NoError(t, err)
+	require.True(t, res.Passed())
+	require.Equal(t, 2, calls)
+
+	calls = 0
+	_, err = Jury(t.Context(), repoWith(t), "brief", []Reviewer{failingThen{name: "x", fails: 5, calls: &calls}}, JuryOptions{})
+	require.ErrorIs(t, err, ErrNoQuorum)
+	require.Equal(t, 2, calls, "one retry, never a loop")
+}
+
+func TestJury_DoesNotRetryWhenTheRunUsedUpItsTime(t *testing.T) {
+	calls := 0
+	ctx, cancel := context.WithTimeout(t.Context(), MinRun)
+	defer cancel()
+	_, err := Jury(ctx, repoWith(t), "brief", []Reviewer{failingThen{name: "x", fails: 5, calls: &calls}}, JuryOptions{})
+	require.Error(t, err)
+	require.Equal(t, 1, calls, "no room for a fresh run")
+}
+
+func TestJury_DoesNotRetryAReviewerThatIsNotTheEngine(t *testing.T) {
+	calls := 0
+	_, err := Jury(t.Context(), repoWith(t), "brief", []Reviewer{countingFailure{calls: &calls}}, JuryOptions{})
+	require.Error(t, err)
+	require.Equal(t, 1, calls)
+}
+
+type countingFailure struct{ calls *int }
+
+func (countingFailure) Name() string { return "x" }
+
+func (c countingFailure) Review(context.Context, string) (string, error) {
+	*c.calls++
+	return "", errors.New("boom")
+}
+
+type failThenNoVerdict struct{ calls *int }
+
+func (failThenNoVerdict) Name() string { return "x" }
+
+func (f failThenNoVerdict) Review(context.Context, string) (string, error) {
+	*f.calls++
+	if *f.calls == 1 {
+		return "", fmt.Errorf("%w: x: failed at once", errEmpryoRun)
+	}
+	return "ran out of steps mid-sentence", nil
+}
+
+func TestJury_OneRetryInAllPerReviewer(t *testing.T) {
+	calls := 0
+	_, err := Jury(t.Context(), repoWith(t), "brief", []Reviewer{failThenNoVerdict{calls: &calls}}, JuryOptions{})
+	require.ErrorIs(t, err, ErrNoQuorum)
+	require.Equal(t, 2, calls, "an engine failure and a missing verdict share one retry")
+}
+
+type partialThenFail struct{ calls *int }
+
+func (partialThenFail) Name() string { return "x" }
+
+func (p partialThenFail) Review(context.Context, string) (string, error) {
+	*p.calls++
+	return "half a review", fmt.Errorf("%w: x: Max steps reached", errEmpryoRun)
+}
+
+func TestJury_PartialTextFromTheEngineIsNotRetriedAsAFailure(t *testing.T) {
+	calls := 0
+	_, err := Jury(t.Context(), repoWith(t), "brief", []Reviewer{partialThenFail{calls: &calls}}, JuryOptions{})
+	require.Error(t, err)
+	require.Equal(t, 1, calls)
+}

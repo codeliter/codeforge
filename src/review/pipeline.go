@@ -107,9 +107,11 @@ func (p *Pipeline) Stop() {
 	}
 	p.mu.Unlock()
 	cancel()
+	timer := time.NewTimer(stopWait)
+	defer timer.Stop()
 	select {
 	case <-done:
-	case <-time.After(stopWait):
+	case <-timer.C:
 	}
 }
 

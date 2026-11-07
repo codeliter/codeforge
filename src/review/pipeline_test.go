@@ -114,7 +114,7 @@ func TestPipeline_GivingUpStopsTheJurorsAndRunsCleanup(t *testing.T) {
 	require.False(t, ok)
 	select {
 	case <-cleaned:
-	default:
+	case <-time.After(2 * time.Second):
 		t.Fatal("the jurors were left running after Wait gave up")
 	}
 	_, again := p.Wait(t.Context())
