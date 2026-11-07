@@ -188,7 +188,7 @@ func runEngineWith(ctx context.Context, argv, env []string, limit time.Time, std
 		}
 		if err == nil && cwdErr == nil && id != "" && verifyEmpryoSession(cwd, id) == nil && sessionHasActivity(cwd, id) {
 			colors := resumeHintColors(os.Stderr)
-			fmt.Fprint(os.Stderr, sessionSummary(context.WithoutCancel(ctx), cwd, colors), resumeHint(cwd, id, colors))
+			fmt.Fprint(os.Stderr, sessionSummary(context.WithoutCancel(ctx), cwd, colors), resumeHint(context.WithoutCancel(ctx), cwd, id, colors))
 		}
 	}
 	if timedOut {

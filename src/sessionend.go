@@ -51,7 +51,7 @@ func runSessionEnd(stdin io.Reader, w io.Writer, launched bool) {
 		return
 	}
 	colors := resumeHintColors(w)
-	fmt.Fprint(w, sessionSummary(context.Background(), in.Cwd, colors), resumeHint(in.Cwd, in.SessionID, colors))
+	fmt.Fprint(w, sessionSummary(context.Background(), in.Cwd, colors), resumeHint(context.Background(), in.Cwd, in.SessionID, colors))
 }
 
 // sessionHasActivity reports whether a session holds any chat or work worth resuming. An empty session
@@ -83,17 +83,16 @@ func sessionHasActivity(cwd, id string) bool {
 	return false
 }
 
-func resumeHint(cwd, id string, color bool) string {
+func resumeHint(ctx context.Context, cwd, id string, color bool) string {
 	title := "Resume this session"
 	other := "From another directory"
 	command := "codeforge --resume " + shortestPrefix(cwd, id)
 	anywhere := fmt.Sprintf("codeforge --cwd %s --resume %s", shellQuote(cwd), shellQuote(id))
 	if color {
-		title = "\x1b[2m" + title + "\x1b[0m"
-		other = "\x1b[2m" + other + "\x1b[0m"
-		// Match the mauve accent of Empryo's default Catppuccin terminal theme.
-		command = "\x1b[1;38;2;203;166;247m" + command + "\x1b[0m"
-		anywhere = "\x1b[1;38;2;203;166;247m" + anywhere + "\x1b[0m"
+		// The Codeforge Steel palette, so the hint matches the TUI it follows.
+		pal := paletteFor(appearanceProbe(ctx))
+		title, other = pal.paint(pal.dim, title), pal.paint(pal.dim, other)
+		command, anywhere = pal.paint(pal.accent, command), pal.paint(pal.accent, anywhere)
 	}
 	return fmt.Sprintf("\n  %s\n    %s\n\n  %s\n    %s\n\n", title, command, other, anywhere)
 }

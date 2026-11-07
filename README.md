@@ -230,10 +230,15 @@ The job runs in your terminal. When it finishes, a chat screen opens for follow-
 A slow or broken provider can still delay the model's reply.
 
 A standalone review is read-only and posts nothing unless you ask. Its sandbox currently needs macOS.
-Use `codeforge review` with no PR number to review your local changes.
+Use `codeforge review` with no PR number to review your local changes. Local reviews, and `codeforge gate`, show each
+finding under its file with the surrounding lines of code; in a terminal the code is highlighted in the Codeforge Steel
+colours and long findings wrap to its width.
 
-Add `--comment` to a PR review (`codeforge review 123 --comment`) to post the finished review as one comment on that PR,
-in your voice. The model itself cannot post: Codeforge shows you the review, asks `[y/N]`, and only then posts it.
+Add `--comment` to a PR review (`codeforge review 123 --comment`) to post the finished review on that PR, in your voice,
+as one GitHub review (never an approval). Each finding on a line of the diff becomes an inline comment on that line; the
+rest is the review's summary. If GitHub refuses the inline comments, the whole review is posted as one comment instead.
+Jurors stay out of what is posted, except a blocking lead the review did not confirm, listed once without who raised it.
+The model itself cannot post: Codeforge shows you the review, asks `[y/N]`, and only then posts it.
 `--comment=yes` skips the question. In the review session you can also ask for a comment; Empryo shows you the exact
 `gh pr comment` command and runs it only if you approve.
 

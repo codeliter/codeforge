@@ -97,15 +97,16 @@ func TestExitHintColors(t *testing.T) {
 			if tt.tty {
 				cmd = underScript(ctx, script, os.Args[0], "-test.run=^TestLaunchExitHint$")
 			}
-			cmd.Env = append(os.Environ(), "HOME="+home, "CODEFORGE_SHUTDOWN_TEST=1", "CODEFORGE_TEST_ENGINE="+engine, "CODEFORGE_HEADLESS_TEST=0", "TERM="+tt.term, "NO_COLOR="+tt.noColor)
+			cmd.Env = append(os.Environ(), "HOME="+home, "CODEFORGE_SHUTDOWN_TEST=1", "CODEFORGE_TEST_ENGINE="+engine, "CODEFORGE_HEADLESS_TEST=0", "TERM="+tt.term, "NO_COLOR="+tt.noColor, "EMPRYO_APPEARANCE=dark")
 			out, err := cmd.CombinedOutput()
 			require.NoError(t, err, string(out))
 			require.Contains(t, string(out), "engine-exited")
 			hint := string(out)[strings.Index(string(out), "engine-exited")+len("engine-exited"):]
 			require.Contains(t, hint, "codeforge --resume saved-se")
 			if tt.colored {
-				require.Contains(t, hint, "\x1b[1;38;2;203;166;247mcodeforge --resume saved-se\x1b[0m")
-				require.Contains(t, hint, "\x1b[1;38;2;203;166;247mcodeforge --cwd ")
+				accent := paletteFor("dark").accent
+				require.Contains(t, hint, accent+"codeforge --resume saved-se\x1b[0m")
+				require.Contains(t, hint, accent+"codeforge --cwd ")
 			} else {
 				require.NotContains(t, hint, "\x1b[")
 			}

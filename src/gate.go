@@ -141,7 +141,7 @@ func runGate(ctx context.Context, home, bin string, cfg config.Config, w io.Writ
 		res.Blocking = append(res.Blocking, findings...)
 		fmt.Fprintf(w, "codeforge gate: the changed packages' tests fail, so the review cannot pass\n")
 	}
-	report(w, res)
+	report(ctx, w, repo, res)
 	fmt.Fprintf(w, "codeforge gate: done in %s; %s\n", time.Since(start).Round(time.Second), usage.totals())
 	usage.record(gateRecord{At: time.Now(), Tier: tier.Name, Models: models, Files: len(packed.Files), Brief: len(brief),
 		Elapsed: time.Since(start).Seconds(), Passed: err == nil && res.Passed(), Blocking: len(res.Blocking), FollowUp: followUp})
@@ -222,7 +222,7 @@ func reviewerFor(t review.Tier, rc config.ReviewConfig) string {
 	return rc.Model
 }
 
-func report(w io.Writer, res review.JuryResult) {
+func report(ctx context.Context, w io.Writer, repo string, res review.JuryResult) {
 	for _, v := range res.Votes {
 		switch {
 		case v.Cancelled:
@@ -236,22 +236,43 @@ func report(w io.Writer, res review.JuryResult) {
 		}
 	}
 
-	section := func(title string, fs []review.Finding) {
+	reportFindings(w, repo, res, codeStyleFor(ctx, w))
+}
+
+// reportFindings prints the findings grouped by file, each with the lines of code around it, so the review reads next
+// to the code.
+func reportFindings(w io.Writer, repo string, res review.JuryResult, st codeStyle) {
+	section := func(title string, fs []review.Finding, withCode bool) {
 		if len(fs) == 0 {
 			return
 		}
-		fmt.Fprintf(w, "\n%s:\n", title)
-		for _, f := range fs {
-			if f.Invariant != "" {
-				fmt.Fprintf(w, "- %s:%d %s (breaks: %s)\n", f.File, f.Line, f.What, f.Invariant)
-				continue
+		fmt.Fprintf(w, "\n%s\n", st.paint(st.pal.bold, title+":"))
+		sorted := slices.Clone(fs)
+		slices.SortStableFunc(sorted, func(a, b review.Finding) int { return strings.Compare(a.File, b.File) })
+		width := 0
+		if st.wrap {
+			width = st.width
+		}
+		for i, f := range sorted {
+			// One blank line before each file heading, and between findings of one file when they show code.
+			if i == 0 || sorted[i-1].File != f.File {
+				fmt.Fprintf(w, "\n%s\n", st.paint(st.pal.accent, f.File))
+			} else if withCode {
+				fmt.Fprintln(w)
 			}
-			fmt.Fprintf(w, "- %s:%d %s\n", f.File, f.Line, f.What)
+			spans := []span{{f.File + ":" + strconv.Itoa(f.Line), st.pal.accent}, {f.What, ""}}
+			if f.Invariant != "" {
+				spans = append(spans, span{"(breaks: " + f.Invariant + ")", st.pal.dim})
+			}
+			fmt.Fprint(w, wrapFinding(st, width, spans...))
+			if withCode {
+				fmt.Fprint(w, codeAround(repo, f.File, f.Line, st))
+			}
 		}
 	}
-	section("Blocking", res.Blocking)
-	section("Should", res.Should)
-	section("Dropped (file or line does not exist)", res.Unverified)
+	section("Blocking", res.Blocking, true)
+	section("Should", res.Should, true)
+	section("Dropped (file or line does not exist)", res.Unverified, false)
 }
 
 // cleanHead is the HEAD commit when the tree has no uncommitted or untracked changes, otherwise "".
