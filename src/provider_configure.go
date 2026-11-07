@@ -50,6 +50,10 @@ func savedModelNames(cfg Config) []string {
 // and the saved names it has nothing comparable for.
 func providerCoverage(cfg Config, provider string, catalog []string) (standIns, missing []string) {
 	for _, ref := range savedModelNames(cfg) {
+		// A model a rule routes elsewhere does not use the default chain, so this provider never has to cover it.
+		if _, ruled := cfg.Providers.ruleFor(ref); ruled {
+			continue
+		}
 		if _, err := catalogModel(ref, provider, catalog); err == nil {
 			continue
 		}
@@ -85,7 +89,7 @@ func backupOptions(cfg Config, connected, chain []string, catalog []string) []hu
 }
 
 // providerChainPreview shows the order as Empryo will try it.
-func providerChainPreview(scope string, chain []string) string {
+func providerChainPreview(scope string, chain []string, rules ...ProviderRule) string {
 	var text strings.Builder
 	fmt.Fprintf(&text, "Provider order (%s):\n", scope)
 	for i, id := range chain {
@@ -97,6 +101,9 @@ func providerChainPreview(scope string, chain []string) string {
 	}
 	if len(chain) == 1 {
 		fmt.Fprintln(&text, "  No backups: if the primary fails, Empryo keeps its own fallback settings.")
+	}
+	for _, rule := range rules {
+		fmt.Fprintf(&text, "  Models %s: %s\n", rule.Match, strings.Join(append([]string{providerID(rule.Primary)}, rule.chain().Backups()...), " > "))
 	}
 	return text.String()
 }
@@ -205,10 +212,13 @@ func pickProviderOrder(ask providerAsker, home, root string, inGit bool, scope s
 	if err != nil {
 		return "", err
 	}
+	if cfg.Providers != nil {
+		policy.Rules = cfg.Providers.clone().Rules
+	}
 	if err := checkProviderChain(home, root, scope, policy, catalog); err != nil {
 		return "", err
 	}
-	preview := providerChainPreview(scope, chain)
+	preview := providerChainPreview(scope, chain, policy.Rules...)
 	save, apply := true, true
 	if err := ask.confirm("Save this provider order?", preview, &save); err != nil {
 		return "", err

@@ -266,6 +266,11 @@ The schema also accepts `providers: {primary: devpass, fallbacks: [copilot, open
 The older single `fallback:` key is still read and placed first; `codeforge provider set PRIMARY [BACKUP...]` writes the list form.
 Each named role resolves to one catalog ID per provider, and the ordered backups become that model's native `modelFallback` list.
 `provider set` resolves every saved role on every listed provider before saving, so a chain is never saved half-working.
+`providers.rules: [{match: 'claude-*', primary: anthropic, fallbacks: [openrouter]}]` gives a model family its own chain; `provider set ... --for GLOB P1,P2` writes it.
+The first rule whose glob matches the normalised model reference (`Sonnet-*` is `claude-sonnet-*`) replaces the default chain for that model, and its stand-ins are limited to the model's own family.
+Patterns allow only `*` and `?`. Unset parts of a saved policy are kept by `provider set`; the picker, recommendations and project previews route each model by its own chain.
+A backup that is another family's declared primary keeps its declared chain in `verifyFallbacks`.
+Fully qualified IDs bypass rules, and a project's `providers` block replaces the global one, rules included.
 `devpass` resolves to the native `llmgateway` provider ID; this is an account alias, not a billing override.
 The wizard offers a provider-defaults style and an advanced explicit-ID style. Names resolve against authenticated-provider catalog IDs,
 normalising spaces, version punctuation, and Claude family aliases. Unknown or ambiguous names fail before a model-backed task.

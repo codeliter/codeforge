@@ -160,8 +160,22 @@ A backup uses the same model as the primary when it has it. When it doesn't, Cod
 | --- | --- |
 | `codeforge provider` | Shows the order and which providers are connected. |
 | `codeforge provider configure` | Picks the order from a menu. |
-| `codeforge provider set PRIMARY [BACKUP...]` | Saves a new order. |
+| `codeforge provider set [PRIMARY [BACKUP...]] [--for MODEL-GLOB PROVIDER[,PROVIDER...]] [--no-rules]` | Saves a new order, optionally with a separate order for some models. |
 | `codeforge provider clear` | Removes the order. |
+
+### Different providers for different models
+
+A model family can have its own order. This runs Claude models on Anthropic (backup: OpenRouter) and everything else on the default order:
+
+```sh
+codeforge provider set devpass copilot --for 'claude-*' anthropic,openrouter
+```
+
+- A pattern is a model name where only `*` and `?` are wildcards; a provider prefix, `[ ]` and `\` are rejected.
+- `--for` takes a model pattern and a comma-separated order, and can be repeated. `Sonnet-*` means `claude-sonnet-*`. The first matching rule wins.
+- A rule's order replaces the default order for those models. Its backups never switch to another family, so a Claude rule never falls back to a GPT model.
+- `provider set` changes only what you give it: a chain keeps the saved rules, `--for` replaces the saved rules and keeps the chain, and `--no-rules` removes the rules. `provider clear` removes everything.
+- A project's `providers` block replaces the global one, rules included.
 
 Inside a Git project the order is saved for that project; add `--global` to save it for all projects, or `--project` to be explicit. Use `/login` in Empryo to connect another provider first.
 

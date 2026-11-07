@@ -99,24 +99,26 @@ func recommend(available []string) map[string][]string {
 	return recommendKeeping(available, Config{})
 }
 func recommendConfigured(catalog []string, cfg Config, keep bool) map[string][]string {
-	primary := ""
+	// Each model comes from the provider its own chain starts with: its rule's, else the default one.
+	routed := func(id string) string { return cfg.Providers.primaryFor(modelName(id)) }
 	if cfg.Providers != nil {
-		primary = providerID(cfg.Providers.Primary)
-	}
-	if primary != "" {
-		catalog = slices.DeleteFunc(slices.Clone(catalog), func(id string) bool { p, _, _ := strings.Cut(id, "/"); return p != primary })
+		catalog = slices.DeleteFunc(slices.Clone(catalog), func(id string) bool {
+			p, _, _ := strings.Cut(id, "/")
+			primary := routed(id)
+			return primary != "" && p != primary
+		})
 	}
 	retained := Config{}
 	if keep {
 		retained = cfg
 	}
 	rec := recommendKeeping(catalog, retained)
-	if primary != "" {
-		for key, ids := range rec {
-			if keep && len(current(cfg, key)) > 0 {
-				continue
-			}
-			for i, id := range ids {
+	for key, ids := range rec {
+		if keep && len(current(cfg, key)) > 0 {
+			continue
+		}
+		for i, id := range ids {
+			if routed(id) != "" {
 				ids[i] = modelName(id)
 			}
 		}

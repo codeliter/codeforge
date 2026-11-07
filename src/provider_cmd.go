@@ -13,7 +13,7 @@ import (
 	"github.com/codeliter/codeforge/src/guard"
 )
 
-var errProviderUsage = errors.New("usage: codeforge provider [show] | provider set PRIMARY [BACKUP...] [--project|--global] | provider clear [--project|--global]")
+var errProviderUsage = errors.New("usage: codeforge provider [show] | provider set [PRIMARY [BACKUP...]] [--for MODEL-GLOB PROVIDER[,PROVIDER...]]... [--no-rules] [--project|--global] | provider clear [--project|--global]")
 
 // providerArgs splits provider IDs from the optional scope flag.
 func providerArgs(args []string) (ids []string, scope string, err error) {
@@ -32,6 +32,47 @@ func providerArgs(args []string) (ids []string, scope string, err error) {
 		}
 	}
 	return ids, scope, nil
+}
+
+// ruleArg is one --for MODEL-GLOB PROVIDER[,PROVIDER...] pair: the models matching the glob use their own chain.
+type ruleArg struct {
+	match string
+	ids   []string
+}
+
+// providerRuleArgs pulls the repeatable --for pairs out of the arguments and returns the rest.
+func providerRuleArgs(args []string) (rest []string, rules []ruleArg, err error) {
+	for i := 0; i < len(args); i++ {
+		var match, list string
+		switch {
+		case args[i] == "--for":
+			if i+2 >= len(args) {
+				return nil, nil, errProviderUsage
+			}
+			match, list = args[i+1], args[i+2]
+			i += 2
+		case strings.HasPrefix(args[i], "--for="):
+			if i+1 >= len(args) {
+				return nil, nil, errProviderUsage
+			}
+			match, list = strings.TrimPrefix(args[i], "--for="), args[i+1]
+			i++
+		default:
+			rest = append(rest, args[i])
+			continue
+		}
+		var ids []string
+		for _, id := range strings.Split(list, ",") {
+			if id = strings.TrimSpace(id); id != "" {
+				ids = append(ids, id)
+			}
+		}
+		if strings.HasPrefix(match, "-") || strings.HasPrefix(list, "-") || len(ids) == 0 {
+			return nil, nil, errProviderUsage
+		}
+		rules = append(rules, ruleArg{match: match, ids: ids})
+	}
+	return rest, rules, nil
 }
 
 // runProvider shows or changes which provider Codeforge uses first and which backups Empryo switches to, in order.
@@ -55,11 +96,17 @@ func runProvider(ctx context.Context, home, bin string, args []string, w io.Writ
 		}
 		return showProviders(ctx, home, bin, root, w)
 	case "set", "clear":
-		ids, scope, err := providerArgs(args)
+		rest, rules, err := providerRuleArgs(args)
 		if err != nil {
 			return err
 		}
-		if sub == "set" && len(ids) == 0 || sub == "clear" && len(ids) > 0 {
+		noRules := slices.Contains(rest, "--no-rules")
+		rest = slices.DeleteFunc(slices.Clone(rest), func(arg string) bool { return arg == "--no-rules" })
+		ids, scope, err := providerArgs(rest)
+		if err != nil {
+			return err
+		}
+		if sub == "set" && len(ids) == 0 && len(rules) == 0 && !noRules || sub == "clear" && (len(ids) > 0 || len(rules) > 0 || noRules) || noRules && len(rules) > 0 {
 			return errProviderUsage
 		}
 		if scope == "" {
@@ -69,15 +116,47 @@ func runProvider(ctx context.Context, home, bin string, args []string, w io.Writ
 			}
 		}
 		var policy *ProviderPolicy
+		inherited := false
 		if sub == "set" {
 			catalog, err := connectedModelCatalog(ctx, bin)
 			if err != nil {
 				return err
 			}
-			if policy, err = providerChain(ids, catalogProviders(catalog)); err != nil {
+			connected := catalogProviders(catalog)
+			// Start from what this scope already uses: giving only a chain keeps its rules, giving only --for keeps its chain.
+			saved, local, err := readModelApplyLayers(home, root, scope)
+			if err != nil {
 				return err
 			}
-			if err := checkProviderChain(home, root, scope, policy, catalog); err != nil {
+			if policy = saved.Providers.clone(); policy == nil {
+				policy = &ProviderPolicy{}
+			}
+			hadRules := len(policy.Rules) > 0
+			// A project's providers block replaces the global one, so a project without its own copies whatever this keeps.
+			inherited = scope == "project" && local.Providers == nil &&
+				(len(ids) == 0 && policy.Primary != "" || len(rules) == 0 && !noRules && hadRules)
+			if len(ids) > 0 {
+				chain, err := providerChain(ids, connected)
+				if err != nil {
+					return err
+				}
+				policy.Primary, policy.Fallback, policy.Fallbacks = chain.Primary, "", chain.Fallbacks
+			}
+			if len(rules) > 0 || noRules {
+				if policy.Rules, err = providerRules(rules, connected); err != nil {
+					return err
+				}
+			}
+			if policy.Primary == "" && len(policy.Rules) == 0 {
+				if noRules && hadRules {
+					return fmt.Errorf("%w: no provider order is left after removing the rules; use provider clear instead", errProviderUsage)
+				}
+				return errProviderUsage
+			}
+			if err := validateProviderPolicy(policy); err != nil {
+				return err
+			}
+			if err := checkProviderPolicy(saved, policy, catalog); err != nil {
 				return err
 			}
 		}
@@ -87,7 +166,17 @@ func runProvider(ctx context.Context, home, bin string, args []string, w io.Writ
 		if policy == nil {
 			fmt.Fprintf(w, "Cleared %s provider order. Model names now resolve without a preferred provider.\n", scope)
 		} else {
-			fmt.Fprintf(w, "Saved %s provider order: %s\n", scope, strings.Join(append([]string{policy.Primary}, policy.Backups()...), " > "))
+			if policy.Primary != "" {
+				fmt.Fprintf(w, "Saved %s provider order: %s\n", scope, strings.Join(append([]string{policy.Primary}, policy.Backups()...), " > "))
+			} else {
+				fmt.Fprintf(w, "Saved %s provider rules (no default provider order).\n", scope)
+			}
+			for _, rule := range policy.Rules {
+				fmt.Fprintf(w, "  %s: %s\n", rule.Match, strings.Join(append([]string{rule.Primary}, rule.chain().Backups()...), " > "))
+			}
+		}
+		if inherited {
+			fmt.Fprintln(w, "The parts you did not change were copied from your global order into this project; later global changes no longer reach it.")
 		}
 		fmt.Fprintln(w, "Run codeforge models apply to make Empryo use this order; it shows every change and asks first.")
 		return nil
@@ -95,6 +184,19 @@ func runProvider(ctx context.Context, home, bin string, args []string, w io.Writ
 		return configureProviders(ctx, home, bin, root, gitErr == nil, args, w)
 	}
 	return fmt.Errorf("%w %q; use configure, show, set or clear", errUnknownSubcommand, sub)
+}
+
+// providerRules turns each --for pair into a rule whose providers are connected and listed once.
+func providerRules(args []ruleArg, connected []string) ([]ProviderRule, error) {
+	var rules []ProviderRule
+	for _, arg := range args {
+		chain, err := providerChain(arg.ids, connected)
+		if err != nil {
+			return nil, fmt.Errorf("--for %s: %w", arg.match, err)
+		}
+		rules = append(rules, ProviderRule{Match: arg.match, Primary: chain.Primary, Fallbacks: chain.Fallbacks})
+	}
+	return rules, nil
 }
 
 // providerChain normalises aliases and checks every provider is connected and listed once.
@@ -124,6 +226,11 @@ func checkProviderChain(home, root, scope string, policy *ProviderPolicy, catalo
 	if err != nil {
 		return err
 	}
+	return checkProviderPolicy(cfg, policy, catalog)
+}
+
+// checkProviderPolicy is checkProviderChain on a configuration that is already read.
+func checkProviderPolicy(cfg Config, policy *ProviderPolicy, catalog []string) error {
 	cfg.Providers = policy
 	if _, err := resolveModelPlan(cfg, catalog); err != nil {
 		return fmt.Errorf("%w\nThat provider has no model of the same level to stand in. Choose another model with codeforge models configure, or leave that provider out", err)
@@ -172,16 +279,21 @@ func showProviders(ctx context.Context, home, bin, root string, w io.Writer) err
 		return err
 	}
 	if cfg.Providers == nil || cfg.Providers.Primary == "" {
-		fmt.Fprintln(w, "No provider order is set. Model names resolve on whichever connected provider serves them.")
+		fmt.Fprintln(w, "No default provider order is set. Model names resolve on whichever connected provider serves them.")
 	} else {
 		fmt.Fprintf(w, "Primary: %s\n", cfg.Providers.Primary)
 		for i, backup := range cfg.Providers.Backups() {
 			fmt.Fprintf(w, "Backup %d: %s\n", i+1, backup)
 		}
 	}
+	if cfg.Providers != nil {
+		for _, rule := range cfg.Providers.Rules {
+			fmt.Fprintf(w, "Models %s: %s\n", rule.Match, strings.Join(append([]string{providerID(rule.Primary)}, rule.chain().Backups()...), " > "))
+		}
+	}
 	if catalog, err := connectedModelCatalog(ctx, bin); err == nil {
 		fmt.Fprintf(w, "Connected in Empryo: %s\n", strings.Join(catalogProviders(catalog), ", "))
 	}
-	fmt.Fprintln(w, "Change it with: codeforge provider configure, or codeforge provider set PRIMARY [BACKUP...]")
+	fmt.Fprintln(w, "Change it with: codeforge provider configure, or codeforge provider set PRIMARY [BACKUP...] [--for MODEL-GLOB PROVIDER[,PROVIDER...]]")
 	return nil
 }

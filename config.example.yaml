@@ -9,6 +9,12 @@ providers:
 # A backup uses the same named model, or its closest model of the same level when it lacks it.
 # Normal launches only verify.
 # Run codeforge models apply to choose scope, preview and confirm native fallback changes.
+# Optional: give a model family its own chain. The first matching rule wins and replaces the order above for those
+# models; its backups stay in the same family. Set with: codeforge provider set ... --for 'claude-*' anthropic,openrouter
+#   rules:
+#     - match: claude-*
+#       primary: anthropic
+#       fallbacks: [openrouter]
 # Omit fallbacks to inherit native policy without a Codeforge backup preference.
 # The older single "fallback: copilot" key still works and comes first.
 model: Sonnet 5.5

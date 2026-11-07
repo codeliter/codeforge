@@ -20,7 +20,11 @@ func sameProviderPolicy(a, b *ProviderPolicy) bool {
 	if a == nil || b == nil {
 		return a == nil && b == nil
 	}
-	return providerID(a.Primary) == providerID(b.Primary) && slices.Equal(a.Backups(), b.Backups())
+	return providerID(a.Primary) == providerID(b.Primary) && slices.Equal(a.Backups(), b.Backups()) &&
+		slices.EqualFunc(a.Rules, b.Rules, func(x, y ProviderRule) bool {
+			return ruleKey(x.Match) == ruleKey(y.Match) && providerID(x.Primary) == providerID(y.Primary) &&
+				slices.Equal(x.chain().Backups(), y.chain().Backups())
+		})
 }
 func projectModelDelta(existing, baseline, edited Config) Config {
 	out := cloneConfig(existing)
@@ -43,15 +47,20 @@ func prepareProjectModelPreview(global, local, baseline Config, edited *Config, 
 	delta := projectModelDelta(local, baseline, *edited)
 	// Removing provider defaults must retain the old provider for inherited named
 	// helpers; otherwise two connected providers make those names ambiguous.
-	if baseline.Providers != nil && baseline.Providers.Primary != "" && (edited.Providers == nil || edited.Providers.Primary == "") {
+	if baseline.Providers != nil {
 		for job, ref := range global.Routing {
 			if _, overridden := delta.Routing[job]; overridden || ref == "" || validModelID(ref) {
 				continue
 			}
-			id, err := catalogModel(ref, baseline.Providers.Primary, catalog)
+			// Pin only the names whose provider the edit takes away (their rule or the default order is gone).
+			if baseline.Providers.primaryFor(ref) == "" || edited.Providers.primaryFor(ref) != "" {
+				continue
+			}
+			route, err := resolveModelReference("routing."+job, ref, baseline.Providers, catalog)
 			if err != nil {
 				return Config{}, err
 			}
+			id := route.Primary
 			if edited.Routing == nil {
 				edited.Routing = make(map[string]string)
 			}

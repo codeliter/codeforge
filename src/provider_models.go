@@ -3,6 +3,7 @@ package src
 import (
 	"errors"
 	"fmt"
+	"path"
 	"slices"
 	"sort"
 	"strings"
@@ -17,9 +18,65 @@ var errNativeFallback = errors.New("native fallback policy does not match Codefo
 // ProviderPolicy is the primary provider and the ordered backups Empryo switches to when it fails or runs out of quota.
 // Fallback is the original single-backup key; Fallbacks adds more. Backups() returns them in order, Fallback first.
 type ProviderPolicy struct {
-	Primary   string   `json:"primary,omitempty" yaml:"primary,omitempty"`
-	Fallback  string   `json:"fallback,omitempty" yaml:"fallback,omitempty"`
+	Primary   string         `json:"primary,omitempty" yaml:"primary,omitempty"`
+	Fallback  string         `json:"fallback,omitempty" yaml:"fallback,omitempty"`
+	Fallbacks []string       `json:"fallbacks,omitempty" yaml:"fallbacks,omitempty"`
+	Rules     []ProviderRule `json:"rules,omitempty" yaml:"rules,omitempty"`
+}
+
+// ProviderRule gives the models matching Match their own provider chain instead of the default one,
+// for example claude-* on anthropic with openrouter as its backup. Match is a glob over the model name
+// written like a model reference (Sonnet-* means claude-sonnet-*). The first matching rule wins.
+type ProviderRule struct {
+	Match     string   `json:"match" yaml:"match"`
+	Primary   string   `json:"primary" yaml:"primary"`
 	Fallbacks []string `json:"fallbacks,omitempty" yaml:"fallbacks,omitempty"`
+}
+
+// ruleKey normalises a pattern or model reference the same way, so Sonnet-* and Sonnet* both mean claude-sonnet-*.
+func ruleKey(match string) string {
+	key := modelReferenceKey(match)
+	for _, family := range []string{"sonnet", "opus", "haiku"} {
+		if strings.HasPrefix(key, family) {
+			return "claude-" + key
+		}
+	}
+	return key
+}
+
+// chainFor is the chain that serves a model: its rule's chain, else the default one (nil when there is none).
+func (policy *ProviderPolicy) chainFor(ref string) *ProviderPolicy {
+	if rule, ok := policy.ruleFor(ref); ok {
+		return rule
+	}
+	return policy
+}
+
+// primaryFor is the provider a model runs on first, or "" when no chain says.
+func (policy *ProviderPolicy) primaryFor(ref string) string {
+	if chain := policy.chainFor(ref); chain != nil {
+		return providerID(chain.Primary)
+	}
+	return ""
+}
+
+// chain is the rule's providers as an ordinary policy, so it is validated and resolved like the default one.
+func (rule ProviderRule) chain() *ProviderPolicy {
+	return newProviderPolicy(rule.Primary, rule.Fallbacks)
+}
+
+// ruleFor returns the chain of the first rule matching the model reference.
+func (policy *ProviderPolicy) ruleFor(ref string) (*ProviderPolicy, bool) {
+	if policy == nil {
+		return nil, false
+	}
+	key := ruleKey(ref)
+	for _, rule := range policy.Rules {
+		if ok, err := path.Match(ruleKey(rule.Match), key); err == nil && ok {
+			return rule.chain(), true
+		}
+	}
+	return nil, false
 }
 
 // Backups is the ordered list of backup providers, with aliases normalised.
@@ -42,6 +99,10 @@ func (policy *ProviderPolicy) clone() *ProviderPolicy {
 	}
 	out := *policy
 	out.Fallbacks = slices.Clone(policy.Fallbacks)
+	out.Rules = slices.Clone(policy.Rules)
+	for i := range out.Rules {
+		out.Rules[i].Fallbacks = slices.Clone(out.Rules[i].Fallbacks)
+	}
 	return &out
 }
 
@@ -100,6 +161,27 @@ func validateProviderPolicy(policy *ProviderPolicy) error {
 			return fmt.Errorf("%w: %s is listed twice; primary and fallbacks must all differ", errProviderPolicy, backup)
 		}
 		seen[backup] = true
+	}
+	matches := map[string]bool{}
+	for _, rule := range policy.Rules {
+		key := ruleKey(rule.Match)
+		if key == "" || strings.TrimSpace(rule.Match) == "" {
+			return fmt.Errorf("%w: a rule needs a model pattern such as claude-*", errProviderPolicy)
+		}
+		// Only * and ? are wildcards, so path.Match can never reject the pattern.
+		if strings.ContainsAny(rule.Match, "[]\\/") {
+			return fmt.Errorf("%w: rule pattern %q must be a model name using only * and ? as wildcards (no provider prefix, brackets or backslash)", errProviderPolicy, rule.Match)
+		}
+		if matches[key] {
+			return fmt.Errorf("%w: rule %q is listed twice", errProviderPolicy, rule.Match)
+		}
+		matches[key] = true
+		if providerID(rule.Primary) == "" {
+			return fmt.Errorf("%w: rule %q needs a primary provider", errProviderPolicy, rule.Match)
+		}
+		if err := validateProviderPolicy(rule.chain()); err != nil {
+			return fmt.Errorf("rule %q: %w", rule.Match, err)
+		}
 	}
 	return nil
 }
@@ -167,6 +249,11 @@ func resolveModelReference(role, ref string, policy *ProviderPolicy, catalog []s
 		route.Primary, route.Explicit = ref, true
 		return route, nil
 	}
+	// A rule gives this model family its own chain; the default chain serves everything else.
+	rule, ruled := policy.ruleFor(ref)
+	if ruled {
+		policy = rule
+	}
 	primary := ""
 	if policy != nil {
 		primary = providerID(policy.Primary)
@@ -178,10 +265,16 @@ func resolveModelReference(role, ref string, policy *ProviderPolicy, catalog []s
 	}
 	// A backup serves the same model when it has it. When it doesn't, use its closest model of the same
 	// line or level, so a missing model never removes the backup; only a provider with nothing comparable fails.
+	// Under a rule, a stand-in stays in the model's own family: a Claude rule never falls back to a GPT model.
+	standIns := catalog
+	if ruled {
+		fam := family(route.Primary)
+		standIns = slices.DeleteFunc(slices.Clone(catalog), func(id string) bool { return family(id) != fam })
+	}
 	for _, backup := range policy.Backups() {
 		id, err := catalogModel(ref, backup, catalog)
 		if errors.Is(err, errModelName) {
-			if standIn, ok := equivalentModel(route.Primary, backup, catalog); ok {
+			if standIn, ok := equivalentModel(route.Primary, backup, standIns); ok {
 				id, err = standIn, nil
 				if route.StandIns == nil {
 					route.StandIns = map[string]bool{}
@@ -271,7 +364,8 @@ func (plan ModelPlan) verifyFallbacks(native map[string][]string) error {
 		allowed := append([]string{primary}, expected...)
 		for _, backup := range expected {
 			for _, further := range native[backup] {
-				if !slices.Contains(allowed, further) {
+				// A backup that is itself a declared primary (another family's rule) keeps its own declared chain.
+				if !slices.Contains(allowed, further) && !slices.Contains(chains[backup], further) {
 					failures = append(failures, fmt.Sprintf("backup %s also routes to undeclared model %s", backup, further))
 				}
 			}

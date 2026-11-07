@@ -55,19 +55,25 @@ func defaultModelApplyScope(inProject bool) string {
 	return "global"
 }
 func readModelApplyConfig(home, project, scope string) (Config, error) {
-	cfg, err := readConfigFile(home)
+	cfg, _, err := readModelApplyLayers(home, project, scope)
+	return cfg, err
+}
+
+// readModelApplyLayers is readModelApplyConfig that also returns the project file's own settings
+// (empty for global scope), read once, so callers never trigger a second trust prompt for the same file.
+func readModelApplyLayers(home, project, scope string) (merged, local Config, err error) {
+	merged, err = readConfigFile(home)
 	if err != nil {
-		return cfg, err
+		return merged, Config{}, err
 	}
 	if scope == "project" {
-		local, err := readTrustedProjectConfig(home, project)
-		if err != nil {
-			return cfg, err
+		if local, err = readTrustedProjectConfig(home, project); err != nil {
+			return merged, local, err
 		}
-		cfg = mergeConfig(cfg, local)
+		merged = mergeConfig(merged, local)
 	}
-	cfg = configDefaults(cfg)
-	return cfg, validate(cfg)
+	merged = configDefaults(merged)
+	return merged, local, validate(merged)
 }
 
 func runModelApply(ctx context.Context, home, bin string, args []string) error {
