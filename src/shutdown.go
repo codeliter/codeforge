@@ -41,13 +41,53 @@ func runEngine(ctx context.Context, argv, env []string, limit time.Time) error {
 
 // runEngineTo is runEngine with the engine's standard output sent to stdout, so a caller can keep what the run printed.
 func runEngineTo(ctx context.Context, argv, env []string, limit time.Time, stdout io.Writer) error {
+	return runEngineWith(ctx, argv, env, limit, stdout, nil)
+}
+
+// catchableSignals are the signals codeforge handles while an engine runs. SIGHUP is left alone when the process started
+// with it ignored (nohup): registering for it would replace that, and a closed terminal would then end a run that was
+// meant to outlive it.
+func catchableSignals() []os.Signal { return signalsToCatch(signal.Ignored(syscall.SIGHUP)) }
+
+func signalsToCatch(hupIgnored bool) []os.Signal {
+	sigs := []os.Signal{os.Interrupt, syscall.SIGTERM, syscall.SIGQUIT}
+	if !hupIgnored {
+		sigs = append(sigs, syscall.SIGHUP)
+	}
+	return sigs
+}
+
+// stopGrace is how long the engine gets to save and exit after codeforge is told to terminate, before it is killed.
+var stopGrace = 3 * time.Second
+
+// terminating reports the signals that end codeforge: SIGTERM, SIGHUP (the terminal was closed) and SIGQUIT. SIGINT is
+// not one of them: in the TUI Ctrl+C cancels a turn, and the engine, which gets it from the terminal itself, decides.
+func terminating(sig os.Signal) bool {
+	return sig == syscall.SIGTERM || sig == syscall.SIGHUP || sig == syscall.SIGQUIT
+}
+
+// runEngineWith is runEngineTo that also calls afterChild, once, as soon as the engine is gone and before anything is
+// printed: the place to undo something that must not outlive it. A terminating signal never runs it early. It is
+// forwarded to the engine as SIGTERM, the engine is given stopGrace to exit and is then killed, so afterChild always
+// runs with the engine dead and nothing left that could write behind it.
+//
+// early is a channel the caller registered for signals before it changed anything: what it already holds is handled
+// here as if it had arrived now, so a signal in the gap between the two registrations is not lost.
+func runEngineWith(ctx context.Context, argv, env []string, limit time.Time, stdout io.Writer, afterChild func(), early ...<-chan os.Signal) error {
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("launch cancelled: %w", err)
 	}
-	const signalBuffer = 2
+	const signalBuffer = 4
 	signals := make(chan os.Signal, signalBuffer)
-	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+	signal.Notify(signals, catchableSignals()...)
 	defer signal.Stop(signals)
+	for _, pending := range early {
+		select {
+		case sig := <-pending:
+			signals <- sig
+		default:
+		}
+	}
 	state, stateErr := term.GetState(int(os.Stdin.Fd()))
 	// Cancellation from main's signal context must not kill Empryo before it saves.
 	cmd := exec.CommandContext(context.WithoutCancel(ctx), argv[0], argv[1:]...)
@@ -68,10 +108,26 @@ func runEngineTo(ctx context.Context, argv, env []string, limit time.Time, stdou
 	var result, forwardErr error
 	timedOut := false
 	running := true
+	// killAt fires stopGrace after codeforge has been told to terminate, if the engine has not exited by then.
+	var killAt <-chan time.Time
+	var killTimer *time.Timer
+	defer func() {
+		if killTimer != nil {
+			killTimer.Stop()
+		}
+	}()
 	for running {
 		select {
 		case result = <-done:
 			running = false
+		case <-killAt:
+			killAt = nil
+			// The engine did not exit in time. Its whole group goes when it has one of its own.
+			if limit.IsZero() {
+				bestEffort(cmd.Process.Kill())
+			} else if err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
+				forwardErr = errors.Join(forwardErr, fmt.Errorf("killing the engine after the grace period: %w", err))
+			}
 		case <-expired:
 			select {
 			case result = <-done:
@@ -86,18 +142,32 @@ func runEngineTo(ctx context.Context, argv, env []string, limit time.Time, stdou
 				forwardErr = fmt.Errorf("stopping the run at its deadline: %w", err)
 			}
 		case sig := <-signals:
-			if unix, ok := sig.(syscall.Signal); ok && !limit.IsZero() {
+			forwarded := sig
+			if terminating(sig) {
+				// SIGHUP and SIGQUIT are asked of the engine as a plain SIGTERM: it saves and exits, where SIGQUIT would
+				// dump core. Codeforge itself stays until the engine is gone, then undoes and exits.
+				forwarded = syscall.SIGTERM
+				// The grace is for a run with something to undo; a review under a deadline keeps its own limits.
+				if killTimer == nil && afterChild != nil {
+					killTimer = time.NewTimer(stopGrace)
+					killAt = killTimer.C
+				}
+			}
+			if unix, ok := forwarded.(syscall.Signal); ok && !limit.IsZero() {
 				// Not in the foreground group, so the terminal's Ctrl+C does not reach the engine or its tools on its own.
 				if err := syscall.Kill(-cmd.Process.Pid, unix); err != nil && !errors.Is(err, syscall.ESRCH) {
 					forwardErr = fmt.Errorf("forwarding %s: %w", sig, err)
 				}
-			} else if sig == syscall.SIGTERM {
-				// SIGTERM sent to Codeforge's PID must also reach its child.
-				if err := cmd.Process.Signal(sig); err != nil && !errors.Is(err, os.ErrProcessDone) {
+			} else if terminating(sig) {
+				// A signal sent to Codeforge's PID must also reach its child.
+				if err := cmd.Process.Signal(forwarded); err != nil && !errors.Is(err, os.ErrProcessDone) {
 					forwardErr = fmt.Errorf("forwarding termination: %w", err)
 				}
 			}
 		}
+	}
+	if afterChild != nil {
+		afterChild() // the engine has exited: nothing can write behind this, and nothing has been printed yet
 	}
 	if !limit.IsZero() {
 		// The engine is gone; whatever it started must not outlive it.

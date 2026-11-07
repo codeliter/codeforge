@@ -10,53 +10,54 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
 	"github.com/codeliter/codeforge/src/guard"
 )
 
-// Codeforge Steel is applied to the Empryo TUI that codeforge starts, and only to that one. Empryo has no flag or
-// environment variable that picks a theme for one launch, so the choice is written into the project's own
-// .empryo/config.json while the TUI is open and taken out again when it closes: other projects, and Empryo sessions
-// outside this one, never see it.
+// Codeforge Steel is shown in the Empryo TUI that codeforge starts. Empryo reads its theme from the global
+// ~/.empryo/config.json only (a project's own config and the environment are ignored for it, and there is no flag), so the
+// theme is written there while the TUI is open and the user's own theme is put back when it closes.
 //
-// What is needed to take it out again is kept in the user's own ~/.codeforge, never in the checkout: a repository is
-// untrusted input, and a ledger it supplied could make codeforge delete or overwrite files. A killed codeforge leaves
-// the theme in place until the next launch in that project, which puts the file back first.
+// Tradeoff: while a Codeforge TUI is open, any other Empryo session that starts shows Steel as well. A theme chosen in the
+// TUI with /theme is the user's choice and is never undone.
+//
+// The theme is put back when the engine has exited, never because a signal arrived: Empryo can rewrite the config for as
+// long as it runs. A terminating signal makes codeforge stop the engine first (see runEngineWith) and then undo. What is
+// needed to put things back is kept in the user's own ~/.codeforge, so a codeforge that was killed outright (SIGKILL
+// cannot be caught) is cleaned up by the next launch.
 const (
 	steelDark  = "codeforge-steel"
 	steelLight = "codeforge-steel-light"
 	// themeEnv switches the theme off for a launch: CODEFORGE_THEME=off keeps whatever theme Empryo is set to.
 	themeEnv       = "CODEFORGE_THEME"
-	themeLockWait  = 3 * time.Second
+	themeLockWait  = 2 * time.Second
 	appearanceWait = 1500 * time.Millisecond
-	gitWait        = 2 * time.Second
 )
 
-var (
-	errNotJSONObject = errors.New("not a JSON object")
-	errUnsafeConfig  = errors.New("the project's .empryo is a link, or not a directory")
-)
+var errNotJSONObject = errors.New("not a JSON object")
 
-// themeLedger is what has to be known to take the theme back out of one project.
+// themeLedger is what has to be known to put the user's config back.
 type themeLedger struct {
-	Workspace  string        `json:"workspace"` // the project's real path; the ledger is only ever used for it
-	Holders    []themeHolder `json:"holders"`
-	Existed    bool          `json:"existed"`     // the project config existed before codeforge wrote the theme
-	CreatedDir bool          `json:"created_dir"` // so did the .empryo folder
-	Original   []byte        `json:"original"`    // its exact bytes
-	Mode       uint32        `json:"mode"`        // and its permissions
-	Written    string        `json:"written"`     // sha-256 of what codeforge wrote
-	Theme      string        `json:"theme"`
+	Config   string        `json:"config"` // the resolved path of the config that was changed
+	Holders  []themeHolder `json:"holders"`
+	Existed  bool          `json:"existed"`  // the config existed before codeforge wrote the theme
+	Original []byte        `json:"original"` // its exact bytes
+	Mode     uint32        `json:"mode"`     // and its permissions
+	Written  string        `json:"written"`  // sha-256 of what codeforge wrote
+	Theme    string        `json:"theme"`    // the Steel theme that was set
+	Previous string        `json:"previous"` // the user's theme.name as JSON text, "" when there was none
 }
 
-// themeHolder is one codeforge TUI that is open on the project.
+// themeHolder is one codeforge TUI that is open.
 type themeHolder struct {
 	Pid   int    `json:"pid"`
 	ID    string `json:"id"`
@@ -90,24 +91,14 @@ func systemAppearance(ctx context.Context) string {
 	return "dark"
 }
 
-// workspaceOf is the directory the engine will treat as the project: --cwd when given, else the working directory.
-func workspaceOf(argv []string) string {
-	if dir := flagValue(argv, "--cwd"); dir != "" {
-		return dir
-	}
-	wd, err := os.Getwd()
-	if err != nil {
-		return ""
-	}
-	return wd
-}
-
 func steelFor(appearance string) string {
 	if appearance == "light" {
 		return steelLight
 	}
 	return steelDark
 }
+
+func isSteel(name string) bool { return name == steelDark || name == steelLight }
 
 // bestEffort drops an error the caller has no way to act on: undoing the theme must never stop a session from closing.
 func bestEffort(error) {}
@@ -135,8 +126,8 @@ func readConfigObject(path string) (object configObject, raw []byte, existed boo
 	return object, raw, true, nil
 }
 
-// themeObject is the theme section of a config, or an empty one.
-func (c configObject) themeObject() configObject {
+// themeSection is the theme section of a config, or an empty one.
+func (c configObject) themeSection() configObject {
 	var theme configObject
 	if json.Unmarshal(c["theme"], &theme) != nil || theme == nil {
 		return configObject{}
@@ -147,23 +138,23 @@ func (c configObject) themeObject() configObject {
 // themeName returns theme.name, or "".
 func (c configObject) themeName() string {
 	var name string
-	if json.Unmarshal(c.themeObject()["name"], &name) != nil {
+	if json.Unmarshal(c.themeSection()["name"], &name) != nil {
 		return ""
 	}
 	return name
 }
 
-// withThemeName sets theme.name, or removes it when name is empty, keeping every other setting as it was.
-func (c configObject) withThemeName(name string) (configObject, error) {
-	theme := c.themeObject()
-	if name == "" {
+// rawThemeName returns theme.name exactly as written, or "" when there is none.
+func (c configObject) rawThemeName() string { return string(c.themeSection()["name"]) }
+
+// withRawThemeName sets theme.name to raw (JSON text), or removes it when raw is empty, keeping every other setting as
+// it was. An emptied theme section is dropped.
+func (c configObject) withRawThemeName(raw string) (configObject, error) {
+	theme := c.themeSection()
+	if raw == "" {
 		delete(theme, "name")
 	} else {
-		quoted, err := json.Marshal(name)
-		if err != nil {
-			return nil, fmt.Errorf("encoding the theme name: %w", err)
-		}
-		theme["name"] = quoted
+		theme["name"] = json.RawMessage(raw)
 	}
 	out := make(configObject, len(c)+1)
 	for k, v := range c {
@@ -184,7 +175,7 @@ func (c configObject) withThemeName(name string) (configObject, error) {
 func (c configObject) render() ([]byte, error) {
 	raw, err := json.MarshalIndent(c, "", "  ")
 	if err != nil {
-		return nil, fmt.Errorf("encoding the project config: %w", err)
+		return nil, fmt.Errorf("encoding the config: %w", err)
 	}
 	return append(raw, '\n'), nil
 }
@@ -227,16 +218,18 @@ func pidAlive(pid int) bool {
 	return err == nil || errors.Is(err, syscall.EPERM)
 }
 
-func themeLedgerDir(home string) string { return filepath.Join(configDir(home), "theme-ledger") }
-
-func themeLedgerPath(home, workspace string) string {
-	return filepath.Join(themeLedgerDir(home), hashOf([]byte(workspace))[:16]+".json")
+// empryoConfigPath is the global Empryo config.
+func empryoConfigPath(home string) string {
+	return filepath.Join(home, ".empryo", "config.json")
 }
 
-func loadThemeLedger(path, workspace string) (themeLedger, bool) {
+func themeLedgerDir(home string) string  { return filepath.Join(configDir(home), "theme-ledger") }
+func themeLedgerPath(home string) string { return filepath.Join(themeLedgerDir(home), "global.json") }
+
+func loadThemeLedger(path string) (themeLedger, bool) {
 	var l themeLedger
 	raw, err := os.ReadFile(path)
-	if err != nil || json.Unmarshal(raw, &l) != nil || l.Theme == "" || l.Workspace != workspace {
+	if err != nil || json.Unmarshal(raw, &l) != nil || l.Theme == "" || l.Config == "" {
 		return themeLedger{}, false
 	}
 	return l, true
@@ -250,140 +243,59 @@ func saveThemeLedger(path string, l themeLedger) error {
 	return atomicWriteFile(path, raw, privateFile)
 }
 
-// revertTheme takes codeforge's theme out of the project config. If the file is exactly what codeforge wrote it goes
-// back to the original bytes (or is removed when there was none); if someone has changed it since, only the theme.name
-// codeforge set is taken out and nothing else is touched. An error means the file may still hold the theme.
-func revertTheme(workspace string, l themeLedger) error {
-	root := filepath.Join(workspace, ".empryo")
-	cfgPath := filepath.Join(root, "config.json")
-	if err := safeConfigPath(root, cfgPath); err != nil {
-		return err
-	}
-	return restoreConfig(root, cfgPath, l)
-}
-
-func restoreConfig(root, cfgPath string, l themeLedger) error {
-	current, err := os.ReadFile(cfgPath)
+// revertTheme puts the user's config back. If the file is exactly what codeforge wrote it goes back to the original
+// bytes; if something else has saved it since (Empryo saves settings while it runs), only theme.name is put back to what
+// it was, and only if it is still the Steel theme codeforge set: a theme chosen in the TUI since is the user's own.
+// An error means the file may still hold the Steel theme.
+func revertTheme(l themeLedger) error {
+	current, err := os.ReadFile(l.Config)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
 	if err != nil {
-		return fmt.Errorf("reading %s: %w", cfgPath, err)
+		return fmt.Errorf("reading %s: %w", l.Config, err)
 	}
 	if hashOf(current) == l.Written {
-		if l.Existed {
-			mode := os.FileMode(l.Mode).Perm()
-			if mode == 0 {
-				mode = privateFile
+		if !l.Existed {
+			if err := os.Remove(l.Config); err != nil {
+				return fmt.Errorf("removing %s: %w", l.Config, err)
 			}
-			return atomicWriteFile(cfgPath, l.Original, mode)
+			return nil
 		}
-		return removeConfig(root, cfgPath, l)
+		return atomicWriteFile(l.Config, l.Original, currentMode(l))
 	}
-	object, _, _, readErr := readConfigObject(cfgPath)
+	object, _, _, readErr := readConfigObject(l.Config)
 	if readErr != nil || object.themeName() != l.Theme {
 		return nil //nolint:nilerr // changed by someone else, or no longer ours: leave it as it is
 	}
-	without, err := object.withThemeName("")
+	restored, err := object.withRawThemeName(l.Previous)
 	if err != nil {
 		return err
 	}
-	if len(without) == 0 && !l.Existed {
-		return removeConfig(root, cfgPath, l) // nothing but our theme was ever in it
-	}
-	raw, err := without.render()
+	raw, err := restored.render()
 	if err != nil {
 		return err
 	}
-	mode := os.FileMode(privateFile)
-	if info, err := os.Stat(cfgPath); err == nil {
-		mode = info.Mode().Perm()
-	}
-	return atomicWriteFile(cfgPath, raw, mode)
+	return atomicWriteFile(l.Config, raw, currentMode(l))
 }
 
-func removeConfig(root, cfgPath string, l themeLedger) error {
-	if err := os.Remove(cfgPath); err != nil {
-		return fmt.Errorf("removing %s: %w", cfgPath, err)
+// currentMode is the permissions the config has now, so a restore never loosens a file the user has since made private;
+// the recorded ones are the fallback.
+func currentMode(l themeLedger) os.FileMode {
+	if info, err := os.Stat(l.Config); err == nil {
+		return info.Mode().Perm()
 	}
-	if l.CreatedDir {
-		bestEffort(os.Remove(root)) // only succeeds while it is empty
+	if mode := os.FileMode(l.Mode).Perm(); mode != 0 {
+		return mode
 	}
-	return nil
+	return privateFile
 }
 
-// configIsSafeFromGit reports whether the temporary config can never be staged or committed: the project is not a git
-// repository, or git already ignores both .empryo/config.json and the temporary files written beside it. Codeforge does
-// not edit a repository's ignore rules to make this true; where .empryo is not ignored the theme is simply not applied.
-// Git missing counts as no repository, and so does git's own "not a git repository"; every other failure (a timeout, an
-// ownership refusal, a broken repository) counts as unsafe.
-func configIsSafeFromGit(ctx context.Context, project string) bool {
-	ctx, cancel := context.WithTimeout(ctx, gitWait)
-	defer cancel()
-	var stderr bytes.Buffer
-	probe := exec.CommandContext(ctx, "git", "-C", project, "rev-parse", "--is-inside-work-tree")
-	probe.Stderr = &stderr
-	probe.Env = append(os.Environ(), "LC_ALL=C") // git's message is matched below, so it must not be translated
-	if err := probe.Run(); err != nil {
-		if errors.Is(err, exec.ErrNotFound) || strings.Contains(stderr.String(), "not a git repository") {
-			return true // there is no repository to stage into
-		}
-		return false
-	}
-	names := append([]string{"config.json"}, themeProbeNames()...)
-	for _, name := range names {
-		if exec.CommandContext(ctx, "git", "-C", project, "check-ignore", "-q", "--", filepath.Join(".empryo", name)).Run() != nil {
-			return false
-		}
-	}
-	return true
-}
-
-// themeProbeNames are names of the kind atomicWriteFile gives its temporary files (tempPrefix and a run of digits),
-// which hold a full copy of the config beside it for a moment. A rule that ignores them all, whatever digits come up,
-// is a rule for the whole family.
-func themeProbeNames() []string {
-	return []string{tempPrefix + "0", tempPrefix + "1234567", tempPrefix + "4294967295", tempPrefix + "9999999999"}
-}
-
-// safeConfigPath refuses to write through a link: a symlinked .empryo or config.json could point at another project's
-// settings, or at the user's global ones.
-func safeConfigPath(root, cfgPath string) error {
-	if info, err := os.Lstat(root); err == nil && (info.Mode()&os.ModeSymlink != 0 || !info.IsDir()) {
-		return errUnsafeConfig
-	}
-	if info, err := os.Lstat(cfgPath); err == nil && !info.Mode().IsRegular() {
-		return errUnsafeConfig
-	}
-	return nil
-}
-
-func isSteel(name string) bool { return name == steelDark || name == steelLight }
-
-// scopeTheme applies Codeforge Steel to the project for the life of a TUI and returns the function that undoes it.
-// It does nothing, and says nothing, when the theme is off, not installed, already chosen, or the project has a theme of
-// its own: a theme the user set is never replaced. Anything left by a codeforge that was killed is put back first,
-// whatever else is decided.
-func scopeTheme(ctx context.Context, home, workspace string) func() {
+// scopeTheme shows Codeforge Steel for the life of a TUI and returns the function that undoes it. It does nothing when
+// the theme is off, not installed, already the user's choice, or the config cannot be changed safely. Anything left by a
+// codeforge that was killed is put back first, whatever else is decided.
+func scopeTheme(ctx context.Context, home string) func() {
 	nothing := func() {}
-	if workspace == "" {
-		return nothing
-	}
-	// One identity per project however it was spelled ("." or a full path, through a link or not): the ledger, the lock
-	// and the home-directory check all use it.
-	absolute, err := filepath.Abs(workspace)
-	if err != nil {
-		return nothing
-	}
-	project, err := filepath.EvalSymlinks(absolute)
-	if err != nil {
-		return nothing
-	}
-	// In the home directory the project's .empryo is Empryo's own global one.
-	if homeReal, err := filepath.EvalSymlinks(home); err != nil || homeReal == project {
-		return nothing
-	}
-
 	ledgerDir := themeLedgerDir(home)
 	if err := os.MkdirAll(ledgerDir, privateDir); err != nil {
 		return nothing
@@ -396,12 +308,12 @@ func scopeTheme(ctx context.Context, home, workspace string) func() {
 	}
 	defer unlock()
 
-	ledgerPath := themeLedgerPath(home, project)
-	ledger, have := loadThemeLedger(ledgerPath, project)
+	ledgerPath := themeLedgerPath(home)
+	ledger, have := loadThemeLedger(ledgerPath)
 	if have {
 		ledger.Holders = slices.DeleteFunc(ledger.Holders, func(h themeHolder) bool { return !holderAlive(h) })
 		if len(ledger.Holders) == 0 {
-			if revertTheme(project, ledger) != nil {
+			if revertTheme(ledger) != nil {
 				return nothing // still there: keep the ledger so a later launch can try again
 			}
 			bestEffort(os.Remove(ledgerPath))
@@ -409,38 +321,48 @@ func scopeTheme(ctx context.Context, home, workspace string) func() {
 		}
 	}
 
+	if os.Getenv("EMPRYO_HOME") != "" {
+		return nothing // Empryo then reads another home than the one Codeforge installs its themes into
+	}
+	me := themeHolder{Pid: os.Getpid(), ID: strconv.FormatInt(time.Now().UnixNano(), 36), Start: processStart(os.Getpid())}
+	if have {
+		// Another codeforge TUI already has the theme applied, and this engine reads the same config whatever it chose
+		// (even with the theme switched off), so it can save the Steel theme back: it holds the theme until it is gone too.
+		ledger.Holders = append(ledger.Holders, me)
+		if saveThemeLedger(ledgerPath, ledger) != nil {
+			return nothing
+		}
+		return releaseTheme(ctx, home, me)
+	}
+
 	switch strings.ToLower(os.Getenv(themeEnv)) {
 	case "off", "0", "none", "system":
 		return nothing
 	}
 	theme := steelFor(appearanceProbe(ctx))
-	if _, err := os.Stat(filepath.Join(home, ".empryo", "themes", theme+".json")); err != nil {
+	cfgPath := empryoConfigPath(home)
+	if _, err := os.Stat(filepath.Join(filepath.Dir(cfgPath), "themes", theme+".json")); err != nil {
 		return nothing // Empryo would fall back to its own theme for an id it cannot find
 	}
-	if global, _, _, err := readConfigObject(filepath.Join(home, ".empryo", "config.json")); err == nil && isSteel(global.themeName()) {
-		return nothing
-	}
 
-	me := themeHolder{Pid: os.Getpid(), ID: strconv.FormatInt(time.Now().UnixNano(), 36), Start: processStart(os.Getpid())}
-	if have {
-		// Another codeforge TUI already has it applied on this project; join it.
-		ledger.Holders = append(ledger.Holders, me)
-		if saveThemeLedger(ledgerPath, ledger) != nil {
-			return nothing
-		}
-		return releaseTheme(ctx, home, project, me)
+	// A config that is a link (dotfiles) is changed where it really lives, so the link stays a link.
+	target, err := filepath.EvalSymlinks(cfgPath)
+	if err != nil {
+		return nothing // no config yet, or unreadable: Empryo makes its own
 	}
-
-	root := filepath.Join(project, ".empryo")
-	cfgPath := filepath.Join(root, "config.json")
-	if safeConfigPath(root, cfgPath) != nil || !configIsSafeFromGit(ctx, project) {
+	info, err := os.Stat(target)
+	if err != nil || !info.Mode().IsRegular() {
 		return nothing
 	}
-	object, original, existed, err := readConfigObject(cfgPath)
-	if err != nil || object.themeName() != "" {
+	object, original, existed, err := readConfigObject(target)
+	if err != nil || isSteel(object.themeName()) {
 		return nothing
 	}
-	withTheme, err := object.withThemeName(theme)
+	quoted, err := json.Marshal(theme)
+	if err != nil {
+		return nothing
+	}
+	withTheme, err := object.withRawThemeName(string(quoted))
 	if err != nil {
 		return nothing
 	}
@@ -448,31 +370,52 @@ func scopeTheme(ctx context.Context, home, workspace string) func() {
 	if err != nil {
 		return nothing
 	}
-	createdDir := false
-	if _, err := os.Lstat(root); errors.Is(err, os.ErrNotExist) {
-		if os.Mkdir(root, dirPerm) != nil {
-			return nothing
-		}
-		createdDir = true
+	mode := uint32(info.Mode().Perm())
+	ledger = themeLedger{
+		Config: target, Holders: []themeHolder{me}, Existed: existed, Original: original, Mode: mode,
+		Written: hashOf(written), Theme: theme, Previous: object.rawThemeName(),
 	}
-	mode := uint32(privateFile)
-	if info, err := os.Stat(cfgPath); err == nil {
-		mode = uint32(info.Mode().Perm())
-	}
-	ledger = themeLedger{Workspace: project, Holders: []themeHolder{me}, Existed: existed, CreatedDir: createdDir, Original: original, Mode: mode, Written: hashOf(written), Theme: theme}
+	// The ledger first, so a crash between the two steps still leaves what is needed to undo the second.
 	if saveThemeLedger(ledgerPath, ledger) != nil {
 		return nothing
 	}
-	if atomicWriteFile(cfgPath, written, os.FileMode(mode)) != nil {
+	if atomicWriteFile(target, written, os.FileMode(mode)) != nil {
 		bestEffort(os.Remove(ledgerPath))
 		return nothing
 	}
-	return releaseTheme(ctx, home, project, me)
+	return releaseTheme(ctx, home, me)
 }
 
-// releaseTheme is the undo returned by scopeTheme: the last codeforge TUI to close takes the theme out. If that fails,
-// the ledger stays, so the next launch in the project tries again.
-func releaseTheme(ctx context.Context, home, workspace string, me themeHolder) func() {
+// runThemed runs the interactive engine with Codeforge Steel on and the user's theme back when it is gone, however it
+// ended: it exited on its own, or codeforge was told to terminate (SIGTERM, SIGHUP, SIGQUIT), in which case runEngineWith
+// stops the engine first and then calls the undo, and the deferred undo below is a no-op. Outside a terminal nothing is
+// changed. The signals are caught before the config is touched, so one arriving in between cannot kill codeforge with the
+// theme still written.
+func runThemed(ctx context.Context, home string, argv, env []string) error {
+	if !interactive() {
+		return runInteractive(ctx, argv, env)
+	}
+	const earlyBuffer = 4
+	early := make(chan os.Signal, earlyBuffer)
+	signal.Notify(early, slices.DeleteFunc(catchableSignals(), func(s os.Signal) bool { return s == os.Interrupt })...)
+	defer signal.Stop(early)
+	undo := sync.OnceFunc(scopeTheme(ctx, home))
+	defer undo()
+	select {
+	case sig := <-early:
+		if unix, ok := sig.(syscall.Signal); ok {
+			return &EngineExitError{Code: signalExitBase + int(unix)}
+		}
+		return &EngineExitError{Code: signalExitBase + int(syscall.SIGTERM)}
+	default:
+	}
+	return runEngineWith(ctx, argv, env, time.Time{}, os.Stdout, undo, early)
+}
+
+// releaseTheme is the undo returned by scopeTheme: the last codeforge TUI to close puts the user's theme back. If that
+// fails, the ledger stays, so the next launch tries again. It does not depend on ctx, which is already cancelled when a
+// signal ended the session.
+func releaseTheme(ctx context.Context, home string, me themeHolder) func() {
 	return func() {
 		ledgerDir := themeLedgerDir(home)
 		lockCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), themeLockWait)
@@ -482,8 +425,8 @@ func releaseTheme(ctx context.Context, home, workspace string, me themeHolder) f
 			return
 		}
 		defer unlock()
-		ledgerPath := themeLedgerPath(home, workspace)
-		ledger, have := loadThemeLedger(ledgerPath, workspace)
+		ledgerPath := themeLedgerPath(home)
+		ledger, have := loadThemeLedger(ledgerPath)
 		if !have {
 			return
 		}
@@ -492,7 +435,7 @@ func releaseTheme(ctx context.Context, home, workspace string, me themeHolder) f
 			bestEffort(saveThemeLedger(ledgerPath, ledger))
 			return
 		}
-		if revertTheme(workspace, ledger) != nil {
+		if revertTheme(ledger) != nil {
 			bestEffort(saveThemeLedger(ledgerPath, ledger)) // no holders left, theme still in place
 			return
 		}

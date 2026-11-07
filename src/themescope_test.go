@@ -4,407 +4,281 @@ package src
 import (
 	"context"
 	"os"
-	"os/exec"
+	"os/signal"
 	"path/filepath"
-	"regexp"
+	"sync/atomic"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
 
-// themeProject is a home with the Steel themes installed and a project directory.
-type themeProject struct {
-	home, project, config, ledger string
+// themeHome is a home with the Steel themes installed and a global Empryo config.
+type themeHome struct {
+	home, config, ledger string
 }
 
-func newThemeProject(t *testing.T) themeProject {
+const userConfig = "{\n  \"effort\": \"low\",\n  \"big\": 9007199254740993,\n  \"theme\": {\n    \"name\": \"catppuccin\",\n    \"transparent\": true\n  }\n}\n"
+
+func newThemeHome(t *testing.T) themeHome {
 	t.Helper()
 	home := t.TempDir()
-	project, err := filepath.EvalSymlinks(t.TempDir())
-	require.NoError(t, err)
 	require.NoError(t, syncAssets(filepath.Join(home, ".empryo"), Config{}))
 	t.Setenv(themeEnv, "")
+	t.Setenv("EMPRYO_HOME", "")
 	old := appearanceProbe
 	appearanceProbe = func(context.Context) string { return "dark" }
 	t.Cleanup(func() { appearanceProbe = old })
-	return themeProject{
-		home: home, project: project,
-		config: filepath.Join(project, ".empryo", "config.json"),
-		ledger: themeLedgerPath(home, project),
-	}
+	h := themeHome{home: home, config: filepath.Join(home, ".empryo", "config.json"), ledger: themeLedgerPath(home)}
+	h.write(t, userConfig)
+	return h
 }
 
-func (p themeProject) write(t *testing.T, body string) {
+func (h themeHome) write(t *testing.T, body string) {
 	t.Helper()
-	require.NoError(t, os.MkdirAll(filepath.Dir(p.config), 0o750))
-	require.NoError(t, os.WriteFile(p.config, []byte(body), 0o600))
+	require.NoError(t, os.WriteFile(h.config, []byte(body), 0o600))
 }
 
-func (p themeProject) read(t *testing.T) string {
+func (h themeHome) read(t *testing.T) string {
 	t.Helper()
-	raw, err := os.ReadFile(p.config)
+	raw, err := os.ReadFile(h.config)
 	require.NoError(t, err)
 	return string(raw)
 }
 
-func TestScopeTheme_IsOnWhileTheTUIIsOpenAndGoneAfter(t *testing.T) {
-	p := newThemeProject(t)
-	undo := scopeTheme(t.Context(), p.home, p.project)
-	require.JSONEq(t, `{"theme":{"name":"codeforge-steel"}}`, p.read(t))
-	require.FileExists(t, p.ledger)
-	require.NoFileExists(t, filepath.Join(p.project, ".empryo", ".codeforge-theme.json"), "nothing but the config goes into the project")
+func TestScopeTheme_SteelIsOnWhileTheTUIIsOpenAndTheUsersThemeIsBackAfter(t *testing.T) {
+	h := newThemeHome(t)
+	undo := scopeTheme(t.Context(), h.home)
+	applied := h.read(t)
+	require.JSONEq(t, `{"effort":"low","big":9007199254740993,"theme":{"name":"codeforge-steel","transparent":true}}`, applied)
+	require.Contains(t, applied, "9007199254740993", "a number too large for a float keeps its digits")
+	require.FileExists(t, h.ledger)
 
 	undo()
-	require.NoDirExists(t, filepath.Join(p.project, ".empryo"), "the folder codeforge made is gone with the file")
-	require.NoFileExists(t, p.ledger)
+	require.Equal(t, userConfig, h.read(t), "the user's file comes back byte for byte")
+	require.NoFileExists(t, h.ledger)
 }
 
 func TestScopeTheme_PicksTheLightThemeForALightTerminal(t *testing.T) {
-	p := newThemeProject(t)
+	h := newThemeHome(t)
 	appearanceProbe = func(context.Context) string { return "light" }
-	undo := scopeTheme(t.Context(), p.home, p.project)
+	undo := scopeTheme(t.Context(), h.home)
 	defer undo()
-	require.JSONEq(t, `{"theme":{"name":"codeforge-steel-light"}}`, p.read(t))
+	require.Contains(t, h.read(t), `"codeforge-steel-light"`)
 }
 
-func TestScopeTheme_KeepsOtherSettingsAndRestoresTheFileExactly(t *testing.T) {
-	p := newThemeProject(t)
-	original := "{\n  \"effort\": \"low\",\n    \"big\": 9007199254740993,\n    \"theme\": {\"transparent\": true}\n}\n"
-	p.write(t, original)
-	undo := scopeTheme(t.Context(), p.home, p.project)
-	applied := p.read(t)
-	require.JSONEq(t, `{"effort":"low","big":9007199254740993,"theme":{"transparent":true,"name":"codeforge-steel"}}`, applied)
-	require.Contains(t, applied, "9007199254740993", "a number too large for a float keeps its digits")
-
+func TestScopeTheme_WithNoThemeOfTheUsersOwnTheKeyIsRemovedAgain(t *testing.T) {
+	h := newThemeHome(t)
+	h.write(t, `{"effort":"low"}`)
+	undo := scopeTheme(t.Context(), h.home)
+	require.JSONEq(t, `{"effort":"low","theme":{"name":"codeforge-steel"}}`, h.read(t))
 	undo()
-	require.Equal(t, original, p.read(t), "the project's own file comes back byte for byte")
-	require.NoFileExists(t, p.ledger)
+	require.Equal(t, `{"effort":"low"}`, h.read(t))
 }
 
-func TestScopeTheme_NeverReplacesAThemeTheUserChose(t *testing.T) {
-	p := newThemeProject(t)
-	p.write(t, `{"theme":{"name":"dracula"}}`)
-	undo := scopeTheme(t.Context(), p.home, p.project)
-	defer undo()
-	require.JSONEq(t, `{"theme":{"name":"dracula"}}`, p.read(t))
-	require.NoFileExists(t, p.ledger)
+func TestScopeTheme_SettingsEmpryoSavedMeanwhileSurviveTheRevert(t *testing.T) {
+	h := newThemeHome(t)
+	undo := scopeTheme(t.Context(), h.home)
+	// Empryo rewrote the whole file because the user changed a setting; the Steel theme is still in it.
+	h.write(t, `{"effort":"high","model":"x","theme":{"name":"codeforge-steel","transparent":true}}`)
+	undo()
+	require.JSONEq(t, `{"effort":"high","model":"x","theme":{"name":"catppuccin","transparent":true}}`, h.read(t),
+		"only the theme goes back to what it was; the new settings stay")
+	require.NoFileExists(t, h.ledger)
+}
+
+func TestScopeTheme_ATheoryChosenInTheTUIIsTheUsersAndStays(t *testing.T) {
+	h := newThemeHome(t)
+	undo := scopeTheme(t.Context(), h.home)
+	h.write(t, `{"theme":{"name":"nord"}}`) // /theme in the TUI
+	undo()
+	require.JSONEq(t, `{"theme":{"name":"nord"}}`, h.read(t))
+	require.NoFileExists(t, h.ledger)
 }
 
 func TestScopeTheme_DoesNothingWhenThereIsNothingToDo(t *testing.T) {
-	t.Run("the user already uses a Steel theme everywhere, either one", func(t *testing.T) {
-		for _, global := range []string{"codeforge-steel", "codeforge-steel-light"} {
-			p := newThemeProject(t)
-			require.NoError(t, os.WriteFile(filepath.Join(p.home, ".empryo", "config.json"), []byte(`{"theme":{"name":"`+global+`"}}`), 0o600))
-			scopeTheme(t.Context(), p.home, p.project)()
-			require.NoDirExists(t, filepath.Dir(p.config), global)
+	t.Run("the user already uses a Steel theme", func(t *testing.T) {
+		for _, name := range []string{"codeforge-steel", "codeforge-steel-light"} {
+			h := newThemeHome(t)
+			body := `{"theme":{"name":"` + name + `"}}`
+			h.write(t, body)
+			scopeTheme(t.Context(), h.home)()
+			require.Equal(t, body, h.read(t))
+			require.NoFileExists(t, h.ledger)
 		}
 	})
 	t.Run("the theme file is not installed", func(t *testing.T) {
-		p := newThemeProject(t)
-		require.NoError(t, os.Remove(filepath.Join(p.home, ".empryo", "themes", "codeforge-steel.json")))
-		scopeTheme(t.Context(), p.home, p.project)()
-		require.NoDirExists(t, filepath.Dir(p.config))
+		h := newThemeHome(t)
+		require.NoError(t, os.Remove(filepath.Join(h.home, ".empryo", "themes", "codeforge-steel.json")))
+		scopeTheme(t.Context(), h.home)()
+		require.Equal(t, userConfig, h.read(t))
 	})
 	t.Run("switched off", func(t *testing.T) {
 		for _, off := range []string{"off", "OFF", "0", "none", "system"} {
-			p := newThemeProject(t)
+			h := newThemeHome(t)
 			t.Setenv(themeEnv, off)
-			scopeTheme(t.Context(), p.home, p.project)()
-			require.NoDirExists(t, filepath.Dir(p.config), off)
+			scopeTheme(t.Context(), h.home)()
+			require.Equal(t, userConfig, h.read(t), off)
+			require.NoFileExists(t, h.ledger, off)
 		}
 	})
 	t.Run("a config with comments is left alone", func(t *testing.T) {
-		p := newThemeProject(t)
+		h := newThemeHome(t)
 		body := "// mine\n{\"effort\":\"low\"}\n"
-		p.write(t, body)
-		scopeTheme(t.Context(), p.home, p.project)()
-		require.Equal(t, body, p.read(t))
-		require.NoFileExists(t, p.ledger)
+		h.write(t, body)
+		scopeTheme(t.Context(), h.home)()
+		require.Equal(t, body, h.read(t))
+		require.NoFileExists(t, h.ledger)
 	})
-	t.Run("no project", func(t *testing.T) {
-		p := newThemeProject(t)
-		scopeTheme(t.Context(), p.home, "")()
-		require.NoDirExists(t, filepath.Dir(p.config))
-	})
-	t.Run("a file git tracks", func(t *testing.T) {
-		p := newThemeProject(t)
-		p.write(t, `{"effort":"low"}`)
-		for _, args := range [][]string{{"init", "-q"}, {"add", "-f", ".empryo/config.json"}} {
-			out, err := exec.CommandContext(t.Context(), "git", append([]string{"-C", p.project}, args...)...).CombinedOutput()
-			require.NoError(t, err, string(out))
-		}
-		scopeTheme(t.Context(), p.home, p.project)()
-		require.JSONEq(t, `{"effort":"low"}`, p.read(t), "a committed setting is never changed under the user's feet")
-		require.NoFileExists(t, p.ledger)
+	t.Run("no config yet", func(t *testing.T) {
+		h := newThemeHome(t)
+		require.NoError(t, os.Remove(h.config))
+		scopeTheme(t.Context(), h.home)()
+		require.NoFileExists(t, h.config, "Empryo makes its own config; codeforge does not")
 	})
 }
 
-func TestScopeTheme_NeverWritesTheGlobalConfig(t *testing.T) {
-	p := newThemeProject(t)
-	home, err := filepath.EvalSymlinks(p.home)
+func TestScopeTheme_LeavesEverythingAloneWhenEmpryoReadsAnotherHome(t *testing.T) {
+	h := newThemeHome(t)
+	t.Setenv("EMPRYO_HOME", t.TempDir())
+	scopeTheme(t.Context(), h.home)()
+	require.Equal(t, userConfig, h.read(t), "the themes are installed in the home directory, not where EMPRYO_HOME points")
+	require.NoFileExists(t, h.ledger)
+}
+
+func TestScopeTheme_ARestoreNeverLoosensPermissionsTheUserTightened(t *testing.T) {
+	h := newThemeHome(t)
+	require.NoError(t, os.Chmod(h.config, 0o644))
+	undo := scopeTheme(t.Context(), h.home)
+	require.NoError(t, os.Chmod(h.config, 0o600)) // the user made it private meanwhile
+	undo()
+	info, err := os.Stat(h.config)
 	require.NoError(t, err)
-	globalConfig := filepath.Join(home, ".empryo", "config.json")
-	require.NoError(t, os.WriteFile(globalConfig, []byte(`{"theme":{"name":"nord"}}`), 0o600))
-	scopeTheme(t.Context(), p.home, home)()
-	raw, err := os.ReadFile(globalConfig)
+	require.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+	require.Equal(t, userConfig, h.read(t))
+}
+
+func TestSignalsToCatch_LeaveSIGHUPAloneWhenItWasIgnored(t *testing.T) {
+	for _, hupIgnored := range []bool{false, true} {
+		sigs := signalsToCatch(hupIgnored)
+		require.Contains(t, sigs, os.Signal(syscall.SIGTERM))
+		require.Contains(t, sigs, os.Signal(syscall.SIGQUIT))
+		require.Contains(t, sigs, os.Interrupt)
+	}
+	require.Contains(t, signalsToCatch(false), os.Signal(syscall.SIGHUP))
+	require.NotContains(t, signalsToCatch(true), os.Signal(syscall.SIGHUP), "a run started under nohup keeps ignoring a closed terminal")
+}
+
+func TestScopeTheme_AConfigThatIsALinkStaysALink(t *testing.T) {
+	h := newThemeHome(t)
+	target := filepath.Join(t.TempDir(), "dotfiles-config.json")
+	require.NoError(t, os.WriteFile(target, []byte(userConfig), 0o600))
+	require.NoError(t, os.Remove(h.config))
+	require.NoError(t, os.Symlink(target, h.config))
+	undo := scopeTheme(t.Context(), h.home)
+	info, err := os.Lstat(h.config)
 	require.NoError(t, err)
-	require.JSONEq(t, `{"theme":{"name":"nord"}}`, string(raw), "in the home directory the project's .empryo is the global one")
+	require.NotZero(t, info.Mode()&os.ModeSymlink, "the link is still a link while the theme is on")
+	raw, err := os.ReadFile(target)
+	require.NoError(t, err)
+	require.Contains(t, string(raw), "codeforge-steel")
+	undo()
+	back, err := os.ReadFile(target)
+	require.NoError(t, err)
+	require.Equal(t, userConfig, string(back))
+	info, err = os.Lstat(h.config)
+	require.NoError(t, err)
+	require.NotZero(t, info.Mode()&os.ModeSymlink)
 }
 
-func TestScopeTheme_WillNotWriteThroughALink(t *testing.T) {
-	t.Run(".empryo is a link to someone else's folder", func(t *testing.T) {
-		p := newThemeProject(t)
-		other := t.TempDir()
-		require.NoError(t, os.WriteFile(filepath.Join(other, "config.json"), []byte(`{"effort":"low"}`), 0o600))
-		require.NoError(t, os.Symlink(other, filepath.Join(p.project, ".empryo")))
-		scopeTheme(t.Context(), p.home, p.project)()
-		raw, err := os.ReadFile(filepath.Join(other, "config.json"))
-		require.NoError(t, err)
-		require.JSONEq(t, `{"effort":"low"}`, string(raw))
-	})
-	t.Run("config.json is a link", func(t *testing.T) {
-		p := newThemeProject(t)
-		target := filepath.Join(t.TempDir(), "shared.json")
-		require.NoError(t, os.WriteFile(target, []byte(`{"effort":"low"}`), 0o600))
-		require.NoError(t, os.MkdirAll(filepath.Dir(p.config), 0o750))
-		require.NoError(t, os.Symlink(target, p.config))
-		scopeTheme(t.Context(), p.home, p.project)()
-		info, err := os.Lstat(p.config)
-		require.NoError(t, err)
-		require.NotZero(t, info.Mode()&os.ModeSymlink, "the link is still a link")
-		raw, err := os.ReadFile(target)
-		require.NoError(t, err)
-		require.JSONEq(t, `{"effort":"low"}`, string(raw))
-	})
-}
+func TestScopeTheme_ATUIWithTheThemeSwitchedOffStillHoldsAnAppliedTheme(t *testing.T) {
+	h := newThemeHome(t)
+	first := scopeTheme(t.Context(), h.home)
+	t.Setenv(themeEnv, "off")
+	second := scopeTheme(t.Context(), h.home) // its engine reads the Steel theme the first one applied
+	first()
+	require.Contains(t, h.read(t), "codeforge-steel", "the opted-out TUI's engine could still save the Steel theme back")
+	second()
+	require.Equal(t, userConfig, h.read(t))
+	require.NoFileExists(t, h.ledger)
 
-func TestScopeTheme_ALedgerInTheCheckoutIsNotTrusted(t *testing.T) {
-	p := newThemeProject(t)
-	body := `{"effort":"low"}`
-	p.write(t, body)
-	hostile := `{"workspace":"` + p.project + `","holders":[],"existed":false,"written":"` + hashOf([]byte(body)) + `","theme":"anything"}`
-	require.NoError(t, os.WriteFile(filepath.Join(p.project, ".empryo", ".codeforge-theme.json"), []byte(hostile), 0o600))
-	scopeTheme(t.Context(), p.home, p.project)()
-	require.JSONEq(t, body, p.read(t), "a repository cannot make codeforge delete or replace its files")
+	// With nothing applied, switching it off applies nothing and records nothing.
+	scopeTheme(t.Context(), h.home)()
+	require.Equal(t, userConfig, h.read(t))
+	require.NoFileExists(t, h.ledger)
 }
 
 func TestScopeTheme_TheLastTUIToCloseTakesItOut(t *testing.T) {
-	p := newThemeProject(t)
-	first := scopeTheme(t.Context(), p.home, p.project)
-	second := scopeTheme(t.Context(), p.home, p.project)
+	h := newThemeHome(t)
+	first := scopeTheme(t.Context(), h.home)
+	second := scopeTheme(t.Context(), h.home)
 	first()
-	require.FileExists(t, p.config, "another codeforge TUI is still open on this project")
+	require.Contains(t, h.read(t), "codeforge-steel", "another codeforge TUI is still open")
 	second()
-	require.NoFileExists(t, p.config)
-	require.NoFileExists(t, p.ledger)
+	require.Equal(t, userConfig, h.read(t))
+	require.NoFileExists(t, h.ledger)
+}
+
+func TestScopeTheme_TheUndoDoesNotNeedAContextThatIsStillAlive(t *testing.T) {
+	h := newThemeHome(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	undo := scopeTheme(ctx, h.home)
+	cancel() // what main's signal context does on SIGTERM
+	undo()
+	require.Equal(t, userConfig, h.read(t))
 }
 
 // killed leaves the theme applied and the ledger naming a codeforge that no longer exists.
-func killed(t *testing.T, p themeProject) {
+func killed(t *testing.T, h themeHome) {
 	t.Helper()
-	scopeTheme(t.Context(), p.home, p.project) // never undone: the process was killed
-	ledger, ok := loadThemeLedger(p.ledger, p.project)
+	scopeTheme(t.Context(), h.home) // never undone: the process was killed
+	ledger, ok := loadThemeLedger(h.ledger)
 	require.True(t, ok)
-	ledger.Holders = []themeHolder{{Pid: 2_147_483_000, ID: "dead"}} // a process that no longer exists
-	require.NoError(t, saveThemeLedger(p.ledger, ledger))
+	ledger.Holders = []themeHolder{{Pid: 2_147_483_000, ID: "dead"}}
+	require.NoError(t, saveThemeLedger(h.ledger, ledger))
 }
 
 func TestScopeTheme_PutsBackWhatAKilledCodeforgeLeft(t *testing.T) {
-	p := newThemeProject(t)
-	original := `{"effort":"low"}`
-	p.write(t, original)
-	killed(t, p)
-	scopeTheme(t.Context(), p.home, p.project)()
-	require.Equal(t, original, p.read(t), "the stale theme was reverted first, then applied and taken out again")
-	require.NoFileExists(t, p.ledger)
+	h := newThemeHome(t)
+	killed(t, h)
+	require.Contains(t, h.read(t), "codeforge-steel")
+	scopeTheme(t.Context(), h.home)()
+	require.Equal(t, userConfig, h.read(t), "the stale theme was reverted first, then applied and taken out again")
+	require.NoFileExists(t, h.ledger)
 }
 
 func TestScopeTheme_CleansUpEvenWhenTheThemeIsSwitchedOff(t *testing.T) {
-	p := newThemeProject(t)
-	original := `{"effort":"low"}`
-	p.write(t, original)
-	killed(t, p)
+	h := newThemeHome(t)
+	killed(t, h)
 	t.Setenv(themeEnv, "off")
-	scopeTheme(t.Context(), p.home, p.project)()
-	require.Equal(t, original, p.read(t), "opting out also removes what an earlier launch left")
-	require.NoFileExists(t, p.ledger)
+	scopeTheme(t.Context(), h.home)()
+	require.Equal(t, userConfig, h.read(t))
+	require.NoFileExists(t, h.ledger)
 }
 
 func TestScopeTheme_KeepsTheLedgerWhenTheFileCannotBePutBack(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("a read-only folder does not stop root")
 	}
-	p := newThemeProject(t)
-	p.write(t, `{"effort":"low"}`)
-	undo := scopeTheme(t.Context(), p.home, p.project)
-	dir := filepath.Dir(p.config)
+	h := newThemeHome(t)
+	undo := scopeTheme(t.Context(), h.home)
+	dir := filepath.Dir(h.config)
 	require.NoError(t, os.Chmod(dir, 0o500))
-	t.Cleanup(func() { bestEffort(os.Chmod(dir, 0o750)) })
+	t.Cleanup(func() { bestEffort(os.Chmod(dir, 0o700)) })
 	undo()
-	require.FileExists(t, p.ledger, "the original bytes are still known, so a later launch can restore them")
-	require.Contains(t, p.read(t), "codeforge-steel")
+	require.FileExists(t, h.ledger, "the original is still known, so a later launch can restore it")
+	require.Contains(t, h.read(t), "codeforge-steel")
 
-	require.NoError(t, os.Chmod(dir, 0o750))
-	scopeTheme(t.Context(), p.home, p.project)()
-	require.JSONEq(t, `{"effort":"low"}`, p.read(t))
-	require.NoFileExists(t, p.ledger)
-}
-
-func TestScopeTheme_OnlyTakesOutItsOwnKeyWhenTheFileChangedMeanwhile(t *testing.T) {
-	p := newThemeProject(t)
-	undo := scopeTheme(t.Context(), p.home, p.project)
-	p.write(t, `{"effort":"high","theme":{"name":"codeforge-steel","transparent":true}}`) // the user changed a setting in the TUI
-	undo()
-	require.JSONEq(t, `{"effort":"high","theme":{"transparent":true}}`, p.read(t))
-
-	// And a theme the user picked inside the TUI is never touched.
-	p2 := newThemeProject(t)
-	undo = scopeTheme(t.Context(), p2.home, p2.project)
-	p2.write(t, `{"theme":{"name":"nord"}}`)
-	undo()
-	require.JSONEq(t, `{"theme":{"name":"nord"}}`, p2.read(t))
-}
-
-func TestScopeTheme_OneProjectHasOneIdentityHoweverItIsSpelled(t *testing.T) {
-	p := newThemeProject(t)
-	t.Chdir(p.project)
-	first := scopeTheme(t.Context(), p.home, ".")
-	second := scopeTheme(t.Context(), p.home, p.project)
-	first()
-	require.FileExists(t, p.config, "the second TUI named the same project by its full path")
-	second()
-	require.NoFileExists(t, p.config)
-
-	// The home directory is the home directory, whatever it is called.
-	home, err := filepath.EvalSymlinks(p.home)
-	require.NoError(t, err)
-	t.Chdir(home)
-	require.NoError(t, os.MkdirAll(filepath.Join(home, ".empryo"), 0o750))
-	scopeTheme(t.Context(), p.home, ".")()
-	require.NoFileExists(t, filepath.Join(home, ".empryo", "config.json"), "never the global config, even as '.'")
-}
-
-// gitIn runs git in dir and fails the test if it does.
-func gitIn(t *testing.T, dir string, args ...string) string {
-	t.Helper()
-	out, err := exec.CommandContext(t.Context(), "git", append([]string{"-C", dir}, args...)...).CombinedOutput()
-	require.NoError(t, err, string(out))
-	return string(out)
-}
-
-func TestScopeTheme_InARepositoryOnlyWhereGitAlreadyIgnoresTheConfig(t *testing.T) {
-	t.Run("ignored: applied, never staged, and gone after", func(t *testing.T) {
-		p := newThemeProject(t)
-		gitIn(t, p.project, "init", "-q")
-		require.NoError(t, os.WriteFile(filepath.Join(p.project, ".gitignore"), []byte(".empryo/\n"), 0o600))
-		undo := scopeTheme(t.Context(), p.home, p.project)
-		require.FileExists(t, p.config)
-		gitIn(t, p.project, "add", "-A")
-		require.NotContains(t, gitIn(t, p.project, "status", "--porcelain"), "config.json", "git add -A leaves the temporary config alone")
-		undo()
-		require.NoFileExists(t, p.config)
-	})
-	t.Run("not ignored: nothing is written and no ignore rule is edited", func(t *testing.T) {
-		p := newThemeProject(t)
-		gitIn(t, p.project, "init", "-q")
-		exclude := filepath.Join(p.project, ".git", "info", "exclude")
-		before, err := os.ReadFile(exclude)
-		require.NoError(t, err)
-		scopeTheme(t.Context(), p.home, p.project)()
-		require.NoDirExists(t, filepath.Dir(p.config))
-		after, err := os.ReadFile(exclude)
-		require.NoError(t, err)
-		require.Equal(t, string(before), string(after))
-	})
-	t.Run("a later rule that un-ignores the file counts as not ignored", func(t *testing.T) {
-		p := newThemeProject(t)
-		gitIn(t, p.project, "init", "-q")
-		require.NoError(t, os.WriteFile(filepath.Join(p.project, ".gitignore"), []byte(".empryo/*\n!.empryo/config.json\n"), 0o600))
-		scopeTheme(t.Context(), p.home, p.project)()
-		require.NoFileExists(t, p.config)
-	})
-	t.Run("a project in a subfolder of a repository whose rule only covers the root", func(t *testing.T) {
-		p := newThemeProject(t)
-		gitIn(t, p.project, "init", "-q")
-		require.NoError(t, os.WriteFile(filepath.Join(p.project, ".gitignore"), []byte("/.empryo/\n"), 0o600))
-		sub := filepath.Join(p.project, "svc")
-		require.NoError(t, os.MkdirAll(sub, 0o750))
-		scopeTheme(t.Context(), p.home, sub)()
-		require.NoDirExists(t, filepath.Join(sub, ".empryo"), "svc/.empryo is not covered by /.empryo/")
-
-		require.NoError(t, os.WriteFile(filepath.Join(p.project, ".gitignore"), []byte(".empryo/\n"), 0o600))
-		undo := scopeTheme(t.Context(), p.home, sub)
-		require.FileExists(t, filepath.Join(sub, ".empryo", "config.json"))
-		undo()
-	})
-	t.Run("not a repository: applied", func(t *testing.T) {
-		p := newThemeProject(t)
-		undo := scopeTheme(t.Context(), p.home, p.project)
-		require.FileExists(t, p.config)
-		undo()
-	})
-}
-
-func TestScopeTheme_OnlyAnIgnoreRuleThatCoversTheTemporaryFilesToo(t *testing.T) {
-	// atomicWriteFile writes a full copy of the config to .codeforge-* beside it before the rename.
-	for _, name := range themeProbeNames() {
-		require.Regexp(t, "^"+regexp.QuoteMeta(tempPrefix)+"[0-9]+$", name, "the probe is shaped like a real temporary file name")
-	}
-	for _, rules := range []string{
-		".empryo/config.json\n",
-		".empryo/config.json\n.empryo/.config.json.*\n",
-		".empryo/config.json\n.empryo/.codeforge-theme-probe\n",
-		".empryo/.codeforge-*\n!.empryo/.codeforge-[0-9]*\n.empryo/config.json\n",
-	} {
-		p := newThemeProject(t)
-		gitIn(t, p.project, "init", "-q")
-		require.NoError(t, os.WriteFile(filepath.Join(p.project, ".gitignore"), []byte(rules), 0o600))
-		scopeTheme(t.Context(), p.home, p.project)()
-		require.NoDirExists(t, filepath.Dir(p.config), "the file is ignored but the temporary copy written beside it is not: %q", rules)
-	}
-
-	p := newThemeProject(t)
-	gitIn(t, p.project, "init", "-q")
-	require.NoError(t, os.WriteFile(filepath.Join(p.project, ".gitignore"), []byte(".empryo/config.json\n.codeforge-*\n.empryo/.codeforge-*\n"), 0o600))
-	undo := scopeTheme(t.Context(), p.home, p.project)
-	require.FileExists(t, p.config, "both the file and its temporary copies are ignored")
-	undo()
-}
-
-// fakeGit puts a git on the path that prints stderr and exits 128, like git does for a refusal.
-func fakeGit(t *testing.T, stderr string) {
-	t.Helper()
-	dir := t.TempDir()
-	script := "#!/bin/sh\necho '" + stderr + "' >&2\nexit 128\n"
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "git"), []byte(script), execPerm))
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
-}
-
-func TestScopeTheme_OnlyGitsOwnNotARepositoryAnswerMeansThereIsNothingToStage(t *testing.T) {
-	t.Run("an ownership refusal is not 'no repository'", func(t *testing.T) {
-		p := newThemeProject(t)
-		fakeGit(t, "fatal: detected dubious ownership in repository")
-		scopeTheme(t.Context(), p.home, p.project)()
-		require.NoDirExists(t, filepath.Dir(p.config))
-	})
-	t.Run("a broken repository is not 'no repository'", func(t *testing.T) {
-		p := newThemeProject(t)
-		fakeGit(t, "fatal: bad config line 1 in file .git/config")
-		scopeTheme(t.Context(), p.home, p.project)()
-		require.NoDirExists(t, filepath.Dir(p.config))
-	})
-	t.Run("not a git repository is", func(t *testing.T) {
-		p := newThemeProject(t)
-		fakeGit(t, "fatal: not a git repository (or any of the parent directories): .git")
-		undo := scopeTheme(t.Context(), p.home, p.project)
-		require.FileExists(t, p.config)
-		undo()
-	})
+	require.NoError(t, os.Chmod(dir, 0o700))
+	scopeTheme(t.Context(), h.home)()
+	require.Equal(t, userConfig, h.read(t))
+	require.NoFileExists(t, h.ledger)
 }
 
 func TestScopeTheme_AReusedPidIsNotTheCodeforgeThatLeftTheTheme(t *testing.T) {
 	old := processStart
-	processStart = func(int) string { return "Fri Nov  7 10:00:00 2026" } // what ps says about every process here
+	processStart = func(int) string { return "Fri Nov  7 10:00:00 2026" }
 	t.Cleanup(func() { processStart = old })
 
 	require.True(t, holderAlive(themeHolder{Pid: os.Getpid(), Start: "Fri Nov  7 10:00:00 2026"}), "the same process")
@@ -415,41 +289,14 @@ func TestScopeTheme_AReusedPidIsNotTheCodeforgeThatLeftTheTheme(t *testing.T) {
 	require.True(t, holderAlive(themeHolder{Pid: os.Getpid(), Start: "Fri Nov  7 10:00:00 2026"}), "an unreadable start time is not evidence of another process")
 	processStart = func(int) string { return "Fri Nov  7 10:00:00 2026" }
 
-	p := newThemeProject(t)
-	original := `{"effort":"low"}`
-	p.write(t, original)
-	scopeTheme(t.Context(), p.home, p.project) // left applied
-	ledger, ok := loadThemeLedger(p.ledger, p.project)
+	h := newThemeHome(t)
+	scopeTheme(t.Context(), h.home) // left applied
+	ledger, ok := loadThemeLedger(h.ledger)
 	require.True(t, ok)
 	ledger.Holders = []themeHolder{{Pid: os.Getpid(), ID: "old", Start: "Thu Jan  1 00:00:00 1970"}}
-	require.NoError(t, saveThemeLedger(p.ledger, ledger))
-	scopeTheme(t.Context(), p.home, p.project)()
-	require.Equal(t, original, p.read(t), "the stale holder with a recycled pid no longer keeps the theme in place")
-}
-
-func TestScopeTheme_KeepsTheFilesPermissionsAndDropsAnEmptiedFile(t *testing.T) {
-	p := newThemeProject(t)
-	p.write(t, `{"effort":"low"}`)
-	require.NoError(t, os.Chmod(p.config, 0o644))
-	scopeTheme(t.Context(), p.home, p.project)()
-	info, err := os.Stat(p.config)
-	require.NoError(t, err)
-	require.Equal(t, os.FileMode(0o644), info.Mode().Perm(), "a world-readable config does not come back private")
-
-	// A file that did not exist, changed to hold only our key, is not left behind as {}.
-	p2 := newThemeProject(t)
-	undo := scopeTheme(t.Context(), p2.home, p2.project)
-	p2.write(t, `{ "theme": { "name": "codeforge-steel" } }`)
-	undo()
-	require.NoFileExists(t, p2.config)
-	require.NoDirExists(t, filepath.Dir(p2.config))
-}
-
-func TestWorkspaceOf(t *testing.T) {
-	require.Equal(t, "/x/y", workspaceOf([]string{"empryo", "--cwd", "/x/y", "prompt"}))
-	wd, err := os.Getwd()
-	require.NoError(t, err)
-	require.Equal(t, wd, workspaceOf([]string{"empryo", "prompt"}))
+	require.NoError(t, saveThemeLedger(h.ledger, ledger))
+	scopeTheme(t.Context(), h.home)()
+	require.Equal(t, userConfig, h.read(t), "the stale holder with a recycled pid no longer keeps the theme in place")
 }
 
 func TestSystemAppearance(t *testing.T) {
@@ -462,4 +309,138 @@ func TestSystemAppearance(t *testing.T) {
 	require.Equal(t, "dark", systemAppearance(t.Context()))
 	require.Equal(t, steelDark, steelFor("dark"))
 	require.Equal(t, steelLight, steelFor("light"))
+}
+
+// engineFixture is a fake engine that records what it was told and stays up until it is asked to stop.
+type engineFixture struct {
+	script, ready, mark, stop string
+	env                       []string
+}
+
+func newEngine(t *testing.T, trapTerm string) engineFixture {
+	t.Helper()
+	dir := t.TempDir()
+	f := engineFixture{
+		script: filepath.Join(dir, "engine"), ready: filepath.Join(dir, "ready"),
+		mark: filepath.Join(dir, "mark"), stop: filepath.Join(dir, "stop"),
+	}
+	body := "#!/bin/sh\ntrap '' INT\n" + trapTerm + "\necho up > \"$READY\"\nwhile [ ! -e \"$STOP\" ]; do sleep 0.05; done\n"
+	require.NoError(t, os.WriteFile(f.script, []byte(body), execPerm))
+	f.env = append(os.Environ(), "READY="+f.ready, "MARK="+f.mark, "STOP="+f.stop)
+	return f
+}
+
+const exitsOnTerm = "trap 'echo term > \"$MARK\"; exit 0' TERM"
+
+// signalWhenUp sends sig to this process once the engine is running.
+func (f engineFixture) signalWhenUp(t *testing.T, sig syscall.Signal) {
+	t.Helper()
+	go func() {
+		for range 200 {
+			if _, err := os.Stat(f.ready); err == nil {
+				bestEffort(syscall.Kill(os.Getpid(), sig))
+				return
+			}
+			time.Sleep(25 * time.Millisecond)
+		}
+		// The engine never came up: a stray SIGHUP or SIGQUIT would kill the test binary, so nothing is sent.
+	}()
+}
+
+func TestRunEngineWith_ATerminatingSignalStopsTheEngineThenUndoes(t *testing.T) {
+	for name, sig := range map[string]syscall.Signal{"SIGTERM": syscall.SIGTERM, "SIGHUP": syscall.SIGHUP, "SIGQUIT": syscall.SIGQUIT} {
+		t.Run(name, func(t *testing.T) {
+			if sig == syscall.SIGHUP && signal.Ignored(syscall.SIGHUP) {
+				t.Skip("this test run started with SIGHUP ignored (nohup, a background job): codeforge then leaves it ignored too")
+			}
+			f := newEngine(t, exitsOnTerm)
+			var calls int
+			var engineGone bool
+			afterChild := func() {
+				calls++
+				_, err := os.Stat(f.mark)
+				engineGone = err == nil // the engine wrote its mark on SIGTERM and has exited
+			}
+			f.signalWhenUp(t, sig)
+			start := time.Now()
+			require.NoError(t, runEngineWith(t.Context(), []string{f.script}, f.env, time.Time{}, os.Stdout, afterChild))
+			require.Equal(t, 1, calls, "the undo ran once")
+			require.True(t, engineGone, "and only after the engine had been asked to stop and was gone")
+			require.Less(t, time.Since(start), 2*time.Second)
+			mark, err := os.ReadFile(f.mark)
+			require.NoError(t, err)
+			require.Equal(t, "term\n", string(mark), "SIGHUP and SIGQUIT reach the engine as SIGTERM")
+		})
+	}
+}
+
+func TestRunEngineWith_CtrlCIsTheEnginesBusinessAndNeverUndoesAnything(t *testing.T) {
+	f := newEngine(t, exitsOnTerm)
+	var calls atomic.Int32
+	done := make(chan error, 1)
+	go func() {
+		done <- runEngineWith(t.Context(), []string{f.script}, f.env, time.Time{}, os.Stdout, func() { calls.Add(1) })
+	}()
+	f.signalWhenUp(t, syscall.SIGINT)
+	select {
+	case err := <-done:
+		t.Fatalf("SIGINT ended the run (%v): in the TUI Ctrl+C only cancels a turn", err)
+	case <-time.After(600 * time.Millisecond):
+	}
+	require.Zero(t, calls.Load(), "the theme stays while the engine runs")
+	require.NoError(t, os.WriteFile(f.stop, nil, 0o600))
+	require.NoError(t, <-done)
+	require.Equal(t, int32(1), calls.Load(), "it is undone when the engine exits by itself")
+}
+
+func TestRunEngineWith_AnEngineThatIgnoresTermIsKilledAfterTheGraceAndThenUndone(t *testing.T) {
+	old := stopGrace
+	stopGrace = 300 * time.Millisecond
+	t.Cleanup(func() { stopGrace = old })
+	f := newEngine(t, "trap '' TERM")
+	var calls int
+	f.signalWhenUp(t, syscall.SIGTERM)
+	start := time.Now()
+	err := runEngineWith(t.Context(), []string{f.script}, f.env, time.Time{}, os.Stdout, func() { calls++ })
+	var exit *EngineExitError
+	require.ErrorAs(t, err, &exit)
+	require.Equal(t, signalExitBase+int(syscall.SIGKILL), exit.Code)
+	require.Equal(t, 1, calls)
+	require.Less(t, time.Since(start), 3*time.Second, "a hung engine cannot hold the undo forever")
+}
+
+func TestRunEngineWith_ASignalCaughtBeforeTheEngineStartedIsNotLost(t *testing.T) {
+	f := newEngine(t, exitsOnTerm)
+	early := make(chan os.Signal, 1)
+	early <- syscall.SIGTERM // arrived between the caller's registration and the engine's
+	var calls int
+	start := time.Now()
+	err := runEngineWith(t.Context(), []string{f.script}, f.env, time.Time{}, os.Stdout, func() { calls++ }, early)
+	var exit *EngineExitError
+	require.ErrorAs(t, err, &exit, "the engine was stopped, by the SIGTERM it was sent")
+	require.Equal(t, signalExitBase+int(syscall.SIGTERM), exit.Code)
+	require.Equal(t, 1, calls)
+	require.Less(t, time.Since(start), 3*time.Second, "the engine was asked to stop even though nothing signalled it afterwards")
+}
+
+func TestRunEngineWith_UndoesWhenTheEngineExitsOnItsOwn(t *testing.T) {
+	f := newEngine(t, exitsOnTerm)
+	require.NoError(t, os.WriteFile(f.stop, nil, 0o600))
+	var calls int
+	require.NoError(t, runEngineWith(t.Context(), []string{f.script}, f.env, time.Time{}, os.Stdout, func() { calls++ }))
+	require.Equal(t, 1, calls)
+	require.NoError(t, runEngineWith(t.Context(), []string{f.script}, f.env, time.Time{}, os.Stdout, nil), "no undo is fine")
+}
+
+func TestRunThemedStyle_TheUsersThemeIsBackAfterASignalEndedTheSession(t *testing.T) {
+	h := newThemeHome(t)
+	f := newEngine(t, exitsOnTerm)
+	undo := scopeTheme(t.Context(), h.home)
+	require.Contains(t, h.read(t), "codeforge-steel")
+	f.signalWhenUp(t, syscall.SIGTERM) // codeforge was asked to stop
+	require.NoError(t, runEngineWith(t.Context(), []string{f.script}, f.env, time.Time{}, os.Stdout, undo))
+	require.Equal(t, userConfig, h.read(t), "restored before runEngineWith returned")
+	require.NoFileExists(t, h.ledger)
+	undo() // the deferred call in the caller finds nothing left to do
+	require.Equal(t, userConfig, h.read(t))
 }

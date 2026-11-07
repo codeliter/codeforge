@@ -225,16 +225,10 @@ A slow or broken provider can still delay the model's reply.
 A standalone review is read-only and posts nothing unless you ask. Its sandbox currently needs macOS.
 Use `codeforge review` with no PR number to review your local changes.
 
-Add `--comment` to a PR review (`codeforge review 123 --comment`) to post the finished review as one comment on that
-PR, from your GitHub account. The reviewer writes it in your voice, as your persona describes it, and Codeforge adds a
-footer saying it was reviewed with Codeforge. The model itself cannot post: Codeforge prints the review and any second
-opinion, asks `[y/N]`, and only then posts it. It never posts a failed or empty review, and with no terminal to ask on it
-posts nothing unless you wrote `--comment=yes`. It works for PRs on GitHub, not for local changes.
-
-Inside the review session you can also ask the reviewer to post a comment. The session is read-only, so the one
-thing it may attempt is `gh pr comment <PR> --body '…'`, and Empryo shows you that exact command in the TUI and runs it
-only if you approve. A comment whose text sits in a file, an editor or stdin, a review verdict (`gh pr review`), an API
-write and a merge are all still refused.
+Add `--comment` to a PR review (`codeforge review 123 --comment`) to post the finished review as one comment on that PR,
+in your voice. The model itself cannot post: Codeforge shows you the review, asks `[y/N]`, and only then posts it.
+`--comment=yes` skips the question. In the review session you can also ask for a comment; Empryo shows you the exact
+`gh pr comment` command and runs it only if you approve.
 
 You can also ask for a review in your existing work or chat screen. No second terminal is needed.
 The `codeforge-reviewer` helper returns findings and can ask the parent conversation to delegate agreed fixes to `codeforge-work`.
@@ -243,20 +237,11 @@ The reviewer itself cannot edit or post; a review request is not permission to p
 
 ## Codeforge Steel theme
 
-Codeforge installs two Empryo themes into `~/.empryo/themes/`: **Codeforge Steel** (dark) and **Codeforge Steel Light**,
-cool blue-grey with silver edges. The TUI that Codeforge starts uses the one that matches your terminal's light or dark
-setting, and plain `empryo` keeps your own theme.
-
-Empryo has no per-launch theme option, so Codeforge sets `theme.name` in the project's `.empryo/config.json` while its
-TUI is open and puts the file back exactly as it was when the TUI closes. A killed Codeforge is cleaned up on the next
-launch in that project. Codeforge never replaces a theme you set in that project, and does nothing if your global theme
-is already a Steel theme. In a git repository it only does this where git already ignores `.empryo/config.json` (add
-`.empryo/` to `.gitignore`), so a temporary setting can never be committed. An Empryo session you open in the same project
-while a Codeforge TUI is open will show the Steel theme too. Set `CODEFORGE_THEME=off` to keep your own theme in
-Codeforge as well.
-
-The theme files are managed by Codeforge and rewritten on each launch; to change the colours, copy one to a new name in
-the same folder and edit the copy.
+Codeforge installs two Empryo themes, **Codeforge Steel** (dark) and **Codeforge Steel Light**, and its TUI uses the one
+that matches your terminal. Empryo reads its theme only from `~/.empryo/config.json`, so Codeforge sets it there while
+its TUI is open and puts your own theme back when the TUI closes, also when the terminal is closed or on SIGTERM. After a
+hard kill, the next Codeforge launch restores it. An Empryo session you start separately while a Codeforge TUI is open
+shows Steel too. Set `CODEFORGE_THEME=off` to keep your own theme.
 
 ## It learns how to check your work
 

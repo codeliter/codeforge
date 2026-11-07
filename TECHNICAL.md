@@ -345,21 +345,29 @@ the least checking. Only `docs` uses `review.light_model`, because the reviewer 
 a review's cost. Small code changes keep the normal reviewer: the light model let through a documented-contract
 violation there.
 
-The TUI theme is scoped to Codeforge launches by writing `theme.name` into the project's `.empryo/config.json` while the
-TUI is open ([themescope.go](src/themescope.go)): Empryo reads a project value over the global one, and offers no flag or
-environment variable for a single launch. A ledger in `~/.codeforge/theme-ledger/` (never in the checkout, which is untrusted
-input) records the project's real path, the original bytes and permissions, the hash of what was written and the open
-Codeforge TUIs, under a lock, so the last TUI to close restores the file exactly, a file changed meanwhile loses only the
-key Codeforge set, a restore that fails keeps the ledger, and a killed Codeforge is undone by the next launch, even one
-started with `CODEFORGE_THEME=off`. In a git repository the theme is applied only where git already ignores
-`.empryo/config.json` (checked with `git check-ignore`), so `git add -A` cannot stage it; Codeforge never edits ignore
-rules, and where `.empryo` is not ignored the theme is simply not applied. Nothing is written when the project is the home
-directory, when `.empryo` or `config.json` is a link, when the project already sets a theme, or when the config is not
-plain JSON; other settings keep their exact text. In a repository the temporary copies an atomic write leaves beside the
-config (`.codeforge-<digits>`) must be ignored too. Known limits: Empryo's own settings writer is not coordinated with, so
-a setting saved in the instant between Codeforge reading and replacing the file can be lost; and the checks that `.empryo`
-and `config.json` are not links are made by path just before each write, so another process of the same user that swaps
-`.empryo` for a link in that instant is not stopped.
+The TUI theme is shown by writing `theme.name` into the global Empryo config while the TUI is open
+([themescope.go](src/themescope.go)). Empryo reads its theme from `~/.empryo/config.json` only: a project's config and the
+environment are ignored for it (measured by drawing the TUI in a pty with each), and there is no flag. A ledger in
+`~/.codeforge/theme-ledger/` records the config's resolved path, the original bytes and permissions, the user's own
+`theme.name`, the hash of what was written and the open Codeforge TUIs, under a lock. The user's theme goes back when the
+engine has exited, never because a signal arrived: Empryo can rewrite the config for as long as it runs. `runEngineWith`
+catches SIGTERM, SIGHUP and SIGQUIT, forwards them to the engine as SIGTERM, gives it `stopGrace` (3 s) to exit and then
+kills it, and calls the undo before anything is printed (a closed terminal cannot be written to). SIGINT is left to the
+engine, since Ctrl+C in the TUI cancels a turn. `runThemed` registers the signals before the config is touched, and the
+undo is guarded by `sync.OnceFunc`, so the deferred call and the signal path never double-revert. If the file is exactly
+what Codeforge wrote it returns to the original bytes; if Empryo has saved it since, only `theme.name` goes back, and only
+while it is still the Steel theme, so a theme chosen with `/theme` stays. A restore that fails keeps the ledger. SIGKILL
+cannot be caught: the next launch restores first, even one started with `CODEFORGE_THEME=off`. A config that is a link is
+changed where it lives and stays a link; other settings keep their exact text. Nothing is written when the config has
+comments, does not exist, already uses a Steel theme, the theme file is not installed, or `EMPRYO_HOME` points Empryo at a
+different home than the one the themes are installed in. SIGHUP is only caught when the process did not start with it
+ignored, so `nohup` keeps working. A Codeforge TUI started with the theme switched off still holds an applied theme until
+it exits, since its engine reads the same config. An engine that ignores SIGTERM is killed after the grace, but only the
+engine itself: tool processes it started can outlive it. Limits: nothing repairs a Steel theme that a separate plain
+`empryo` session, or such a leftover process, saves back after the last Codeforge TUI has closed (the next launch cannot
+tell it from a Steel theme you chose); recover with `/theme`. Ledgers from v0.11.4's per-project design are not read. Tradeoffs: any Empryo session
+started while a Codeforge TUI is open shows Steel too, and a setting Empryo saves in the instant between Codeforge reading
+and replacing the file can be lost.
 
 `review.sensitive_paths` lets a repository's owners name paths that always get the `risky` tier, whatever the judges
 say: `auth/` (a directory of that name at any depth), `src/guard/*.go` (a path) or `*.sql` (a file name). A project
