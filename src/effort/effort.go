@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/codeliter/codeforge/assets"
+	"github.com/codeliter/codeforge/src/text"
 )
 
 type Level int
@@ -195,7 +196,7 @@ func userMessage(task string, sig Signals) string {
 func parseScores(raw string) (Scores, error) {
 	start, end := strings.Index(raw, "{"), strings.LastIndex(raw, "}")
 	if start < 0 || end <= start {
-		return Scores{}, fmt.Errorf("%w: %q", errNoJSON, truncate(raw, maxRawShown))
+		return Scores{}, fmt.Errorf("%w: %q", errNoJSON, text.Shorten(raw, maxRawShown))
 	}
 
 	var s Scores
@@ -206,11 +207,4 @@ func parseScores(raw string) (Scores, error) {
 		return Scores{}, fmt.Errorf("%w: %+v", errScoreOutside, s)
 	}
 	return s, nil
-}
-
-func truncate(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[:n] + "…"
 }

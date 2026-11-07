@@ -1,4 +1,4 @@
-package src
+package config
 
 import (
 	"bytes"
@@ -15,15 +15,17 @@ import (
 	"unicode"
 
 	"go.yaml.in/yaml/v3"
+
+	"github.com/codeliter/codeforge/src/fsutil"
 )
 
 var errConfigDocuments = errors.New("configuration must contain exactly one YAML document")
-var errConfigSymlink = errors.New("configuration paths must not be symlinks; edit the target explicitly")
-var errRoutingJob = errors.New("unsupported profile routing job; configure other background jobs in Empryo")
+var ErrConfigSymlink = errors.New("configuration paths must not be symlinks; edit the target explicitly")
+var ErrRoutingJob = errors.New("unsupported profile routing job; configure other background jobs in Empryo")
 
-var routingJobs = []string{"research", "editing", "explore", "web-search", "cleanup", "verify", "review", "goal-review", "summaries", "marionette"}
+var RoutingJobs = []string{"research", "editing", "explore", "web-search", "cleanup", "verify", "review", "goal-review", "summaries", "marionette"}
 
-func validModelID(id string) bool {
+func ValidModelID(id string) bool {
 	provider, model, ok := strings.Cut(id, "/")
 	if !ok || provider == "" || model == "" || strings.ContainsFunc(id, unicode.IsSpace) {
 		return false
@@ -40,14 +42,14 @@ func validModelID(id string) bool {
 func validateRouting(routing map[string]string) error {
 	for job, model := range routing {
 		known := false
-		for _, supported := range routingJobs {
+		for _, supported := range RoutingJobs {
 			known = known || job == supported
 		}
 		if !known {
-			return fmt.Errorf("%w: %s", errRoutingJob, job)
+			return fmt.Errorf("%w: %s", ErrRoutingJob, job)
 		}
-		if model != "" && !validModelReference(model) {
-			return fmt.Errorf("%w for routing.%s: %q", errNotProviderModel, job, model)
+		if model != "" && !ValidModelReference(model) {
+			return fmt.Errorf("%w for routing.%s: %q", ErrNotProviderModel, job, model)
 		}
 	}
 	return nil
@@ -68,11 +70,11 @@ func readConfigDirectory(dir string, legacy bool) (Config, error) {
 		if err != nil {
 			return Config{}, fmt.Errorf("reading %s: %w", path, err)
 		}
-		return decodeConfig(path, data)
+		return Decode(path, data)
 	}
 	return Config{}, nil
 }
-func decodeConfig(path string, data []byte) (Config, error) {
+func Decode(path string, data []byte) (Config, error) {
 	var cfg Config
 	var err error
 	if filepath.Ext(path) == ".json" {
@@ -94,9 +96,9 @@ func decodeConfig(path string, data []byte) (Config, error) {
 	return cfg, nil
 }
 
-func mergeConfig(base, local Config) Config {
+func Merge(base, local Config) Config {
 	if local.Providers != nil {
-		base.Providers = local.Providers.clone()
+		base.Providers = local.Providers.Clone()
 	}
 	if local.Model != "" {
 		base.Model = local.Model
@@ -142,23 +144,23 @@ func mergeConfig(base, local Config) Config {
 	return base
 }
 
-func writeConfigYAML(dir string, cfg Config) error { _, err := saveConfigYAML(dir, cfg); return err }
-func saveConfigYAML(dir string, cfg Config) (string, error) {
-	if err := validate(cfg); err != nil {
+func WriteYAML(dir string, cfg Config) error { _, err := SaveYAML(dir, cfg); return err }
+func SaveYAML(dir string, cfg Config) (string, error) {
+	if err := Validate(cfg); err != nil {
 		return "", err
 	}
 	data, err := yaml.Marshal(cfg)
 	if err != nil {
 		return "", fmt.Errorf("encoding configuration: %w", err)
 	}
-	if err := os.MkdirAll(dir, privateDir); err != nil {
+	if err := os.MkdirAll(dir, fsutil.PrivateDir); err != nil {
 		return "", fmt.Errorf("creating configuration directory: %w", err)
 	}
 	path := filepath.Join(dir, "config.yaml")
 	if info, err := os.Lstat(path); err == nil && info.Mode()&os.ModeSymlink != 0 {
-		return "", fmt.Errorf("%w: %s", errConfigSymlink, path)
+		return "", fmt.Errorf("%w: %s", ErrConfigSymlink, path)
 	}
-	if err := atomicWriteFile(path, data, privateFile); err != nil {
+	if err := fsutil.AtomicWriteFile(path, data, fsutil.PrivateFile); err != nil {
 		return "", err
 	}
 	return string(data), nil

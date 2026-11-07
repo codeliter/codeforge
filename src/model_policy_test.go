@@ -7,10 +7,11 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/codeliter/codeforge/assets"
+	"github.com/codeliter/codeforge/src/config"
 )
 
 func TestSonnetDefaultWithOnDemandOpusExpert(t *testing.T) {
-	cfg, err := loadConfig(t.TempDir())
+	cfg, err := config.LoadGlobal(t.TempDir())
 	require.NoError(t, err)
 	require.Equal(t, "copilot/claude-sonnet-5.5", cfg.Model)
 	require.Equal(t, "copilot/claude-opus-5.5", cfg.Expert)
@@ -41,4 +42,9 @@ func TestArgonIsNotSuggestedOrOffered(t *testing.T) {
 	}
 	parsed := parseModelList(strings.NewReader("  " + blocked + "  1000k ctx\n"))
 	require.Empty(t, parsed)
+}
+
+func TestModelCatalogAllowsNamespacedModels(t *testing.T) {
+	models := parseModelList(strings.NewReader("  openrouter/anthropic/claude-sonnet-4-5  200k ctx\n"))
+	require.Equal(t, []string{"openrouter/anthropic/claude-sonnet-4-5"}, models)
 }

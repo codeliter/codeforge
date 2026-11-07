@@ -14,35 +14,15 @@ import (
 	"strings"
 	"text/tabwriter"
 
+	"github.com/codeliter/codeforge/src/config"
+
 	"github.com/codeliter/codeforge/src/effort"
 )
 
 var (
-	errUnknownRole       = errors.New("unknown role")
-	errNoModels          = errors.New("no models given")
-	errOneModel          = errors.New("role takes exactly one model")
-	errNotProviderModel  = errors.New("model is not provider/model")
 	errUnknownSubcommand = errors.New("unknown subcommand")
 	errModelsUsage       = errors.New("usage: codeforge models set <role> <model-name or provider/model>")
 )
-
-// role describes one model slot. Candidates are model names without the provider, best first,
-// so the same list works whether the user reaches a model through copilot, anthropic or openai.
-type role struct {
-	key        string
-	count      int
-	why        string
-	candidates []string
-}
-
-var roles = []role{
-	{"model", 1, "writes the code; strongest coding model you have", []string{"claude-sonnet-5.5", "claude-opus-5.5", "gpt-6.1-sol", "claude-opus-5", "gpt-6-sol"}},
-	{"expert", 1, "on-demand delegate for difficult implementation, not routine work", []string{"claude-opus-5.5", "claude-opus-5", "gpt-6.1-sol"}},
-	{"judges", 2, "score effort before launch; cheapest fast models, two families", []string{"claude-haiku-5.5", "gpt-6-luna", "gemini-3.8-flash", "gpt-5.6-luna", "mai-code-1.1-flash", "gpt-5.4-nano"}},
-	{"review.model", 1, "writes the review; strongest model from a different family than the coder", []string{"gpt-6.1-sol", "claude-opus-5.5", "gpt-5.5", "claude-opus-5", "gemini-3.8-flash"}},
-	{"review.second_opinion", 2, "independent reviewers; frontier models from other families", []string{"kimi-k3", "gpt-6.1-sol", "gpt-5.5", "claude-opus-5.5"}},
-	{"init", 1, "distils your persona once; capable everyday writer", []string{"claude-sonnet-5.5", "claude-opus-5.5", "gpt-6.1-sol"}},
-}
 
 // independentOf lists the roles whose model families a role must avoid, so reviews never share the coder's blind spots.
 var independentOf = map[string][]string{
@@ -50,26 +30,7 @@ var independentOf = map[string][]string{
 	"review.second_opinion": {"model", "review.model"},
 }
 
-func family(model string) string {
-	name := modelReferenceKey(modelName(model))
-	if i := strings.IndexAny(name, "-."); i > 0 {
-		return name[:i]
-	}
-	return name
-}
-
-func modelName(model string) string {
-	return model[strings.LastIndex(model, "/")+1:]
-}
-func modelKey(name string) string {
-	return strings.ToLower(strings.NewReplacer(".", "-", "_", "-").Replace(name))
-}
-
 // availableModels lists provider/model ids from `empryo --list-models`, keeping the provider order Empryo prints.
-// suggestedModel excludes models the project must never recommend or offer.
-func suggestedModel(id string) bool {
-	return !strings.HasPrefix(modelReferenceKey(modelName(id)), "gemini-4-argon")
-}
 func availableModels(ctx context.Context, bin string) ([]string, error) {
 	cmd := exec.CommandContext(ctx, bin, "--list-models")
 	effort.Bound(cmd)
@@ -86,7 +47,7 @@ func parseModelList(r io.Reader) []string {
 	sc := bufio.NewScanner(r)
 	for sc.Scan() {
 		f := strings.Fields(sc.Text())
-		if len(f) > 0 && validModelID(f[0]) && suggestedModel(f[0]) {
+		if len(f) > 0 && config.ValidModelID(f[0]) && config.SuggestedModel(f[0]) {
 			models = append(models, f[0])
 		}
 	}
@@ -96,11 +57,11 @@ func parseModelList(r io.Reader) []string {
 // recommend picks, per role, the first available candidates; multi-model roles never repeat a family,
 // and second opinions avoid the reviewer's family so the review is truly independent.
 func recommend(available []string) map[string][]string {
-	return recommendKeeping(available, Config{})
+	return recommendKeeping(available, config.Config{})
 }
-func recommendConfigured(catalog []string, cfg Config, keep bool) map[string][]string {
+func recommendConfigured(catalog []string, cfg config.Config, keep bool) map[string][]string {
 	// Each model comes from the provider its own chain starts with: its rule's, else the default one.
-	routed := func(id string) string { return cfg.Providers.primaryFor(modelName(id)) }
+	routed := func(id string) string { return cfg.Providers.PrimaryFor(config.ModelName(id)) }
 	if cfg.Providers != nil {
 		catalog = slices.DeleteFunc(slices.Clone(catalog), func(id string) bool {
 			p, _, _ := strings.Cut(id, "/")
@@ -108,18 +69,18 @@ func recommendConfigured(catalog []string, cfg Config, keep bool) map[string][]s
 			return primary != "" && p != primary
 		})
 	}
-	retained := Config{}
+	retained := config.Config{}
 	if keep {
 		retained = cfg
 	}
 	rec := recommendKeeping(catalog, retained)
 	for key, ids := range rec {
-		if keep && len(current(cfg, key)) > 0 {
+		if keep && len(config.Current(cfg, key)) > 0 {
 			continue
 		}
 		for i, id := range ids {
 			if routed(id) != "" {
-				ids[i] = modelName(id)
+				ids[i] = config.ModelName(id)
 			}
 		}
 	}
@@ -128,126 +89,45 @@ func recommendConfigured(catalog []string, cfg Config, keep bool) map[string][]s
 
 // recommendKeeping fills roles around the ones already configured, so reviewers still avoid the
 // families of models the user chose themselves.
-func recommendKeeping(available []string, keep Config) map[string][]string {
+func recommendKeeping(available []string, keep config.Config) map[string][]string {
 	byName := map[string]string{}
 	for _, m := range available {
-		key := modelKey(modelName(m))
+		key := config.ModelKey(config.ModelName(m))
 		if _, ok := byName[key]; !ok {
 			byName[key] = m
 		}
 	}
 
 	rec := map[string][]string{}
-	for _, r := range roles {
-		if have := current(keep, r.key); len(have) > 0 {
-			if slices.ContainsFunc(have, func(id string) bool { return !suggestedModel(id) }) {
+	for _, r := range config.Roles {
+		if have := config.Current(keep, r.Key); len(have) > 0 {
+			if slices.ContainsFunc(have, func(id string) bool { return !config.SuggestedModel(id) }) {
 				continue
 			}
-			rec[r.key] = have
+			rec[r.Key] = have
 			continue
 		}
 		avoid := map[string]bool{}
-		for _, other := range independentOf[r.key] {
-			for _, m := range slices.Concat(rec[other], current(keep, other)) {
-				avoid[family(m)] = true
+		for _, other := range independentOf[r.Key] {
+			for _, m := range slices.Concat(rec[other], config.Current(keep, other)) {
+				avoid[config.Family(m)] = true
 			}
 		}
-		for _, c := range r.candidates {
-			m, ok := byName[modelKey(c)]
-			if !ok || avoid[family(m)] {
+		for _, c := range r.Candidates {
+			m, ok := byName[config.ModelKey(c)]
+			if !ok || avoid[config.Family(m)] {
 				continue
 			}
-			rec[r.key] = append(rec[r.key], m)
-			if r.count > 1 {
-				avoid[family(m)] = true
+			rec[r.Key] = append(rec[r.Key], m)
+			if r.Count > 1 {
+				avoid[config.Family(m)] = true
 			}
-			if len(rec[r.key]) == r.count {
+			if len(rec[r.Key]) == r.Count {
 				break
 			}
 		}
 	}
 	return rec
-}
-
-func current(cfg Config, key string) []string {
-	switch key {
-	case "expert":
-		return nonEmpty(cfg.Expert)
-	case "model":
-		return nonEmpty(cfg.Model)
-	case "judges":
-		return cfg.Judges
-	case "review.model":
-		return nonEmpty(cfg.Review.Model)
-	case "review.second_opinion":
-		return cfg.Review.SecondOpinion
-	case "init":
-		return nonEmpty(cfg.Init)
-	}
-	return nil
-}
-
-func apply(cfg *Config, key string, models []string) error {
-	r, ok := findRole(key)
-	if !ok {
-		return fmt.Errorf("%w %q; roles: %s", errUnknownRole, key, roleKeys())
-	}
-	if len(models) == 0 {
-		return fmt.Errorf("%w: %s", errNoModels, key)
-	}
-	if r.count == 1 && len(models) != 1 {
-		return fmt.Errorf("%w: %s", errOneModel, key)
-	}
-	for _, model := range models {
-		if !validModelReference(model) {
-			return fmt.Errorf("%w: %q", errNotProviderModel, model)
-		}
-	}
-	assignModelRole(cfg, key, models)
-	return validate(*cfg)
-}
-func assignModelRole(cfg *Config, key string, models []string) {
-	value := ""
-	if len(models) > 0 {
-		value = models[0]
-	}
-	switch key {
-	case "expert":
-		cfg.Expert = value
-	case "model":
-		cfg.Model = value
-	case "judges":
-		cfg.Judges = models
-	case "review.model":
-		cfg.Review.Model = value
-	case "review.second_opinion":
-		cfg.Review.SecondOpinion = models
-	case "init":
-		cfg.Init = value
-	}
-}
-
-func findRole(key string) (role, bool) {
-	i := slices.IndexFunc(roles, func(r role) bool { return r.key == key })
-	if i < 0 {
-		return role{}, false
-	}
-	return roles[i], true
-}
-
-func roleKeys() string {
-	keys := make([]string, len(roles))
-	for i, r := range roles {
-		keys[i] = r.key
-	}
-	return strings.Join(keys, ", ")
-}
-
-func nonEmpty(s string) []string {
-	if s == "" {
-		return nil
-	}
-	return []string{s}
 }
 
 // runModels implements `codeforge models [recommend|apply|set <role> <model>...]`.
@@ -258,7 +138,7 @@ func runModels(ctx context.Context, home, bin string, args []string) error {
 	if len(args) > 0 && args[0] == "apply" {
 		return runModelApply(ctx, home, bin, args[1:])
 	}
-	cfg, err := readConfigFile(home)
+	cfg, err := config.ReadFile(home)
 	if err != nil {
 		return err
 	}
@@ -272,16 +152,16 @@ func runModels(ctx context.Context, home, bin string, args []string) error {
 	case "set":
 		rest := args[1:]
 		if len(rest) == 0 {
-			return fmt.Errorf("%w; roles: %s", errModelsUsage, roleKeys())
+			return fmt.Errorf("%w; roles: %s", errModelsUsage, config.RoleKeys())
 		}
 		key, models := rest[0], rest[1:]
-		if err := apply(&cfg, key, models); err != nil {
+		if err := config.Apply(&cfg, key, models); err != nil {
 			return err
 		}
-		if err := writeConfigFile(home, cfg); err != nil {
+		if err := config.WriteFile(home, cfg); err != nil {
 			return err
 		}
-		fmt.Printf("%s = %s\nWrote global %s\n", key, strings.Join(models, ", "), filepath.Join(configDir(home), "config.yaml"))
+		fmt.Printf("%s = %s\nWrote global %s\n", key, strings.Join(models, ", "), filepath.Join(config.Dir(home), "config.yaml"))
 		return nil
 
 	case "plan":
@@ -292,18 +172,18 @@ func runModels(ctx context.Context, home, bin string, args []string) error {
 		if err != nil {
 			return err
 		}
-		cfg, err = loadConfigAt(home, root)
+		cfg, err = config.Load(home, root, modelTrustApprover())
 		if err != nil {
 			return err
 		}
 		var catalog []string
-		if needsModelCatalog(cfg) {
+		if config.NeedsCatalog(cfg) {
 			catalog, err = connectedModelCatalog(ctx, bin)
 			if err != nil {
 				return err
 			}
 		}
-		plan, err := resolveModelPlan(cfg, catalog)
+		plan, err := config.ResolvePlan(cfg, catalog)
 		if err != nil {
 			return err
 		}
@@ -311,7 +191,7 @@ func runModels(ctx context.Context, home, bin string, args []string) error {
 		if err := verifyModelPlan(ctx, bin, root, plan); err != nil {
 			return err
 		}
-		if len(plan.fallbackChains()) > 0 {
+		if len(plan.FallbackChains()) > 0 {
 			fmt.Fprintln(os.Stdout, "Native fallback verification passed; no native settings were changed.")
 		} else {
 			fmt.Fprintln(os.Stdout, "No Codeforge fallback preference to verify; native policy was not changed.")
@@ -323,7 +203,7 @@ func runModels(ctx context.Context, home, bin string, args []string) error {
 			if err != nil {
 				return err
 			}
-			cfg, err = loadConfigAt(home, root)
+			cfg, err = config.Load(home, root, modelTrustApprover())
 			if err != nil {
 				return err
 			}
@@ -338,39 +218,39 @@ func runModels(ctx context.Context, home, bin string, args []string) error {
 			fmt.Println("\nRun `codeforge models apply --recommended` to save these after confirmation, or change saved choices with `codeforge models configure` / `codeforge models set <role> <model>...`.")
 			return nil
 		}
-		for _, r := range roles {
-			if sub == "fill" && len(current(cfg, r.key)) > 0 {
+		for _, r := range config.Roles {
+			if sub == "fill" && len(config.Current(cfg, r.Key)) > 0 {
 				continue
 			}
-			if len(rec[r.key]) > 0 {
-				if err := apply(&cfg, r.key, rec[r.key]); err != nil {
+			if len(rec[r.Key]) > 0 {
+				if err := config.Apply(&cfg, r.Key, rec[r.Key]); err != nil {
 					return err
 				}
 			}
 		}
-		if err := writeConfigFile(home, cfg); err != nil {
+		if err := config.WriteFile(home, cfg); err != nil {
 			return err
 		}
-		fmt.Printf("\nWrote %s\n", filepath.Join(configDir(home), "config.yaml"))
+		fmt.Printf("\nWrote %s\n", filepath.Join(config.Dir(home), "config.yaml"))
 		return nil
 	}
 	return fmt.Errorf("%w %q; use configure, plan, recommend, apply, fill or set", errUnknownSubcommand, sub)
 }
 
-func printModels(w io.Writer, cfg Config, rec map[string][]string) {
+func printModels(w io.Writer, cfg config.Config, rec map[string][]string) {
 	const padding = 2
 	tw := tabwriter.NewWriter(w, 0, 0, padding, ' ', 0)
 	fmt.Fprintln(tw, "ROLE\tCURRENT\tRECOMMENDED\tWHY")
-	for _, r := range roles {
-		cur := strings.Join(current(cfg, r.key), ", ")
+	for _, r := range config.Roles {
+		cur := strings.Join(config.Current(cfg, r.Key), ", ")
 		if cur == "" {
 			cur = "(default)"
 		}
-		recd := strings.Join(rec[r.key], ", ")
+		recd := strings.Join(rec[r.Key], ", ")
 		if recd == "" {
 			recd = "(none available)"
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", r.key, cur, recd, r.why)
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", r.Key, cur, recd, r.Why)
 	}
 	tw.Flush()
 }

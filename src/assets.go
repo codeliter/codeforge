@@ -9,19 +9,22 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/codeliter/codeforge/src/config"
+
 	"github.com/codeliter/codeforge/assets"
+	"github.com/codeliter/codeforge/src/fsutil"
 )
 
 const (
 	dirPerm     = 0o755
-	privateDir  = 0o700
+	privateDir  = fsutil.PrivateDir
 	publicFile  = 0o644
-	privateFile = 0o600
+	privateFile = fsutil.PrivateFile
 )
 
 // syncAssets writes the embedded profiles and skills into ~/.empryo, replacing stale copies and symlinks.
 // Profiles carry {{coder}} and {{reviewer}} so `/profile` switches inside the TUI keep the configured models.
-func syncAssets(empryoDir string, cfg Config) error {
+func syncAssets(empryoDir string, cfg config.Config) error {
 	err := fs.WalkDir(assets.Profile, ".", func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return err
@@ -61,7 +64,7 @@ func writeFile(root, rel string, data []byte, perm os.FileMode) error {
 	if err := os.MkdirAll(filepath.Dir(dst), dirPerm); err != nil {
 		return fmt.Errorf("creating %s: %w", filepath.Dir(dst), err)
 	}
-	if err := atomicWriteFile(dst, data, perm); err != nil {
+	if err := fsutil.AtomicWriteFile(dst, data, perm); err != nil {
 		return fmt.Errorf("writing %s: %w", dst, err)
 	}
 	return nil

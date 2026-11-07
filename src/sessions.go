@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/codeliter/codeforge/src/config"
+
 	"github.com/google/uuid"
 
 	"github.com/codeliter/codeforge/src/guard"
@@ -190,7 +192,7 @@ func restoreMode(ctx context.Context, home, explicit string, args []string) (str
 	if err != nil {
 		return "", true, err
 	}
-	s, err := store.Open(ctx, filepath.Join(configDir(home), "sessions"))
+	s, err := store.Open(ctx, filepath.Join(config.Dir(home), "sessions"))
 	if err != nil {
 		return "", true, err
 	}
@@ -227,7 +229,7 @@ func restoreMode(ctx context.Context, home, explicit string, args []string) (str
 	if explicit != "" && explicit != saved.Mode {
 		return "", true, errSessionOverride
 	}
-	if saved.Mode == "" || validMode(saved.Mode) != nil || saved.Profile != profileFor(saved.Mode) {
+	if saved.Mode == "" || config.ValidMode(saved.Mode) != nil || saved.Profile != profileFor(saved.Mode) {
 		return "", true, errSessionOverride
 	}
 	if err := verifyEmpryoSession(wd, id); err != nil {
@@ -273,7 +275,7 @@ func persistSession(ctx context.Context, home, mode string, args []string) ([]st
 	if err != nil {
 		return nil, err
 	}
-	s, err := store.Open(ctx, filepath.Join(configDir(home), "sessions"))
+	s, err := store.Open(ctx, filepath.Join(config.Dir(home), "sessions"))
 	if err != nil {
 		return nil, err
 	}

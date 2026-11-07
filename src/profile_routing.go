@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/codeliter/codeforge/src/config"
+
 	"go.yaml.in/yaml/v3"
 
 	"github.com/codeliter/codeforge/assets"
@@ -23,10 +25,10 @@ func profileModelScalar(model string) (string, error) {
 	}
 	return strings.TrimSuffix(string(encoded), "\n"), nil
 }
-func renderAgent(body []byte, cfg Config) ([]byte, error) {
+func renderAgent(body []byte, cfg config.Config) ([]byte, error) {
 	expert := cfg.Expert
 	if expert == "" {
-		expert = defaultExpertModel
+		expert = config.DefaultExpertModel
 	}
 	coder, err := profileModelScalar(cfg.Model)
 	if err != nil {
@@ -59,7 +61,7 @@ func renderAgent(body []byte, cfg Config) ([]byte, error) {
 
 // Project-owned profiles prevent simultaneous projects from overwriting one
 // another's role/routing choices in the global Codeforge profiles.
-func syncProjectAgents(workspace string, cfg Config) error {
+func syncProjectAgents(workspace string, cfg config.Config) error {
 	if info, err := os.Lstat(filepath.Join(workspace, ".empryo")); err == nil && info.Mode()&os.ModeSymlink != 0 {
 		return errProfileRootSymlink
 	}

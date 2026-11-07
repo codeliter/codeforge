@@ -4,11 +4,13 @@ package src
 import (
 	"testing"
 
+	"github.com/codeliter/codeforge/src/config"
+
 	"github.com/stretchr/testify/require"
 )
 
 func TestTaskArgs_ExplicitEffort(t *testing.T) {
-	cfg := Config{Model: "a/coder"}
+	cfg := config.Config{Model: "a/coder"}
 
 	tests := []struct {
 		name    string
@@ -37,13 +39,13 @@ func TestTaskArgs_ExplicitEffort(t *testing.T) {
 }
 
 func TestTaskArgs_NoPromptStartsAtMedium(t *testing.T) {
-	got, err := taskArgs(t.Context(), "/nonexistent", Config{}, []string{"--cwd", "/tmp/migrate"})
+	got, err := taskArgs(t.Context(), "/nonexistent", config.Config{}, []string{"--cwd", "/tmp/migrate"})
 	require.NoError(t, err)
 	require.Equal(t, []string{"--effort", "medium", "--cwd", "/tmp/migrate"}, got)
 }
 
 func TestTaskArgs_JudgeFailureFallsBackToMedium(t *testing.T) {
-	got, err := taskArgs(t.Context(), "/nonexistent", Config{Judges: []string{"x/y"}}, []string{"--headless", "explain", "this"})
+	got, err := taskArgs(t.Context(), "/nonexistent", config.Config{Judges: []string{"x/y"}}, []string{"--headless", "explain", "this"})
 	require.NoError(t, err)
 	require.Equal(t, []string{"--effort", "medium", "--headless", "explain", "this"}, got)
 }

@@ -4,13 +4,13 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/huh"
+	"github.com/codeliter/codeforge/src/forms"
 )
 
-func starterOptions(choices []starter) []huh.Option[string] {
-	options := make([]huh.Option[string], 0, len(choices))
+func starterOptions(choices []starter) []forms.Option {
+	options := make([]forms.Option, 0, len(choices))
 	for _, choice := range choices {
-		options = append(options, huh.NewOption(choice.Name+": "+choice.Description, choice.Name))
+		options = append(options, forms.Option{Label: choice.Name + ": " + choice.Description, Value: choice.Name})
 	}
 	return options
 }
@@ -42,11 +42,5 @@ func pickStarter() (string, error) {
 		}
 		return "", fmt.Errorf("%w: --persona needs a name without a terminal. Available choices:\n%s", errInitUsage, descriptions.String())
 	}
-	selected := choices[0].Name
-	err := runForm("persona picker", huh.NewSelect[string]().
-		Title("Pick a starter persona").
-		Description("Choose with the arrow keys, then press Enter.").
-		Options(starterOptions(choices)...).
-		Value(&selected))
-	return selected, err
+	return forms.Choose("Pick a starter persona", "Choose with the arrow keys, then press Enter.", starterOptions(choices), choices[0].Name)
 }

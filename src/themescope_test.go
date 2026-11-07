@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/codeliter/codeforge/src/config"
+
 	"github.com/stretchr/testify/require"
 )
 
@@ -24,7 +26,7 @@ const userConfig = "{\n  \"effort\": \"low\",\n  \"big\": 9007199254740993,\n  \
 func newThemeHome(t *testing.T) themeHome {
 	t.Helper()
 	home := t.TempDir()
-	require.NoError(t, syncAssets(filepath.Join(home, ".empryo"), Config{}))
+	require.NoError(t, syncAssets(filepath.Join(home, ".empryo"), config.Config{}))
 	t.Setenv(themeEnv, "")
 	t.Setenv("EMPRYO_HOME", "")
 	old := appearanceProbe

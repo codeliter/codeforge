@@ -9,7 +9,8 @@ import (
 	"slices"
 	"sort"
 
-	"github.com/charmbracelet/huh"
+	"github.com/codeliter/codeforge/src/config"
+	"github.com/codeliter/codeforge/src/forms"
 
 	"github.com/codeliter/codeforge/src/guard"
 )
@@ -30,12 +31,12 @@ func modelConfigurationScope(args []string) (string, error) {
 
 func modelConfigDirectory(home, project, scope string) (string, error) {
 	if scope == "global" {
-		return configDir(home), nil
+		return config.Dir(home), nil
 	}
-	if sameConfigScope(home, project) {
+	if config.SameScope(home, project) {
 		return "", fmt.Errorf("%w: this project path is your global configuration; use --global", errModelConfigure)
 	}
-	return filepath.Dir(projectConfigPath(project)), nil
+	return filepath.Dir(config.ProjectPath(project)), nil
 }
 func runModelConfigure(ctx context.Context, home, bin string, args []string) error {
 	scope, err := modelConfigurationScope(args)
@@ -58,7 +59,7 @@ func runModelConfigure(ctx context.Context, home, bin string, args []string) err
 		if gitErr == nil {
 			scope = "project"
 		}
-		if err := runForm("model configuration scope", huh.NewSelect[string]().Title("Where should these models apply?").Options(huh.NewOption("This project: "+root, "project"), huh.NewOption("All projects", "global")).Value(&scope)); err != nil {
+		if scope, err = forms.Choose("Where should these models apply?", "", []forms.Option{{Label: "This project: " + root, Value: "project"}, {Label: "All projects", Value: "global"}}, scope); err != nil {
 			return err
 		}
 	}
@@ -66,23 +67,23 @@ func runModelConfigure(ctx context.Context, home, bin string, args []string) err
 	if err != nil {
 		return err
 	}
-	cfg, err := readConfigFile(home)
+	cfg, err := config.ReadFile(home)
 	if err != nil {
 		return err
 	}
-	global := cloneConfig(cfg)
-	var local Config
+	global := config.Clone(cfg)
+	var local config.Config
 	if scope == "project" {
-		local, err = readTrustedProjectConfig(home, root)
+		local, err = config.ReadTrustedProject(home, root, modelTrustApprover())
 		if err != nil {
 			return err
 		}
-		if err := ensureProjectModelEditing(home, root, func() bool {
+		if err := config.EnsureProjectEditing(home, root, func() bool {
 			return confirm("Replace the unapproved project model file with new choices? It is kept if you cancel.")
 		}); err != nil {
 			return err
 		}
-		cfg = mergeConfig(cfg, local)
+		cfg = config.Merge(cfg, local)
 	}
 	fmt.Fprintln(os.Stderr, "codeforge: loading the connected-provider model catalog...")
 	catalog, err := connectedModelCatalog(ctx, bin)
@@ -90,27 +91,27 @@ func runModelConfigure(ctx context.Context, home, bin string, args []string) err
 		return err
 	}
 	if len(catalog) == 0 {
-		return errNoModels
+		return config.ErrNoModels
 	}
-	baseline := configDefaults(cloneConfig(cfg))
-	cfg = cloneConfig(baseline)
+	baseline := config.Defaults(config.Clone(cfg))
+	cfg = config.Clone(baseline)
 	editor := editModelChoices
 	var approvers []func(string, string) error
 	if scope == "project" {
-		cfg.Routing = cloneConfig(local).Routing
-		editor = func(edited *Config, catalog []string) error {
-			if err := editModelChoicesPreview(edited, catalog, func(choices *Config) (Config, error) {
+		cfg.Routing = config.Clone(local).Routing
+		editor = func(edited *config.Config, catalog []string) error {
+			if err := editModelChoicesPreview(edited, catalog, func(choices *config.Config) (config.Config, error) {
 				return prepareProjectModelPreview(global, local, baseline, choices, catalog)
 			}); err != nil {
 				return err
 			}
 			if isSymlinked(root, filepath.Join(".codeforge", "config.yaml")) {
-				return errConfigSymlink
+				return config.ErrConfigSymlink
 			}
 			*edited = projectModelDelta(local, baseline, *edited)
 			return nil
 		}
-		approvers = append(approvers, func(_ string, content string) error { return trust(home, projectConfigPath(root), content) })
+		approvers = append(approvers, func(_ string, content string) error { return config.Trust(home, config.ProjectPath(root), content) })
 	}
 	if err := configureModelFile(dir, cfg, catalog, editor, approvers...); err != nil {
 		return err
@@ -120,12 +121,12 @@ func runModelConfigure(ctx context.Context, home, bin string, args []string) err
 }
 
 // The editor works on a copy. Cancellation or invalid choices never replace the file.
-func configureModelFile(dir string, cfg Config, catalog []string, edit func(*Config, []string) error, approve ...func(string, string) error) error {
-	cfg = cloneConfig(cfg)
+func configureModelFile(dir string, cfg config.Config, catalog []string, edit func(*config.Config, []string) error, approve ...func(string, string) error) error {
+	cfg = config.Clone(cfg)
 	if err := edit(&cfg, catalog); err != nil {
 		return err
 	}
-	content, err := saveConfigYAML(dir, cfg)
+	content, err := config.SaveYAML(dir, cfg)
 	if err != nil {
 		return err
 	}
@@ -137,30 +138,30 @@ func configureModelFile(dir string, cfg Config, catalog []string, edit func(*Con
 	return nil
 }
 
-func modelOptions(catalog []string, saved ...string) []huh.Option[string] {
+func modelOptions(catalog []string, saved ...string) []forms.Option {
 	ids := slices.Clone(catalog)
 	sort.Strings(ids)
 	ids = slices.Compact(ids)
-	var options []huh.Option[string]
+	var options []forms.Option
 	for _, id := range ids {
-		if !suggestedModel(id) {
+		if !config.SuggestedModel(id) {
 			continue
 		}
-		options = append(options, huh.NewOption(id, id))
+		options = append(options, forms.Option{Label: id, Value: id})
 	}
 	for _, id := range saved {
-		if id != "" && suggestedModel(id) && validModelID(id) && !slices.Contains(ids, id) {
-			options = append(options, huh.NewOption(id+" (saved/default; not currently listed)", id))
+		if id != "" && config.SuggestedModel(id) && config.ValidModelID(id) && !slices.Contains(ids, id) {
+			options = append(options, forms.Option{Label: id + " (saved/default; not currently listed)", Value: id})
 			ids = append(ids, id)
 		}
 	}
 	return options
 }
 
-func seedModelChoices(cfg *Config, catalog []string) {
-	for _, role := range roles {
-		ids := slices.DeleteFunc(slices.Clone(current(*cfg, role.key)), func(id string) bool { return !suggestedModel(id) })
-		assignModelRole(cfg, role.key, ids)
+func seedModelChoices(cfg *config.Config, catalog []string) {
+	for _, role := range config.Roles {
+		ids := slices.DeleteFunc(slices.Clone(config.Current(*cfg, role.Key)), func(id string) bool { return !config.SuggestedModel(id) })
+		config.AssignRole(cfg, role.Key, ids)
 	}
 	if cfg.Model == "" {
 		cfg.Model = catalog[0]
@@ -169,12 +170,12 @@ func seedModelChoices(cfg *Config, catalog []string) {
 		}
 	}
 	for key, models := range recommendConfigured(catalog, *cfg, true) {
-		if len(current(*cfg, key)) == 0 && len(models) > 0 {
-			assignModelRole(cfg, key, models)
+		if len(config.Current(*cfg, key)) == 0 && len(models) > 0 {
+			config.AssignRole(cfg, key, models)
 		}
 	}
 	if cfg.Expert == "" {
-		cfg.Expert = defaultExpertModel
+		cfg.Expert = config.DefaultExpertModel
 	}
 	if cfg.Init == "" {
 		cfg.Init = cfg.Model
@@ -192,13 +193,13 @@ func seedModelChoices(cfg *Config, catalog []string) {
 		}
 	}
 	if cfg.Review.Model == "" {
-		cfg.Review.Model = defaultReviewModel
+		cfg.Review.Model = config.DefaultReviewModel
 		if cfg.Review.Model == cfg.Model {
-			cfg.Review.Model = defaultModel
+			cfg.Review.Model = config.DefaultModel
 		}
 	}
 	if len(cfg.Review.SecondOpinion) == 0 {
-		for _, id := range append(slices.Clone(defaultSecondOpinion), defaultModel, defaultReviewModel) {
+		for _, id := range append(slices.Clone(config.DefaultSecondOpinion), config.DefaultModel, config.DefaultReviewModel) {
 			if id != cfg.Model && id != cfg.Review.Model {
 				cfg.Review.SecondOpinion = []string{id}
 				break
@@ -207,67 +208,52 @@ func seedModelChoices(cfg *Config, catalog []string) {
 	}
 }
 
-func editModelChoices(cfg *Config, catalog []string) error {
+func editModelChoices(cfg *config.Config, catalog []string) error {
 	return editModelChoicesPreview(cfg, catalog, nil)
 }
-func editModelChoicesPreview(cfg *Config, catalog []string, prepare func(*Config) (Config, error)) error {
+func editModelChoicesPreview(cfg *config.Config, catalog []string, prepare func(*config.Config) (config.Config, error)) error {
 	if err := pickProviderPolicy(cfg, catalog); err != nil {
 		return err
 	}
 	seedModelChoices(cfg, catalog)
-	helpers, save := false, false
-	fields := []huh.Field{
-		huh.NewSelect[string]().Title("Coding model").Description("Writes code in work, chat and ticket mode.").Options(providerModelOptions(catalog, cfg.Providers, cfg.Model)...).Value(&cfg.Model),
-		huh.NewSelect[string]().Title("Expert delegate (on demand)").Description("Use Opus for difficult delegated work, not routine calls.").Options(providerModelOptions(catalog, cfg.Providers, cfg.Expert)...).Value(&cfg.Expert),
-		huh.NewMultiSelect[string]().Title("Task sizing models").Description("Fast helpers that choose how much thinking a task needs.").Options(providerModelOptions(catalog, cfg.Providers, cfg.Judges...)...).Value(&cfg.Judges).Validate(func(ids []string) error {
-			if len(ids) == 0 {
-				return errNoModels
-			}
-			return nil
-		}),
-		huh.NewSelect[string]().Title("Review model").Description("Checks changes with a different model from the coder.").Options(providerModelOptions(catalog, cfg.Providers, cfg.Review.Model)...).Value(&cfg.Review.Model).Validate(func(id string) error {
-			if id == cfg.Model {
-				return errReviewerIsCoder
-			}
-			return nil
-		}),
-		huh.NewMultiSelect[string]().Title("Extra reviewers").Description("Second opinions for larger or riskier changes.").Options(providerModelOptions(catalog, cfg.Providers, cfg.Review.SecondOpinion...)...).Value(&cfg.Review.SecondOpinion).Validate(func(ids []string) error {
-			if len(ids) == 0 {
-				return errNoModels
-			}
-			for _, id := range ids {
-				if id == cfg.Model {
-					return errSecondOpinionIsCoder
-				}
-				if id == cfg.Review.Model {
-					return errSecondOpinionIsReviewer
-				}
-			}
-			return nil
-		}),
-		huh.NewSelect[string]().Title("Persona model").Description("Learns your conventions during init.").Options(providerModelOptions(catalog, cfg.Providers, cfg.Init)...).Value(&cfg.Init),
-		huh.NewConfirm().Title("Also configure Empryo helper routing?").Description("Only Codeforge profiles change; other Empryo sessions keep their routing.").Value(&helpers),
-	}
-	if err := runForm("configure models", fields...); err != nil {
+	noModels := config.ErrNoModels.Error()
+	answers, err := forms.Run(forms.Page("configure models",
+		forms.Field{Key: "model", Kind: forms.Select, Title: "Coding model", Description: "Writes code in work, chat and ticket mode.", Options: providerModelOptions(catalog, cfg.Providers, cfg.Model), Value: cfg.Model},
+		forms.Field{Key: "expert", Kind: forms.Select, Title: "Expert delegate (on demand)", Description: "Use Opus for difficult delegated work, not routine calls.", Options: providerModelOptions(catalog, cfg.Providers, cfg.Expert), Value: cfg.Expert},
+		forms.Field{Key: "judges", Kind: forms.MultiSelect, Title: "Task sizing models", Description: "Fast helpers that choose how much thinking a task needs.", Options: providerModelOptions(catalog, cfg.Providers, cfg.Judges...), Values: cfg.Judges, Required: noModels},
+		forms.Field{Key: "review", Kind: forms.Select, Title: "Review model", Description: "Checks changes with a different model from the coder.", Options: providerModelOptions(catalog, cfg.Providers, cfg.Review.Model), Value: cfg.Review.Model,
+			Differs: []forms.Differ{{Key: "model", Message: config.ErrReviewerIsCoder.Error()}}},
+		forms.Field{Key: "second", Kind: forms.MultiSelect, Title: "Extra reviewers", Description: "Second opinions for larger or riskier changes.", Options: providerModelOptions(catalog, cfg.Providers, cfg.Review.SecondOpinion...), Values: cfg.Review.SecondOpinion, Required: noModels,
+			Differs: []forms.Differ{{Key: "model", Message: config.ErrSecondOpinionIsCoder.Error()}, {Key: "review", Message: config.ErrSecondOpinionIsReviewer.Error()}}},
+		forms.Field{Key: "init", Kind: forms.Select, Title: "Persona model", Description: "Learns your conventions during init.", Options: providerModelOptions(catalog, cfg.Providers, cfg.Init), Value: cfg.Init},
+		forms.Field{Key: "helpers", Kind: forms.Confirm, Title: "Also configure Empryo helper routing?", Description: "Only Codeforge profiles change; other Empryo sessions keep their routing."},
+	))
+	if err != nil {
 		return err
 	}
-	if helpers {
-		values := make([]string, len(routingJobs))
-		var routingFields []huh.Field
-		for i, job := range routingJobs {
+	cfg.Model, cfg.Expert, cfg.Judges = answers.String("model"), answers.String("expert"), answers.Strings("judges")
+	cfg.Review.Model, cfg.Review.SecondOpinion, cfg.Init = answers.String("review"), answers.Strings("second"), answers.String("init")
+	if answers.Bool("helpers") {
+		values := make([]string, len(config.RoutingJobs))
+		var routingFields []forms.Field
+		for i, job := range config.RoutingJobs {
 			values[i] = routingPickerValue(cfg.Routing, job)
-			if !suggestedModel(values[i]) {
+			if !config.SuggestedModel(values[i]) {
 				values[i] = inheritRouting
 			}
-			options := append([]huh.Option[string]{huh.NewOption("Inherit global Codeforge / existing routing", inheritRouting), huh.NewOption("Use native Empryo routing (reset)", "")}, providerModelOptions(catalog, cfg.Providers, values[i])...)
-			routingFields = append(routingFields, huh.NewSelect[string]().Title("Helper: "+job).Options(options...).Value(&values[i]))
+			options := append([]forms.Option{{Label: "Inherit global Codeforge / existing routing", Value: inheritRouting}, {Label: "Use native Empryo routing (reset)", Value: ""}}, providerModelOptions(catalog, cfg.Providers, values[i])...)
+			routingFields = append(routingFields, forms.Field{Key: job, Kind: forms.Select, Title: "Helper: " + job, Options: options, Value: values[i]})
 		}
-		if err := runForm("configure helper models", routingFields...); err != nil {
+		routing, err := forms.Run(forms.Page("configure helper models", routingFields...))
+		if err != nil {
 			return err
 		}
-		applyRoutingChoices(cfg, routingJobs, values)
+		for i, job := range config.RoutingJobs {
+			values[i] = routing.String(job)
+		}
+		applyRoutingChoices(cfg, config.RoutingJobs, values)
 	}
-	if err := validate(*cfg); err != nil {
+	if err := config.Validate(*cfg); err != nil {
 		return err
 	}
 	preview := *cfg
@@ -278,12 +264,13 @@ func editModelChoicesPreview(cfg *Config, catalog []string, prepare func(*Config
 		}
 		preview = prepared
 	}
-	plan, err := resolveModelPlan(preview, catalog)
+	plan, err := config.ResolvePlan(preview, catalog)
 	if err != nil {
 		return err
 	}
 	fmt.Fprintln(os.Stderr, modelPlanPreview(plan))
-	if err := runForm("save models", huh.NewConfirm().Title("Save these model choices?").Value(&save)); err != nil {
+	save, err := forms.YesNo("Save these model choices?", "")
+	if err != nil {
 		return err
 	}
 	if !save {

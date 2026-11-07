@@ -5,12 +5,11 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/huh"
+	"github.com/codeliter/codeforge/src/forms"
 )
 
 var (
 	errStartUsage = errors.New(`usage: codeforge ticket [--ticket ID] ["what to do"]`)
-	errRequired   = errors.New("required")
 )
 
 type work struct {
@@ -67,20 +66,16 @@ func workFromArgs(args []string) (work, []string, error) {
 // askWork asks for the ticket and what needs doing, on one page.
 func askWork(w *work) error {
 	const descriptionLines = 6
-	return runGroups("ticket form",
-		huh.NewGroup(
-			huh.NewInput().
-				Title("Ticket").
-				Description("Leave empty if there is none.").
-				Value(&w.ticket),
-			huh.NewText().
-				Title("Description").
-				Description("What needs to happen, with any context, links or limits. This also sets the effort.").
-				Lines(descriptionLines).
-				Value(&w.description).
-				Validate(required("a description")),
-		),
-	)
+	answers, err := forms.Run(forms.Page("ticket form",
+		forms.Field{Key: "ticket", Kind: forms.Input, Title: "Ticket", Description: "Leave empty if there is none.", Value: w.ticket},
+		forms.Field{Key: "description", Kind: forms.Text, Title: "Description", Lines: descriptionLines, Value: w.description, Required: "enter a description",
+			Description: "What needs to happen, with any context, links or limits. This also sets the effort."},
+	))
+	if err != nil {
+		return err
+	}
+	w.ticket, w.description = answers.String("ticket"), answers.String("description")
+	return nil
 }
 
 // prompt leads with the description; the skill and ticket lines follow it.
@@ -94,13 +89,4 @@ func (w work) prompt() string {
 		s.WriteString("\nNo ticket. Ask for one before creating a branch if the team uses tickets.")
 	}
 	return s.String()
-}
-
-func required(what string) func(string) error {
-	return func(s string) error {
-		if strings.TrimSpace(s) == "" {
-			return fmt.Errorf("enter %s: %w", what, errRequired)
-		}
-		return nil
-	}
 }

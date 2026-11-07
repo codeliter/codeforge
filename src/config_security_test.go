@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/codeliter/codeforge/src/config"
+
 	"github.com/stretchr/testify/require"
 	"go.yaml.in/yaml/v3"
 )
@@ -15,19 +17,19 @@ func TestUntrustedProjectCannotChooseItsOwnReviewer(t *testing.T) {
 		t.Skip("tests non-interactive checkout handling")
 	}
 	home, root := t.TempDir(), t.TempDir()
-	global := Config{Model: "global/coder", Review: ReviewConfig{Model: "global/reviewer"}}
-	require.NoError(t, writeConfigFile(home, global))
+	global := config.Config{Model: "global/coder", Review: config.ReviewConfig{Model: "global/reviewer"}}
+	require.NoError(t, config.WriteFile(home, global))
 	dir := filepath.Join(root, ".codeforge")
-	require.NoError(t, writeConfigYAML(dir, Config{Review: ReviewConfig{Model: "checkout/weak-reviewer"}}))
-	cfg, err := loadConfigAt(home, root)
+	require.NoError(t, config.WriteYAML(dir, config.Config{Review: config.ReviewConfig{Model: "checkout/weak-reviewer"}}))
+	cfg, err := config.Load(home, root, nil)
 	require.NoError(t, err)
 	require.Equal(t, "global/reviewer", cfg.Review.Model)
-	require.NoError(t, approveProjectConfig(home, root))
-	cfg, err = loadConfigAt(home, root)
+	require.NoError(t, config.ApproveProject(home, root))
+	cfg, err = config.Load(home, root, nil)
 	require.NoError(t, err)
 	require.Equal(t, "checkout/weak-reviewer", cfg.Review.Model)
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "config.yaml"), []byte("unknown: true\n"), privateFile))
-	cfg, err = loadConfigAt(home, root)
+	cfg, err = config.Load(home, root, nil)
 	require.NoError(t, err, "changed malformed checkout config must be skipped before parsing")
 	require.Equal(t, "global/reviewer", cfg.Review.Model)
 }
@@ -37,34 +39,34 @@ func TestProjectApprovalUsesSavedBytesNotASecondRead(t *testing.T) {
 		t.Skip("tests non-interactive approval handling")
 	}
 	home, root := t.TempDir(), t.TempDir()
-	require.NoError(t, writeConfigFile(home, Config{Model: "global/coder", Review: ReviewConfig{Model: "global/reviewer"}}))
+	require.NoError(t, config.WriteFile(home, config.Config{Model: "global/coder", Review: config.ReviewConfig{Model: "global/reviewer"}}))
 	dir := filepath.Join(root, ".codeforge")
-	chosen := Config{Model: "chosen/coder", Review: ReviewConfig{Model: "chosen/reviewer"}}
-	err := configureModelFile(dir, chosen, nil, func(_ *Config, _ []string) error { return nil }, func(path, approved string) error {
+	chosen := config.Config{Model: "chosen/coder", Review: config.ReviewConfig{Model: "chosen/reviewer"}}
+	err := configureModelFile(dir, chosen, nil, func(_ *config.Config, _ []string) error { return nil }, func(path, approved string) error {
 		require.NoError(t, os.WriteFile(path, []byte("model: substituted/coder\n"), privateFile))
-		return trust(home, projectConfigPath(root), approved)
+		return config.Trust(home, config.ProjectPath(root), approved)
 	})
 	require.NoError(t, err)
-	cfg, err := loadConfigAt(home, root)
+	cfg, err := config.Load(home, root, nil)
 	require.NoError(t, err)
 	require.Equal(t, "global/coder", cfg.Model, "substituted bytes must not inherit the user's approval")
 }
 
 func TestModelRoutingInheritIsNotAnImplicitReset(t *testing.T) {
-	cfg := Config{Routing: map[string]string{"research": "project/reader"}}
+	cfg := config.Config{Routing: map[string]string{"research": "project/reader"}}
 	require.Equal(t, inheritRouting, routingPickerValue(cfg.Routing, "editing"))
 	applyRoutingChoices(&cfg, []string{"editing"}, []string{inheritRouting})
-	merged := mergeConfig(Config{Routing: map[string]string{"editing": "global/editor"}}, cfg)
+	merged := config.Merge(config.Config{Routing: map[string]string{"editing": "global/editor"}}, cfg)
 	require.Equal(t, "global/editor", merged.Routing["editing"])
 	applyRoutingChoices(&cfg, []string{"editing"}, []string{""})
-	merged = mergeConfig(Config{Routing: map[string]string{"editing": "global/editor"}}, cfg)
+	merged = config.Merge(config.Config{Routing: map[string]string{"editing": "global/editor"}}, cfg)
 	require.NotContains(t, merged.Routing, "editing")
 }
 
 func TestModelTrustPreviewCannotHideReviewersBehindComments(t *testing.T) {
 	home := t.TempDir()
 	body := strings.Repeat("# harmless padding\n", 200) + "review:\n  model: selected/reviewer\n"
-	shown, err := modelConfigTrustPreview(home, body)
+	shown, err := config.ModelPreview(home, body)
 	require.NoError(t, err)
 	require.Contains(t, shown, "selected/reviewer")
 	require.NotContains(t, shown, "harmless padding")
@@ -73,13 +75,13 @@ func TestModelTrustPreviewCannotHideReviewersBehindComments(t *testing.T) {
 func TestDeclinedProjectConfigIsNotSilentlyReplaced(t *testing.T) {
 	home, root := t.TempDir(), t.TempDir()
 	dir := filepath.Join(root, ".codeforge")
-	require.NoError(t, writeConfigYAML(dir, Config{Model: "project/coder"}))
-	err := ensureProjectModelEditing(home, root, func() bool { return false })
-	require.ErrorIs(t, err, errUnapprovedModelEdit)
+	require.NoError(t, config.WriteYAML(dir, config.Config{Model: "project/coder"}))
+	err := config.EnsureProjectEditing(home, root, func() bool { return false })
+	require.ErrorIs(t, err, config.ErrUnapprovedEdit)
 	data, err := os.ReadFile(filepath.Join(dir, "config.yaml"))
 	require.NoError(t, err)
 	require.Contains(t, string(data), "project/coder")
-	require.NoError(t, ensureProjectModelEditing(home, root, func() bool { return true }))
+	require.NoError(t, config.EnsureProjectEditing(home, root, func() bool { return true }))
 }
 
 func TestHomeCannotBeMistakenForASeparateProjectConfig(t *testing.T) {
@@ -93,22 +95,22 @@ func TestHomeCannotBeMistakenForASeparateProjectConfig(t *testing.T) {
 }
 
 func TestProjectWizardOnlyPinsChangedRoles(t *testing.T) {
-	baseline := configDefaults(Config{Model: "global/coder", Review: ReviewConfig{Model: "global/reviewer"}})
-	edited := cloneConfig(baseline)
+	baseline := config.Defaults(config.Config{Model: "global/coder", Review: config.ReviewConfig{Model: "global/reviewer"}})
+	edited := config.Clone(baseline)
 	seedModelChoices(&edited, []string{"global/coder", "global/reviewer"})
 	edited.Routing = nil
-	delta := projectModelDelta(Config{}, baseline, edited)
+	delta := projectModelDelta(config.Config{}, baseline, edited)
 	require.Empty(t, delta.Model)
 	require.Empty(t, delta.Review.Model)
 	require.Empty(t, delta.Init, "opening the form must not create an unrequested init pin")
 	edited.Expert = "project/expert"
-	delta = projectModelDelta(Config{}, baseline, edited)
+	delta = projectModelDelta(config.Config{}, baseline, edited)
 	require.Empty(t, delta.Model)
 	require.Equal(t, "project/expert", delta.Expert)
 }
 
 func TestProfileModelScalarsAreQuotedSafely(t *testing.T) {
-	body, err := renderAgent([]byte("---\nname: test\nmodel: {{coder}}\n---\n"), Config{Model: "provider/model:"})
+	body, err := renderAgent([]byte("---\nname: test\nmodel: {{coder}}\n---\n"), config.Config{Model: "provider/model:"})
 	require.NoError(t, err)
 	var header struct {
 		Name  string
@@ -120,12 +122,12 @@ func TestProfileModelScalarsAreQuotedSafely(t *testing.T) {
 
 func TestGlobalProfilesDoNotCaptureOneOffEnvironment(t *testing.T) {
 	home := t.TempDir()
-	require.NoError(t, writeConfigFile(home, Config{Model: "global/coder", Review: ReviewConfig{Model: "global/reviewer"}}))
+	require.NoError(t, config.WriteFile(home, config.Config{Model: "global/coder", Review: config.ReviewConfig{Model: "global/reviewer"}}))
 	t.Setenv("CODEFORGE_MODEL", "once/coder")
-	base, err := loadBaseConfig(home)
+	base, err := config.LoadBase(home)
 	require.NoError(t, err)
 	require.Equal(t, "global/coder", base.Model)
-	active, err := loadConfig(home)
+	active, err := config.LoadGlobal(home)
 	require.NoError(t, err)
 	require.Equal(t, "once/coder", active.Model)
 }
@@ -133,12 +135,12 @@ func TestGlobalProfilesDoNotCaptureOneOffEnvironment(t *testing.T) {
 func TestConfigAndWorkspaceSymlinksAreNotOverwritten(t *testing.T) {
 	root, other := t.TempDir(), t.TempDir()
 	require.NoError(t, os.Symlink(other, filepath.Join(root, ".empryo")))
-	require.ErrorIs(t, syncProjectAgents(root, Config{}), errProfileRootSymlink)
+	require.ErrorIs(t, syncProjectAgents(root, config.Config{}), errProfileRootSymlink)
 	dir := t.TempDir()
 	target := filepath.Join(t.TempDir(), "actual.yaml")
 	require.NoError(t, os.WriteFile(target, []byte("keep this"), privateFile))
 	require.NoError(t, os.Symlink(target, filepath.Join(dir, "config.yaml")))
-	require.ErrorIs(t, writeConfigYAML(dir, Config{Model: "provider/model"}), errConfigSymlink)
+	require.ErrorIs(t, config.WriteYAML(dir, config.Config{Model: "provider/model"}), config.ErrConfigSymlink)
 	data, err := os.ReadFile(target)
 	require.NoError(t, err)
 	require.Equal(t, "keep this", string(data))

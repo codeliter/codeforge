@@ -7,6 +7,8 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/codeliter/codeforge/src/config"
+
 	"github.com/codeliter/codeforge/src/effort"
 )
 
@@ -43,7 +45,7 @@ func connectedModelCatalogAt(ctx context.Context, bin, workspace string) ([]stri
 		}
 	}
 	if len(models) == 0 {
-		return nil, fmt.Errorf("%w: no connected provider has a usable model catalog; sign in with Empryo first", errNoModels)
+		return nil, fmt.Errorf("%w: no connected provider has a usable model catalog; sign in with Empryo first", config.ErrNoModels)
 	}
 	return models, nil
 }

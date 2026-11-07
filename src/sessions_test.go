@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/codeliter/codeforge/src/config"
+
 	"github.com/stretchr/testify/require"
 
 	"github.com/codeliter/codeforge/src/store"
@@ -41,7 +43,7 @@ func TestResume_RestoresOriginalModeAcrossAliases(t *testing.T) {
 			require.NoError(t, err)
 			require.True(t, resumed)
 			require.Equal(t, mode, got)
-			got, prepared, err := modeArgs(t.Context(), "/nonexistent", Config{}, got, args)
+			got, prepared, err := modeArgs(t.Context(), "/nonexistent", config.Config{}, got, args)
 			require.NoError(t, err)
 			require.Equal(t, mode, got)
 			require.Equal(t, args, prepared)
@@ -64,7 +66,7 @@ func TestResumeCLI(t *testing.T) {
 	binDir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(binDir, "empryo"), []byte("#!/bin/sh\nprintf '%s\\n' \"$@\"\nprintf 'guard=%s\\n' \"$CODEFORGE_GUARD\"\n"), execPerm))
 	historicalSession(t, wd, "review-saved")
-	s, err := store.Open(t.Context(), filepath.Join(configDir(home), "sessions"))
+	s, err := store.Open(t.Context(), filepath.Join(config.Dir(home), "sessions"))
 	require.NoError(t, err)
 	require.NoError(t, s.Put(t.Context(), store.Session{ID: "review-saved", Mode: modeReview, Profile: profileFor(modeReview), Repository: wd}))
 	require.NoError(t, s.Close())
@@ -186,10 +188,10 @@ func TestSessionFlags_InvalidAndConflicting(t *testing.T) {
 
 func TestResumeFlags_AreNotSystemValues(t *testing.T) {
 	args := []string{"--system", "--resume"}
-	mode, err := pickMode(Config{DefaultMode: modeChat}, args)
+	mode, err := pickMode(config.Config{DefaultMode: modeChat}, args)
 	require.NoError(t, err)
 	require.Equal(t, modeChat, mode)
-	_, prepared, err := modeArgs(t.Context(), "/missing", Config{}, mode, args)
+	_, prepared, err := modeArgs(t.Context(), "/missing", config.Config{}, mode, args)
 	require.NoError(t, err)
 	require.Contains(t, prepared, "--effort")
 }
@@ -212,7 +214,7 @@ func TestLaunch_PersistsBeforeExecAndKeepsReviewProtections(t *testing.T) {
 			require.Contains(t, env, "CODEFORGE_GUARD=review")
 			require.Contains(t, argv[2], "(deny file-write*")
 		}
-		s, err := store.Open(t.Context(), filepath.Join(configDir(home), "sessions"))
+		s, err := store.Open(t.Context(), filepath.Join(config.Dir(home), "sessions"))
 		require.NoError(t, err)
 		saved, err := s.Get(t.Context(), mode)
 		require.NoError(t, err)
@@ -233,9 +235,9 @@ func TestLaunch_PersistsBeforeExecAndKeepsReviewProtections(t *testing.T) {
 		_, _, err := launchCommand(t.Context(), home, "/missing", modeReview, args)
 		require.ErrorIs(t, err, errSessionOverride)
 	}
-	_, err = os.Stat(filepath.Join(configDir(home), "state.json"))
+	_, err = os.Stat(filepath.Join(config.Dir(home), "state.json"))
 	require.ErrorIs(t, err, os.ErrNotExist)
-	_, err = os.Stat(filepath.Join(configDir(home), "cache"))
+	_, err = os.Stat(filepath.Join(config.Dir(home), "cache"))
 	require.ErrorIs(t, err, os.ErrNotExist)
 }
 

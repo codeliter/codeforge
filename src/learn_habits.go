@@ -14,6 +14,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/codeliter/codeforge/src/config"
+
 	"github.com/codeliter/codeforge/src/store"
 )
 
@@ -320,7 +322,7 @@ func exitCodeOf(response json.RawMessage) (int, bool) {
 // logShape keeps a short, value-free record of the hook payloads Empryo sends (event names and key names only),
 // so the parsing above can be checked against real data. It stops growing after a few kilobytes.
 func logShape(home string, in observePayload, result string) {
-	path := filepath.Join(configDir(home), shapeLogFile)
+	path := filepath.Join(config.Dir(home), shapeLogFile)
 	if info, err := os.Stat(path); err == nil && info.Size() > maxShapeLogBytes {
 		return
 	}
@@ -338,7 +340,7 @@ func logShape(home string, in observePayload, result string) {
 		}
 	}
 	line := fmt.Sprintf("%s event=%s response_keys=%s result=%s\n", time.Now().UTC().Format(time.RFC3339), in.Event, strings.Join(keys, ","), result)
-	if err := os.MkdirAll(configDir(home), privateDir); err != nil {
+	if err := os.MkdirAll(config.Dir(home), privateDir); err != nil {
 		return
 	}
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, privateFile)

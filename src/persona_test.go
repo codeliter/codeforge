@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/codeliter/codeforge/src/config"
+
 	"github.com/stretchr/testify/require"
 )
 
@@ -44,8 +46,8 @@ func TestInstallPersonaSkill(t *testing.T) {
 
 func TestInstallPersonaSkillHandlesEmptyPersona(t *testing.T) {
 	home := t.TempDir()
-	require.NoError(t, os.MkdirAll(configDir(home), privateDir))
-	require.NoError(t, os.WriteFile(filepath.Join(configDir(home), "persona.md"), []byte(" \n\t"), privateFile))
+	require.NoError(t, os.MkdirAll(config.Dir(home), privateDir))
+	require.NoError(t, os.WriteFile(filepath.Join(config.Dir(home), "persona.md"), []byte(" \n\t"), privateFile))
 	require.NoError(t, installPersonaSkill(home))
 	data, err := os.ReadFile(filepath.Join(home, ".empryo", "skills", "codeforge-persona", "SKILL.md"))
 	require.NoError(t, err)

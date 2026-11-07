@@ -7,9 +7,9 @@ import (
 	"fmt"
 	"strings"
 	"sync"
-	"unicode/utf8"
 
 	"github.com/codeliter/codeforge/src/effort"
+	"github.com/codeliter/codeforge/src/text"
 )
 
 // PostRequest is a request to post the finished review on the pull request it was about. It is the user's explicit
@@ -112,27 +112,15 @@ const (
 // review that says Approve without the blockers a juror found, so nothing is posted.
 var ErrNoRoom = errors.New("review: the second opinion's blocking findings do not fit in one comment")
 
-// shorten cuts a line to at most n bytes at a character boundary, marking the cut.
-func shorten(line string, n int) string {
-	if len(line) <= n {
-		return line
-	}
-	cut := n
-	for cut > 0 && !utf8.RuneStart(line[cut]) {
-		cut--
-	}
-	return line[:cut] + "…"
-}
-
 // fitSecondOpinion shortens the second opinion to limit bytes without losing or cutting a blocker: should-fix lines go
 // first, then the jurors' summaries are shortened, then the jurors who found nothing blocking are dropped. It reports
 // false when the blockers alone still do not fit.
-func fitSecondOpinion(text string, limit int) (string, bool) {
-	if len(text) <= limit {
-		return text, true
+func fitSecondOpinion(opinion string, limit int) (string, bool) {
+	if len(opinion) <= limit {
+		return opinion, true
 	}
 	var kept []string
-	for _, l := range strings.Split(strings.TrimRight(text, "\n"), "\n") {
+	for _, l := range strings.Split(strings.TrimRight(opinion, "\n"), "\n") {
 		if !strings.HasPrefix(l, "  should") {
 			kept = append(kept, l)
 		}
@@ -144,7 +132,7 @@ func fitSecondOpinion(text string, limit int) (string, bool) {
 			if strings.HasPrefix(l, "  blocking") {
 				return l
 			}
-			return shorten(l, maxSummaryLine)
+			return text.Shorten(l, maxSummaryLine)
 		},
 	} {
 		for i, l := range kept {
@@ -170,18 +158,17 @@ func fitSecondOpinion(text string, limit int) (string, bool) {
 }
 
 // cutAtLine cuts text to at most limit bytes at a line break (or, with none, at a character boundary).
-func cutAtLine(text string, limit int) string {
-	if len(text) <= limit {
-		return text
+func cutAtLine(body string, limit int) string {
+	if len(body) <= limit {
+		return body
 	}
-	cut := strings.LastIndex(text[:limit], "\n")
-	if cut <= 0 {
-		cut = limit
-		for cut > 0 && !utf8.RuneStart(text[cut]) {
-			cut-- // never end the cut inside a character
-		}
+	head := body[:limit]
+	if cut := strings.LastIndex(head, "\n"); cut > 0 {
+		head = body[:cut]
+	} else {
+		head = text.Cut(body, limit) // never end the cut inside a character
 	}
-	return strings.TrimSpace(text[:cut]) + "\n\n_The rest was cut: GitHub limits a comment's length._"
+	return strings.TrimSpace(head) + "\n\n_The rest was cut: GitHub limits a comment's length._"
 }
 
 // CommentBody is the text to post: the review, then the second opinion if there is one, and a footer that says where it

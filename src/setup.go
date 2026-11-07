@@ -14,7 +14,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/charmbracelet/huh"
+	"github.com/codeliter/codeforge/src/config"
+	"github.com/codeliter/codeforge/src/forms"
 
 	"github.com/codeliter/codeforge/src/effort"
 )
@@ -73,7 +74,7 @@ func runSetup(ctx context.Context, home string, args []string, out io.Writer) er
 	}
 
 	// Only roles the user has not set are filled, so re-running never overwrites a choice.
-	if cfg, err := readConfigFile(home); err == nil && slices.ContainsFunc(roles, func(r role) bool { return len(current(cfg, r.key)) == 0 }) {
+	if cfg, err := config.ReadFile(home); err == nil && slices.ContainsFunc(config.Roles, func(r config.Role) bool { return len(config.Current(cfg, r.Key)) == 0 }) {
 		fmt.Fprintln(out, "\nChoosing models for roles you have not set:")
 		// A model choice that cannot be filled must not stop init; the user can set it with `codeforge models set`.
 		if err := runModels(ctx, home, bin, []string{"fill"}); err != nil {
@@ -117,11 +118,12 @@ func ensureSignedIn(ctx context.Context, bin string, opts setupOptions) error {
 		return fmt.Errorf("no model provider is signed in; run `empryo --login copilot` (or claude, codex, …) or `empryo --set-key <provider> <key>`: %w", errSetupIncomplete)
 	}
 
-	provider := loginProviders[0]
-	if err := runForm("provider picker", huh.NewSelect[string]().
-		Title("No model provider is signed in. Which subscription do you use?").
-		Options(huh.NewOptions(loginProviders...)...).
-		Value(&provider)); err != nil {
+	options := make([]forms.Option, 0, len(loginProviders))
+	for _, p := range loginProviders {
+		options = append(options, forms.Option{Label: p, Value: p})
+	}
+	provider, err := forms.Choose("No model provider is signed in. Which subscription do you use?", "", options, loginProviders[0])
+	if err != nil {
 		return err
 	}
 
@@ -223,8 +225,9 @@ func confirm(question string) bool {
 		return false
 	}
 
-	ok := false
-	if err := runForm("confirm", huh.NewConfirm().Title(question).Value(&ok)); err != nil {
+	ok, err := forms.YesNo(question, "")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "codeforge:", err)
 		return false
 	}
 	return ok

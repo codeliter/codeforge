@@ -20,6 +20,9 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/codeliter/codeforge/src/config"
+	"github.com/codeliter/codeforge/src/fsutil"
+
 	"github.com/codeliter/codeforge/src/guard"
 )
 
@@ -223,7 +226,7 @@ func empryoConfigPath(home string) string {
 	return filepath.Join(home, ".empryo", "config.json")
 }
 
-func themeLedgerDir(home string) string  { return filepath.Join(configDir(home), "theme-ledger") }
+func themeLedgerDir(home string) string  { return filepath.Join(config.Dir(home), "theme-ledger") }
 func themeLedgerPath(home string) string { return filepath.Join(themeLedgerDir(home), "global.json") }
 
 func loadThemeLedger(path string) (themeLedger, bool) {
@@ -240,7 +243,7 @@ func saveThemeLedger(path string, l themeLedger) error {
 	if err != nil {
 		return fmt.Errorf("encoding the theme ledger: %w", err)
 	}
-	return atomicWriteFile(path, raw, privateFile)
+	return fsutil.AtomicWriteFile(path, raw, privateFile)
 }
 
 // revertTheme puts the user's config back. If the file is exactly what codeforge wrote it goes back to the original
@@ -262,7 +265,7 @@ func revertTheme(l themeLedger) error {
 			}
 			return nil
 		}
-		return atomicWriteFile(l.Config, l.Original, currentMode(l))
+		return fsutil.AtomicWriteFile(l.Config, l.Original, currentMode(l))
 	}
 	object, _, _, readErr := readConfigObject(l.Config)
 	if readErr != nil || object.themeName() != l.Theme {
@@ -276,7 +279,7 @@ func revertTheme(l themeLedger) error {
 	if err != nil {
 		return err
 	}
-	return atomicWriteFile(l.Config, raw, currentMode(l))
+	return fsutil.AtomicWriteFile(l.Config, raw, currentMode(l))
 }
 
 // currentMode is the permissions the config has now, so a restore never loosens a file the user has since made private;
@@ -379,7 +382,7 @@ func scopeTheme(ctx context.Context, home string) func() {
 	if saveThemeLedger(ledgerPath, ledger) != nil {
 		return nothing
 	}
-	if atomicWriteFile(target, written, os.FileMode(mode)) != nil {
+	if fsutil.AtomicWriteFile(target, written, os.FileMode(mode)) != nil {
 		bestEffort(os.Remove(ledgerPath))
 		return nothing
 	}

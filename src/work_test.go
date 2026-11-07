@@ -7,22 +7,24 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/codeliter/codeforge/src/config"
+
 	"github.com/stretchr/testify/require"
 )
 
 func TestWorkMode(t *testing.T) {
-	require.NoError(t, validMode("work"))
+	require.NoError(t, config.ValidMode("work"))
 	require.Contains(t, helpText, `work ["task"]`)
-	mode, err := pickMode(Config{DefaultMode: "work"}, nil)
+	mode, err := pickMode(config.Config{DefaultMode: "work"}, nil)
 	require.NoError(t, err)
 	require.Equal(t, "work", mode)
 	home := t.TempDir()
 	writeConfig(t, home, `{"default_mode":"work"}`)
-	cfg, err := loadConfig(home)
+	cfg, err := config.LoadGlobal(home)
 	require.NoError(t, err)
 	require.Equal(t, "work", cfg.DefaultMode)
 	t.Setenv("CODEFORGE_MODE", "work")
-	cfg, err = loadConfig(t.TempDir())
+	cfg, err = config.LoadGlobal(t.TempDir())
 	require.NoError(t, err)
 	require.Equal(t, "work", cfg.DefaultMode)
 }
@@ -38,13 +40,13 @@ func TestModeArgs_Work(t *testing.T) {
 		{name: "explicit model", input: []string{"--model", "b/coder", "--effort", "low"}, want: []string{"--model", "b/coder", "--effort", "low"}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			mode, args, err := modeArgs(t.Context(), "/nonexistent", Config{Model: "a/coder"}, "work", tt.input)
+			mode, args, err := modeArgs(t.Context(), "/nonexistent", config.Config{Model: "a/coder"}, "work", tt.input)
 			require.NoError(t, err)
 			require.Equal(t, "work", mode)
 			require.Equal(t, tt.want, args)
 		})
 	}
-	_, _, err := modeArgs(t.Context(), "/nonexistent", Config{}, "work", []string{"--effort", "max"})
+	_, _, err := modeArgs(t.Context(), "/nonexistent", config.Config{}, "work", []string{"--effort", "max"})
 	require.ErrorIs(t, err, errEffortAboveCeiling)
 }
 
@@ -54,7 +56,7 @@ func TestWorkMode_SkipsEffortJudges(t *testing.T) {
 	t.Setenv("CODEFORGE_WORK_JUDGE_PROBE", marker)
 	bin := filepath.Join(dir, "empryo")
 	require.NoError(t, os.WriteFile(bin, []byte("#!/bin/sh\nprintf called > \"$CODEFORGE_WORK_JUDGE_PROBE\"\nexit 1\n"), execPerm))
-	mode, args, err := modeArgs(t.Context(), bin, Config{Model: "a/coder", Judges: []string{"a/judge"}}, "work", []string{"finish this change"})
+	mode, args, err := modeArgs(t.Context(), bin, config.Config{Model: "a/coder", Judges: []string{"a/judge"}}, "work", []string{"finish this change"})
 	require.NoError(t, err)
 	require.Equal(t, "work", mode)
 	require.Equal(t, []string{"--model", "a/coder", "--effort", "medium", "finish this change"}, args)

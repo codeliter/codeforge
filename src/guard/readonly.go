@@ -1,0 +1,116 @@
+package guard
+
+import (
+	"slices"
+	"strings"
+)
+
+// printsModels matches the forms of `codeforge models` that only print the roles: none, or recommend.
+func printsModels(args []string) bool {
+	return len(args) == 0 || args[0] == "recommend"
+}
+
+// printsProviders matches `codeforge provider` and `provider show`/`list`, which only print the order.
+func printsProviders(args []string) bool {
+	return len(args) == 0 || len(args) == 1 && (args[0] == "show" || args[0] == "list")
+}
+
+// readsLearning matches the read-only `codeforge learn` forms: list, propose, habits, proposals and rules. Anything else, unknown forms included, may write
+// evidence or run a command through codeforge, so it is refused.
+func readsLearning(args []string) bool {
+	return len(args) > 0 && (args[0] == "list" || args[0] == "propose" || args[0] == "habits" || args[0] == "proposals" || args[0] == "rules")
+}
+
+// readOnlyCommands is an allowlist: in review mode anything not listed here is treated as able to change files.
+var readOnlyCommands = map[string]bool{
+	"ls": true, "cat": true, "head": true, "tail": true, "less": true, "wc": true, "file": true, "stat": true,
+	"grep": true, "rg": true, "ag": true, "find": true, "fd": true, "tree": true, "pwd": true, "echo": true,
+	"printf": true, "diff": true, "cmp": true, "sort": true, "uniq": true, "cut": true, "tr": true, "jq": true,
+	"which": true, "type": true, "date": true, "env": true, "true": true, "false": true, "test": true,
+	"basename": true, "dirname": true, "realpath": true, "readlink": true, "sha256sum": true, "shasum": true,
+	"md5": true, "column": true, "nl": true, "fold": true, "cd": true, "go": true,
+	"gofmt": true, "gh": true, "git": true,
+}
+
+var readOnlyGit = map[string]bool{
+	"status": true, "diff": true, "log": true, "show": true, "blame": true, "grep": true, "ls-files": true,
+	"rev-parse": true, "merge-base": true, "describe": true, "shortlog": true, "cat-file": true,
+	"ls-tree": true, "for-each-ref": true, "symbolic-ref": true, "name-rev": true, "branch": true, "remote": true,
+}
+
+// readOnlyArgs narrows commands that are read-only only in some forms.
+func readOnlyArgs(w, raw []string) (string, bool) {
+	name := w[0]
+	switch {
+	case name == "go" && w[1] == "env" && slices.ContainsFunc(w, func(a string) bool { return a == "-w" || a == "-u" }):
+		return "go env -w and -u change persistent Go settings", false
+	case name == "go" && slices.ContainsFunc(w, func(a string) bool {
+		return strings.HasPrefix(a, "-vettool") || strings.HasPrefix(a, "-exec") || strings.HasPrefix(a, "-toolexec") ||
+			strings.HasPrefix(a, "-overlay") || strings.HasPrefix(a, "-modfile") || a == "-o" || strings.HasPrefix(a, "-o=")
+	}):
+		return "go option runs a custom program or writes files", false
+	case name == "jq" && slices.ContainsFunc(w, func(a string) bool { return a == "-L" || strings.HasPrefix(a, "--library") }):
+		return "jq -L loads modules from disk", false
+	case name == "git" && slices.ContainsFunc(gitGlobals(raw), func(a string) bool { return strings.HasPrefix(a, "-c") || strings.HasPrefix(a, "--config-env") }):
+		return "git -c can set a pager or diff driver that runs commands", false
+	case name == "git" && w[1] == "remote" && len(w) > minGitTokens && !hasAny(w[2:3], "-v", "--verbose", "show", "get-url"):
+		return "git remote " + w[2] + " changes the repository", false
+	case name == "git" && w[1] == "symbolic-ref" && (len(nonFlags(w[2:])) > 1 || hasAny(w[2:], "-d", "--delete") || hasShortFlag(w[2:], 'd')):
+		return "git symbolic-ref with a target or --delete changes a ref", false
+	case name == "git" && slices.ContainsFunc(w, func(a string) bool {
+		return strings.HasPrefix(a, "--output") || a == "-O" || strings.HasPrefix(a, "--open-files-in-pager") || a == "--ext-diff"
+	}):
+		return "git option writes a file or runs a command", false
+	case (name == "sort" || name == "diff") && slices.ContainsFunc(w, func(a string) bool {
+		return a == "-o" || strings.HasPrefix(a, "--output") || strings.HasPrefix(a, "-o") && name == "sort"
+	}):
+		return name + " -o writes a file", false
+	}
+	return "", true
+}
+
+func nonFlags(w []string) []string {
+	var out []string
+	for _, a := range w {
+		if !strings.HasPrefix(a, "-") {
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
+// Test runners and build scripts execute repository code, which can write anywhere, so review mode does not run them.
+var readOnlySubcommands = map[string][]string{
+	"go": {"vet", "list", "doc", "version", "env"},
+	"gh": {"pr", "issue", "repo", "run", "api", "search", "release"},
+}
+
+// notReadOnly decides with an allowlist, because a denylist misses every unknown way to write a file.
+// raw is the redirect-free command; fileWrite reports an output redirection to a real file.
+func notReadOnly(w, raw []string, fileWrite bool) (Finding, bool) {
+	name := w[0]
+	switch {
+	case !readOnlyCommands[name]:
+		return Finding{RuleReadOnly, name + " is not on the read-only allowlist"}, true
+	case fileWrite:
+		return Finding{RuleReadOnly, "redirects output into a file"}, true
+	case name == "gh" && len(raw) > 0 && raw[0] == "gh" && prComment(w):
+		return Finding{RuleComment, "posts a comment on a pull request"}, true
+	case name == "find" && hasAny(w, "-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprintf", "-fls", "-fprint0"):
+		return Finding{RuleReadOnly, "find can delete files or run commands"}, true
+	case name == "git" && (len(w) < minGitTokens || !readOnlyGit[w[1]]):
+		return Finding{RuleReadOnly, "git " + arg(w, 1) + " can change the repository"}, true
+	case name == "git" && w[1] == "branch" && len(w) > minGitTokens && !hasAny(w, "--list", "-a", "-r", "-v", "-vv", "--show-current", "--contains"):
+		return Finding{RuleReadOnly, "git branch with arguments changes the repository"}, true
+	case name == "gh" && (len(w) < minGitTokens || !slices.Contains(readOnlySubcommands[name], w[1]) || ghWrites(w)):
+		return Finding{RuleReadOnly, "gh " + arg(w, 1) + " can change GitHub"}, true
+	case readOnlySubcommands[name] != nil && name != "gh" && (len(w) < minGitTokens || !slices.Contains(readOnlySubcommands[name], w[1])):
+		return Finding{RuleReadOnly, name + " " + arg(w, 1) + " can change files"}, true
+	case name == "gofmt" && (hasShortFlag(w, 'w') || has(w, "-w")):
+		return Finding{RuleReadOnly, "gofmt -w writes files"}, true
+	}
+	if why, ok := readOnlyArgs(w, raw); !ok {
+		return Finding{RuleReadOnly, why}, true
+	}
+	return Finding{}, false
+}

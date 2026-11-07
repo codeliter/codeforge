@@ -37,37 +37,52 @@ func CacheKey(parts ...string) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
+// Get returns the verdict cached under key, unless there is none or it is older than cacheTTL.
 func (c Cache) Get(key string, now time.Time) (Verdict, bool) {
-	data, err := os.ReadFile(filepath.Join(c.Dir, key+".json"))
-	if err != nil {
-		return Verdict{}, false
-	}
-
-	var e cacheEntry
-	if err := json.Unmarshal(data, &e); err != nil || now.Sub(e.At) > cacheTTL {
-		return Verdict{}, false
-	}
-	return e.Verdict, true
+	e, ok := readFresh(c.path(key), now, cacheTTL, func(e cacheEntry) time.Time { return e.At })
+	return e.Verdict, ok
 }
 
+// Put caches v under key.
 func (c Cache) Put(key string, v Verdict, now time.Time) error {
-	data, err := json.Marshal(cacheEntry{Verdict: v, At: now})
-	if err != nil {
-		return fmt.Errorf("encoding cached verdict: %w", err)
-	}
-
-	if err := os.MkdirAll(c.Dir, cacheDirPerm); err != nil {
-		return fmt.Errorf("creating review cache: %w", err)
-	}
-	if err := os.WriteFile(filepath.Join(c.Dir, key+".json"), data, cacheFilePerm); err != nil {
-		return fmt.Errorf("writing review cache: %w", err)
-	}
-	return nil
+	return writeJSON(c.Dir, c.path(key), "cached verdict", cacheEntry{Verdict: v, At: now})
 }
 
 // Delete removes one cached verdict; a missing file is not an error.
 func (c Cache) Delete(key string) {
-	os.Remove(filepath.Join(c.Dir, key+".json"))
+	os.Remove(c.path(key))
+}
+
+func (c Cache) path(key string) string {
+	return filepath.Join(c.Dir, key+".json")
+}
+
+// readFresh reads the JSON value at path, unless it is missing, unreadable or older than ttl by its own timestamp.
+func readFresh[T any](path string, now time.Time, ttl time.Duration, at func(T) time.Time) (T, bool) {
+	var v, zero T
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return zero, false
+	}
+	if err := json.Unmarshal(data, &v); err != nil || now.Sub(at(v)) > ttl {
+		return zero, false
+	}
+	return v, true
+}
+
+// writeJSON writes v as JSON to path, creating dir for codeforge alone; what names the value in errors.
+func writeJSON(dir, path, what string, v any) error {
+	data, err := json.Marshal(v)
+	if err != nil {
+		return fmt.Errorf("encoding %s: %w", what, err)
+	}
+	if err := os.MkdirAll(dir, cacheDirPerm); err != nil {
+		return fmt.Errorf("creating %s directory: %w", what, err)
+	}
+	if err := os.WriteFile(path, data, cacheFilePerm); err != nil {
+		return fmt.Errorf("writing %s: %w", what, err)
+	}
+	return nil
 }
 
 // Prune drops expired verdicts so the cache stays small.

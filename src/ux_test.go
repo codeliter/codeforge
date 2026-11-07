@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/codeliter/codeforge/src/config"
+
 	"github.com/stretchr/testify/require"
 
 	"github.com/codeliter/codeforge/src/review"
@@ -43,11 +45,11 @@ func TestSuggestMode(t *testing.T) {
 }
 
 func TestPickMode_SuggestionBeatsDefault(t *testing.T) {
-	got, err := pickMode(Config{DefaultMode: modeWork}, []string{"#7"})
+	got, err := pickMode(config.Config{DefaultMode: modeWork}, []string{"#7"})
 	require.NoError(t, err)
 	require.Equal(t, modeReview, got)
 
-	_, err = pickMode(Config{}, []string{"--resume", "abc12345", "#7"})
+	_, err = pickMode(config.Config{}, []string{"--resume", "abc12345", "#7"})
 	require.ErrorIs(t, err, errSessionMode, "a resume never picks a mode")
 }
 
@@ -93,17 +95,17 @@ func TestDoctorFile_Trust(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "persona.md")
 	require.NoError(t, os.WriteFile(path, []byte("\nrules\n"), 0o600))
 
-	item := doctorFile("persona", path, trustStore{}, "codeforge init", "codeforge trust")
+	item := doctorFile("persona", path, config.Store{}, "codeforge init", "codeforge trust")
 	require.False(t, item.ok)
 	require.True(t, item.warn)
 	require.Equal(t, "codeforge trust", item.fix)
 
-	item = doctorFile("persona", path, trustStore{path: digest("rules")}, "codeforge init", "codeforge trust")
+	item = doctorFile("persona", path, config.Store{path: config.Digest("rules")}, "codeforge init", "codeforge trust")
 	require.True(t, item.ok, "the ledger holds the trimmed persona")
 
 	missing := filepath.Join(t.TempDir(), "none.md")
-	require.Equal(t, "codeforge init", doctorFile("persona", missing, trustStore{}, "codeforge init", "").fix)
-	require.Empty(t, doctorFile("config", missing, trustStore{}, "", "x").name, "a missing project config is normal")
+	require.Equal(t, "codeforge init", doctorFile("persona", missing, config.Store{}, "codeforge init", "").fix)
+	require.Empty(t, doctorFile("config", missing, config.Store{}, "", "x").name, "a missing project config is normal")
 }
 
 func TestDoctor_NoEmpryo(t *testing.T) {
@@ -170,7 +172,7 @@ func TestDoctorModels_ApprovedProjectConfigIsValidated(t *testing.T) {
 	home, project := t.TempDir(), t.TempDir()
 	t.Setenv("HOME", home)
 	writeConfig(t, home, `{"review":{"model":"a/coder"}}`)
-	path := projectConfigPath(project)
+	path := config.ProjectPath(project)
 	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o700))
 	body := "model: a/coder\n"
 	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
@@ -178,7 +180,7 @@ func TestDoctorModels_ApprovedProjectConfigIsValidated(t *testing.T) {
 	item := doctorModels(home, project)
 	require.NotContains(t, item.note, "invalid", "an unapproved project config is ignored, as a launch ignores it")
 
-	require.NoError(t, trust(home, path, body))
+	require.NoError(t, config.Trust(home, path, body))
 	item = doctorModels(home, project)
 	require.True(t, item.failed(), item.note)
 	require.Contains(t, item.note, "invalid project configuration")
@@ -276,5 +278,5 @@ func TestDoctor_DoesNotRepair(t *testing.T) {
 	withVersion(t, "9.9.9")
 	require.ErrorIs(t, Run(t.Context(), []string{"doctor", "extra"}), errDoctorUsage)
 	require.NoDirExists(t, filepath.Join(home, ".empryo"), "doctor must not run the upgrade repair")
-	require.NoFileExists(t, filepath.Join(configDir(home), repairStampFile))
+	require.NoFileExists(t, filepath.Join(config.Dir(home), repairStampFile))
 }

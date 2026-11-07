@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/codeliter/codeforge/src/config"
+
 	"github.com/stretchr/testify/require"
 )
 
@@ -47,7 +49,7 @@ func TestTrusted(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, ok, "unapproved persona must be skipped without a terminal")
 
-	require.NoError(t, trust(home, p, "v1"))
+	require.NoError(t, config.Trust(home, p, "v1"))
 	ok, err = trusted(home, p, "v1")
 	require.NoError(t, err)
 	require.True(t, ok)
@@ -87,7 +89,7 @@ func TestWithRepoPersona(t *testing.T) {
 
 	resolved, err := repoRoot(t.Context())
 	require.NoError(t, err)
-	require.NoError(t, trust(home, filepath.Join(resolved, repoPersonaPath), "Use tabs."))
+	require.NoError(t, config.Trust(home, filepath.Join(resolved, repoPersonaPath), "Use tabs."))
 	got, err = withRepoPersona(t.Context(), home, []string{"task"})
 	require.NoError(t, err)
 	require.Equal(t, "--system", got[0])

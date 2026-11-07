@@ -175,11 +175,6 @@ func TestVerify_EachFailingPackageNamesItsOwnTest(t *testing.T) {
 	require.NotContains(t, got[1].What, "TestA")
 }
 
-func TestTruncateRunes_NeverSplitsACharacter(t *testing.T) {
-	require.Equal(t, "ab", truncateRunes("abÃ©", 3))
-	require.Equal(t, "abc", truncateRunes("abc", 5))
-}
-
 func TestVerify_CompileFailureKeepsItsReason(t *testing.T) {
 	r := &fakeTests{out: "# example.com/shop/internal/a\ninternal/a/a.go:3:1: undefined: Foo\nFAIL\texample.com/shop/internal/a [build failed]\n", err: errExit}
 	got := Verify(t.Context(), r, "/repo", []string{"internal/a/a.go"})

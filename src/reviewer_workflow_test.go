@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/codeliter/codeforge/src/config"
+
 	"github.com/stretchr/testify/require"
 	"go.yaml.in/yaml/v3"
 
@@ -13,7 +15,7 @@ import (
 func TestReviewerHelperCannotExecuteOrPublish(t *testing.T) {
 	body, err := assets.Profile.ReadFile("agents/codeforge-reviewer.md")
 	require.NoError(t, err)
-	rendered, err := renderAgent(body, Config{Review: ReviewConfig{Model: "other/reviewer"}})
+	rendered, err := renderAgent(body, config.Config{Review: config.ReviewConfig{Model: "other/reviewer"}})
 	require.NoError(t, err)
 	parts := strings.SplitN(string(rendered), "---", 3)
 	var profile struct {

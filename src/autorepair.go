@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/codeliter/codeforge/src/config"
 )
 
 const repairStampFile = "repaired-version"
@@ -18,7 +20,7 @@ func autoRepairVersion(home string) string {
 		return ""
 	}
 	// A missing or unreadable stamp repairs again: a needless repair is cheap, a skipped one leaves stale hooks.
-	data, err := os.ReadFile(filepath.Join(configDir(home), repairStampFile))
+	data, err := os.ReadFile(filepath.Join(config.Dir(home), repairStampFile))
 	if err == nil && strings.TrimSpace(string(data)) == Version {
 		return ""
 	}
@@ -35,7 +37,7 @@ func autoRepair(home, workspace string, w io.Writer) error {
 	if err := repairManagedFiles(home, workspace, nil); err != nil {
 		return fmt.Errorf("automatic repair after upgrade failed (run codeforge repair): %w", err)
 	}
-	if err := writeFile(configDir(home), repairStampFile, []byte(version+"\n"), privateFile); err != nil {
+	if err := writeFile(config.Dir(home), repairStampFile, []byte(version+"\n"), privateFile); err != nil {
 		return fmt.Errorf("recording repaired version: %w", err)
 	}
 	fmt.Fprintln(w, "codeforge: repair done. Personas, sessions and logins were kept.")
@@ -44,9 +46,9 @@ func autoRepair(home, workspace string, w io.Writer) error {
 
 // repairManagedFiles rebuilds everything codeforge repair owns; user data is never touched.
 func repairManagedFiles(home, workspace string, legacyHooks []string) error {
-	globalCfg, err := loadBaseConfig(home)
+	globalCfg, err := config.LoadBase(home)
 	if err != nil {
-		globalCfg = Config{}
+		globalCfg = config.Config{}
 	}
 	cfg := maintenanceProfileConfig(globalCfg)
 	empryoDir := filepath.Join(home, ".empryo")

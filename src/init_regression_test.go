@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/codeliter/codeforge/src/config"
+
 	"github.com/stretchr/testify/require"
 )
 
@@ -45,7 +47,7 @@ esac
 	require.NoError(t, os.WriteFile(engine, []byte(personaEngine), execPerm))
 	p, err := savePersona(home, []byte("# Existing starter\nGeneric conventions.\n"))
 	require.NoError(t, err)
-	require.NoError(t, runInit(t.Context(), home, engine, Config{}, nil))
+	require.NoError(t, runInit(t.Context(), home, engine, config.Config{}, nil))
 	local := filepath.Join(repo, repoPersonaPath)
 	data, err := os.ReadFile(local)
 	require.NoError(t, err)
@@ -54,13 +56,13 @@ esac
 	require.NoError(t, err)
 	require.Equal(t, "# Existing starter\nGeneric conventions.\n", string(global))
 
-	require.NoError(t, runInit(t.Context(), home, engine, Config{}, []string{"--global"}))
+	require.NoError(t, runInit(t.Context(), home, engine, config.Config{}, []string{"--global"}))
 	global, err = os.ReadFile(p)
 	require.NoError(t, err)
 	require.Contains(t, string(global), "Use evidence from the current repository.")
 	require.NoError(t, os.WriteFile(local, []byte("# Team conventions\nKeep our changes.\n"), privateFile))
 	require.NoError(t, os.Remove(engine))
-	require.NoError(t, runInit(t.Context(), home, engine, Config{}, nil))
+	require.NoError(t, runInit(t.Context(), home, engine, config.Config{}, nil))
 	data, err = os.ReadFile(local)
 	require.NoError(t, err)
 	require.Contains(t, string(data), "Keep our changes.")
@@ -75,7 +77,7 @@ func TestInitFindsRepositoryRootAndKeepsGlobalPersona(t *testing.T) {
 	t.Chdir(nested)
 	global, err := savePersona(home, []byte("# Global\nKeep this.\n"))
 	require.NoError(t, err)
-	require.NoError(t, runInit(t.Context(), home, "/missing-model-binary", Config{}, []string{"--persona", "oss"}))
+	require.NoError(t, runInit(t.Context(), home, "/missing-model-binary", config.Config{}, []string{"--persona", "oss"}))
 	local, err := os.ReadFile(filepath.Join(root, repoPersonaPath))
 	require.NoError(t, err)
 	require.Contains(t, string(local), "Open-source maintainer")
@@ -97,7 +99,7 @@ func TestInitCanFillUntouchedRepositoryTemplates(t *testing.T) {
 				body = string(seed)
 			}
 			p := writeRepoPersona(t, root, body)
-			require.NoError(t, runInit(t.Context(), home, "/missing-model-binary", Config{}, []string{"--repo", "--persona", "oss"}))
+			require.NoError(t, runInit(t.Context(), home, "/missing-model-binary", config.Config{}, []string{"--repo", "--persona", "oss"}))
 			data, err := os.ReadFile(p)
 			require.NoError(t, err)
 			require.Contains(t, string(data), "Open-source maintainer")

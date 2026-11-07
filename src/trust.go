@@ -1,117 +1,50 @@
 package src
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
-	"errors"
 	"fmt"
-	"io/fs"
 	"os"
-	"path/filepath"
 
-	"github.com/charmbracelet/huh"
+	"github.com/codeliter/codeforge/src/config"
+	"github.com/codeliter/codeforge/src/forms"
 )
-
-const trustFile = "trusted-personas.json"
-
-// trustStore maps approved repository persona/model-config paths to content hashes.
-// The legacy filename is retained for compatibility.
-type trustStore map[string]string
-
-func digest(content string) string {
-	sum := sha256.Sum256([]byte(content))
-	return hex.EncodeToString(sum[:])
-}
-
-func loadTrust(home string) (trustStore, error) {
-	ts := trustStore{}
-
-	data, err := os.ReadFile(filepath.Join(configDir(home), trustFile))
-	if errors.Is(err, fs.ErrNotExist) {
-		return ts, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("reading trusted personas: %w", err)
-	}
-
-	if err := json.Unmarshal(data, &ts); err != nil {
-		return nil, fmt.Errorf("decoding trusted personas: %w", err)
-	}
-	return ts, nil
-}
-
-func saveTrust(home string, ts trustStore) error {
-	data, err := json.MarshalIndent(ts, "", "  ")
-	if err != nil {
-		return fmt.Errorf("encoding trusted personas: %w", err)
-	}
-
-	if err := os.MkdirAll(configDir(home), privateDir); err != nil {
-		return fmt.Errorf("creating config dir: %w", err)
-	}
-	if err := atomicWriteFile(filepath.Join(configDir(home), trustFile), append(data, '\n'), privateFile); err != nil {
-		return fmt.Errorf("writing trusted personas: %w", err)
-	}
-	return nil
-}
-
-func trust(home, path, content string) error {
-	ts, err := loadTrust(home)
-	if err != nil {
-		return err
-	}
-
-	ts[path] = digest(content)
-	return saveTrust(home, ts)
-}
 
 // trusted asks before a new or changed repository persona reaches the system prompt,
 // because a cloned repository could use it to steer the agent.
 func trusted(home, path, content string) (bool, error) {
-	ts, err := loadTrust(home)
+	ts, err := config.LoadTrust(home)
 	if err != nil {
 		return false, err
 	}
-	if ts[path] == digest(content) {
+	if ts[path] == config.Digest(content) {
 		return true, nil
 	}
-
-	command := "codeforge trust"
-	title := "Use this repository's persona?"
-	explanation := "It becomes part of the agent's instructions in this repository."
-	models := filepath.Base(path) == "config.yaml" && filepath.Base(filepath.Dir(path)) == ".codeforge"
-	if models {
-		command = "codeforge trust --models"
-		title = "Use this repository's model configuration?"
-		explanation = "It can select providers, models, reviewers and helper routing. Review this file before trusting it."
-	}
 	if !interactive() {
-		fmt.Fprintf(os.Stderr, "codeforge: skipping %s: new or changed since you last approved it. Run `%s` to use it.\n", path, command)
+		fmt.Fprintf(os.Stderr, "codeforge: skipping %s: new or changed since you last approved it. Run `codeforge trust` to use it.\n", path)
 		return false, nil
 	}
-
-	display := preview(content)
-	if models {
-		var err error
-		display, err = modelConfigTrustPreview(home, content)
-		if err != nil {
-			return false, err
-		}
-	}
-	ok := false
-	if err := runForm("trust prompt", huh.NewConfirm().
-		Title(title).
-		Description(fmt.Sprintf("%s is new or changed. %s\n\n%s", path, explanation, display)).
-		Affirmative("Trust it").
-		Negative("Skip").
-		Value(&ok)); err != nil {
+	ok, err := confirmTrust("Use this repository's persona?",
+		fmt.Sprintf("%s is new or changed. It becomes part of the agent's instructions in this repository.\n\n%s", path, preview(content)))
+	if err != nil || !ok {
 		return false, err
 	}
-	if !ok {
-		return false, nil
+	return true, config.Trust(home, path, content)
+}
+
+// modelTrustApprover asks the user, at the terminal, before a new or changed project model configuration is used. It
+// is nil when nobody is there to ask, which config.Load reports as a skipped file.
+func modelTrustApprover() config.Approver {
+	if !interactive() {
+		return nil
 	}
-	return true, trust(home, path, content)
+	return func(path, preview string) (bool, error) {
+		return confirmTrust("Use this repository's model configuration?",
+			fmt.Sprintf("%s is new or changed. It can select providers, models, reviewers and helper routing. Review this file before trusting it.\n\n%s", path, preview))
+	}
+}
+
+func confirmTrust(title, description string) (bool, error) {
+	a, err := forms.Ask("trust prompt", forms.Field{Kind: forms.Confirm, Title: title, Description: description, Affirmative: "Trust it", Negative: "Skip"})
+	return a.Yes, err
 }
 
 func preview(content string) string {
@@ -120,4 +53,13 @@ func preview(content string) string {
 		return content
 	}
 	return content[:maxPreview] + "\n…"
+}
+
+// runTrustModels approves the project model configuration as it is now.
+func runTrustModels(home, project string) error {
+	if err := config.ApproveProject(home, project); err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "codeforge: trusted model configuration %s\n", config.ProjectPath(project))
+	return nil
 }

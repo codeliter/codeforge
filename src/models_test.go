@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/codeliter/codeforge/src/config"
+
 	"github.com/stretchr/testify/require"
 )
 
@@ -53,22 +55,22 @@ func TestRecommend_NothingAvailable(t *testing.T) {
 }
 
 func TestApply(t *testing.T) {
-	var cfg Config
-	require.NoError(t, apply(&cfg, "model", []string{"a/b"}))
-	require.NoError(t, apply(&cfg, "review.second_opinion", []string{"c/d", "e/f"}))
+	var cfg config.Config
+	require.NoError(t, config.Apply(&cfg, "model", []string{"a/b"}))
+	require.NoError(t, config.Apply(&cfg, "review.second_opinion", []string{"c/d", "e/f"}))
 	require.Equal(t, "a/b", cfg.Model)
 	require.Equal(t, []string{"c/d", "e/f"}, cfg.Review.SecondOpinion)
 
-	require.ErrorIs(t, apply(&cfg, "nope", []string{"a/b"}), errUnknownRole)
-	require.ErrorIs(t, apply(&cfg, "model", []string{"a/b", "c/d"}), errOneModel)
-	require.ErrorIs(t, apply(&cfg, "judges", []string{"invalid model/ref"}), errNotProviderModel)
-	require.ErrorIs(t, apply(&cfg, "review.model", []string{"a/b"}), errReviewerIsCoder)
-	require.ErrorIs(t, apply(&cfg, "review.model", []string{"c/d"}), errSecondOpinionIsReviewer)
+	require.ErrorIs(t, config.Apply(&cfg, "nope", []string{"a/b"}), config.ErrUnknownRole)
+	require.ErrorIs(t, config.Apply(&cfg, "model", []string{"a/b", "c/d"}), config.ErrOneModel)
+	require.ErrorIs(t, config.Apply(&cfg, "judges", []string{"invalid model/ref"}), config.ErrNotProviderModel)
+	require.ErrorIs(t, config.Apply(&cfg, "review.model", []string{"a/b"}), config.ErrReviewerIsCoder)
+	require.ErrorIs(t, config.Apply(&cfg, "review.model", []string{"c/d"}), config.ErrSecondOpinionIsReviewer)
 }
 
 func TestRecommendKeeping_AvoidsPreservedCoderFamily(t *testing.T) {
 	avail := []string{"x/claude-opus-5.5", "x/gpt-6.1-sol", "x/kimi-k3"}
-	rec := recommendKeeping(avail, Config{Model: "x/gpt-6.1-sol"})
+	rec := recommendKeeping(avail, config.Config{Model: "x/gpt-6.1-sol"})
 
 	require.Equal(t, []string{"x/gpt-6.1-sol"}, rec["model"])
 	require.Equal(t, []string{"x/claude-opus-5.5"}, rec["review.model"])

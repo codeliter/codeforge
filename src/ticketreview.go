@@ -7,6 +7,8 @@ import (
 	"io"
 	"os"
 	"strings"
+
+	"github.com/codeliter/codeforge/src/config"
 )
 
 const (
@@ -51,7 +53,7 @@ func ticketReviewLoop(ctx context.Context, gate gateRunner, fix engineTurn, w io
 }
 
 // codeforgeGate adapts runGate: the report text and whether the gate passed.
-func codeforgeGate(home, bin string, cfg Config) gateRunner {
+func codeforgeGate(home, bin string, cfg config.Config) gateRunner {
 	return func(ctx context.Context) (string, bool, error) {
 		var out strings.Builder
 		err := runGate(ctx, home, bin, cfg, &out)
@@ -77,7 +79,7 @@ func sessionTurn(home, bin, id string) engineTurn {
 }
 
 // ticketAfterTask is the step launch runs between the ticket's first turn and opening the TUI.
-func ticketAfterTask(home, bin string, cfg Config) func(ctx context.Context, id string) {
+func ticketAfterTask(home, bin string, cfg config.Config) func(ctx context.Context, id string) {
 	return func(ctx context.Context, id string) {
 		ticketReviewLoop(ctx, codeforgeGate(home, bin, cfg), sessionTurn(home, bin, id), os.Stderr)
 	}

@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/codeliter/codeforge/src/config"
+
 	"github.com/stretchr/testify/require"
 	"go.yaml.in/yaml/v3"
 )
@@ -14,18 +16,18 @@ import (
 func TestExampleModelConfigurationIsValid(t *testing.T) {
 	data, err := os.ReadFile("../config.example.yaml")
 	require.NoError(t, err)
-	var cfg Config
+	var cfg config.Config
 	require.NoError(t, yaml.Unmarshal(data, &cfg))
-	require.NoError(t, validate(cfg))
+	require.NoError(t, config.Validate(cfg))
 }
 
 func TestCLIUsesProjectModelWithoutRewritingNativeSettings(t *testing.T) {
 	home, wd, bins := t.TempDir(), t.TempDir(), t.TempDir()
 	out, err := exec.CommandContext(t.Context(), "git", "init", "-q", wd).CombinedOutput()
 	require.NoError(t, err, string(out))
-	require.NoError(t, writeConfigFile(home, Config{Model: "global/coder", Review: ReviewConfig{Model: "global/reviewer"}}))
-	require.NoError(t, writeConfigYAML(filepath.Join(wd, ".codeforge"), Config{Model: "project/coder", Routing: map[string]string{"research": "project/reader"}}))
-	require.NoError(t, approveProjectConfig(home, wd))
+	require.NoError(t, config.WriteFile(home, config.Config{Model: "global/coder", Review: config.ReviewConfig{Model: "global/reviewer"}}))
+	require.NoError(t, config.WriteYAML(filepath.Join(wd, ".codeforge"), config.Config{Model: "project/coder", Routing: map[string]string{"research": "project/reader"}}))
+	require.NoError(t, config.ApproveProject(home, wd))
 	empryoDir := filepath.Join(home, ".empryo")
 	require.NoError(t, os.MkdirAll(empryoDir, privateDir))
 	nativePath := filepath.Join(empryoDir, "config.json")

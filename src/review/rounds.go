@@ -3,7 +3,6 @@ package review
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -36,30 +35,14 @@ func (r Rounds) path(key string) string {
 	return filepath.Join(r.Dir, key+".json")
 }
 
+// Load returns the round saved under key, unless there is none or it is older than roundTTL.
 func (r Rounds) Load(key string, now time.Time) (Round, bool) {
-	data, err := os.ReadFile(r.path(key))
-	if err != nil {
-		return Round{}, false
-	}
-	var rd Round
-	if err := json.Unmarshal(data, &rd); err != nil || now.Sub(rd.At) > roundTTL {
-		return Round{}, false
-	}
-	return rd, true
+	return readFresh(r.path(key), now, roundTTL, func(rd Round) time.Time { return rd.At })
 }
 
+// Save keeps rd under key for the next run.
 func (r Rounds) Save(key string, rd Round) error {
-	data, err := json.Marshal(rd)
-	if err != nil {
-		return fmt.Errorf("encoding review round: %w", err)
-	}
-	if err := os.MkdirAll(r.Dir, cacheDirPerm); err != nil {
-		return fmt.Errorf("creating review rounds: %w", err)
-	}
-	if err := os.WriteFile(r.path(key), data, cacheFilePerm); err != nil {
-		return fmt.Errorf("writing review round: %w", err)
-	}
-	return nil
+	return writeJSON(r.Dir, r.path(key), "review round", rd)
 }
 
 func (r Rounds) Clear(key string) {

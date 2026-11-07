@@ -6,13 +6,15 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/charmbracelet/huh"
+	"github.com/codeliter/codeforge/src/config"
+	"github.com/codeliter/codeforge/src/forms"
+
 	"github.com/stretchr/testify/require"
 )
 
 func TestProviderConfigureHelpers(t *testing.T) {
 	catalog := append(threeProviderCatalog(), "small/claude-sonnet-5.5")
-	cfg := Config{Model: "Sonnet 5.5", Review: ReviewConfig{Model: "GPT 6.1 Sol"}, Expert: "custom/pinned", Routing: map[string]string{"editing": "Sonnet 5.5", "research": ""}}
+	cfg := config.Config{Model: "Sonnet 5.5", Review: config.ReviewConfig{Model: "GPT 6.1 Sol"}, Expert: "custom/pinned", Routing: map[string]string{"editing": "Sonnet 5.5", "research": ""}}
 	require.Empty(t, missingModels(cfg, "copilot", catalog))
 	require.Equal(t, []string{"GPT 6.1 Sol"}, missingModels(cfg, "small", catalog), "explicit IDs and empty routing never count as missing")
 	require.Equal(t, "small — nothing comparable to GPT 6.1 Sol", providerLabel("small", missingModels(cfg, "small", catalog)))
@@ -20,7 +22,7 @@ func TestProviderConfigureHelpers(t *testing.T) {
 	var values, labels []string
 	for _, option := range backupOptions(cfg, catalogProviders(catalog), []string{"llmgateway", "copilot"}, catalog) {
 		values = append(values, option.Value)
-		labels = append(labels, option.Key)
+		labels = append(labels, option.Label)
 	}
 	require.Equal(t, []string{providerDone, "openrouter", "small"}, values, "Done first, then providers not yet in the chain")
 	require.Contains(t, labels, "small — nothing comparable to GPT 6.1 Sol")
@@ -56,7 +58,7 @@ func (a *scriptedAsker) next(title string) string {
 	return answer
 }
 
-func (a *scriptedAsker) choose(title, _ string, options []huh.Option[string], value *string) error {
+func (a *scriptedAsker) choose(title, _ string, options []forms.Option, value *string) error {
 	var values []string
 	for _, option := range options {
 		values = append(values, option.Value)
@@ -76,7 +78,7 @@ func (a *scriptedAsker) confirm(title, _ string, value *bool) error {
 
 func TestProviderConfigureFlow(t *testing.T) {
 	home, root := t.TempDir(), t.TempDir()
-	require.NoError(t, writeConfigFile(home, namedRolesConfig()))
+	require.NoError(t, config.WriteFile(home, namedRolesConfig()))
 	catalog := append(threeProviderCatalog(), "small/claude-sonnet-5.5")
 	var out strings.Builder
 	ask := &scriptedAsker{t: t, answers: []string{"=", "copilot", "openrouter", providerDone, "yes", "no"}}
@@ -86,7 +88,7 @@ func TestProviderConfigureFlow(t *testing.T) {
 	require.Equal(t, []string{"Primary provider", "Backup 1", "Backup 2", "Backup 3", "Save this provider order?", "Apply it to Empryo now?"}, ask.asked)
 	require.Equal(t, []string{providerDone, "copilot", "openrouter", "small"}, ask.offered[1], "Backup 1 offers every provider except the primary")
 	require.Equal(t, []string{providerDone, "openrouter", "small"}, ask.offered[2], "a chosen backup is not offered again")
-	cfg, err := readConfigFile(home)
+	cfg, err := config.ReadFile(home)
 	require.NoError(t, err)
 	require.Equal(t, "llmgateway", cfg.Providers.Primary, "llmgateway is the default primary")
 	require.Equal(t, []string{"copilot", "openrouter"}, cfg.Providers.Backups(), "backups are saved in the order picked")
@@ -96,14 +98,14 @@ func TestProviderConfigureFlow(t *testing.T) {
 	apply, err = pickProviderOrder(ask, home, root, false, "global", catalog, &out)
 	require.NoError(t, err)
 	require.Equal(t, "global", apply, "yes to apply hands over to models apply for this scope")
-	cfg, err = readConfigFile(home)
+	cfg, err = config.ReadFile(home)
 	require.NoError(t, err)
 	require.Equal(t, []string{"copilot", "openrouter"}, cfg.Providers.Backups(), "re-running and pressing Enter keeps the saved order")
 
 	ask = &scriptedAsker{t: t, answers: []string{"=", "small", providerDone}}
 	_, err = pickProviderOrder(ask, home, root, false, "global", catalog, &out)
-	require.ErrorIs(t, err, errModelName, "a backup with nothing of the same level is refused")
-	cfg, err = readConfigFile(home)
+	require.ErrorIs(t, err, config.ErrModelName, "a backup with nothing of the same level is refused")
+	cfg, err = config.ReadFile(home)
 	require.NoError(t, err)
 	require.Equal(t, []string{"copilot", "openrouter"}, cfg.Providers.Backups(), "a refused order changes nothing")
 
@@ -114,42 +116,23 @@ func TestProviderConfigureFlow(t *testing.T) {
 
 func TestProviderConfigureScopeQuestion(t *testing.T) {
 	home, root := t.TempDir(), t.TempDir()
-	require.NoError(t, writeConfigFile(home, namedRolesConfig()))
+	require.NoError(t, config.WriteFile(home, namedRolesConfig()))
 	ask := &scriptedAsker{t: t, answers: []string{"=", "=", providerDone, "yes", "no"}}
 	var out strings.Builder
 	_, err := pickProviderOrder(ask, home, root, true, "", threeProviderCatalog(), &out)
 	require.NoError(t, err)
 	require.Equal(t, []string{"project", "global"}, ask.offered[0])
-	data, err := os.ReadFile(projectConfigPath(root))
+	data, err := os.ReadFile(config.ProjectPath(root))
 	require.NoError(t, err, "inside a Git project the default scope is this project")
 	require.Contains(t, string(data), "primary: llmgateway")
-	cfg, err := loadConfigAt(home, root)
+	cfg, err := config.Load(home, root, nil)
 	require.NoError(t, err)
 	require.Equal(t, "llmgateway", cfg.Providers.Primary, "the saved project file is approved and used")
 }
 
-func TestProviderMenuScreensRender(t *testing.T) {
-	cfg := namedRolesConfig()
-	catalog := append(threeProviderCatalog(), "small/claude-sonnet-5.5")
-	pick := providerDone
-	backup := huh.NewSelect[string]().Title("Backup 1").Description("Order so far: llmgateway").Options(backupOptions(cfg, catalogProviders(catalog), []string{"llmgateway"}, catalog)...).Value(&pick)
-	form := huh.NewForm(huh.NewGroup(backup)).WithWidth(100)
-	form.Init()
-	view := form.View()
-	for _, want := range []string{"Backup 1", "Order so far: llmgateway", "Done — no more backups", "copilot", "openrouter", "small — nothing comparable to GPT 6.1 Sol"} {
-		require.Contains(t, view, want)
-	}
-	save := true
-	confirm := huh.NewForm(huh.NewGroup(huh.NewConfirm().Title("Save this provider order?").Description(providerChainPreview("global", []string{"llmgateway", "copilot", "openrouter"})).Value(&save))).WithWidth(100)
-	confirm.Init()
-	for _, want := range []string{"Save this provider order?", "Primary", "llmgateway", "Backup 1", "copilot", "Backup 2", "openrouter"} {
-		require.Contains(t, confirm.View(), want)
-	}
-}
-
 // namedRolesConfig names the coder and reviewer; other roles are pinned IDs, which never move between providers.
-func namedRolesConfig() Config {
-	return Config{Model: "Sonnet 5.5", Init: "Sonnet 5.5", Expert: "custom/expert", Judges: []string{"custom/judge"}, Review: ReviewConfig{Model: "GPT 6.1 Sol", SecondOpinion: []string{"custom/second"}}}
+func namedRolesConfig() config.Config {
+	return config.Config{Model: "Sonnet 5.5", Init: "Sonnet 5.5", Expert: "custom/expert", Judges: []string{"custom/judge"}, Review: config.ReviewConfig{Model: "GPT 6.1 Sol", SecondOpinion: []string{"custom/second"}}}
 }
 
 func threeProviderCatalog() []string {
@@ -165,25 +148,25 @@ func TestProviderChainResolvesEveryBackupInOrder(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "llmgateway", policy.Primary)
 	require.Equal(t, []string{"copilot", "openrouter"}, policy.Backups())
-	route, err := resolveModelReference("model", "Sonnet 5.5", policy, threeProviderCatalog())
+	route, err := config.ResolveModelReference("model", "Sonnet 5.5", policy, threeProviderCatalog())
 	require.NoError(t, err)
 	require.Equal(t, "llmgateway/claude-sonnet-5-5", route.Primary)
 	require.Equal(t, []string{"copilot/claude-sonnet-5.5", "openrouter/claude-sonnet-5.5"}, route.Fallbacks, "backups keep the order given")
-	plan := ModelPlan{Routes: []ModelRoute{route}}
-	require.Equal(t, map[string][]string{route.Primary: route.Fallbacks}, plan.fallbackChains())
-	require.NoError(t, plan.verifyFallbacks(plan.fallbackChains()))
+	plan := config.ModelPlan{Routes: []config.ModelRoute{route}}
+	require.Equal(t, map[string][]string{route.Primary: route.Fallbacks}, plan.FallbackChains())
+	require.NoError(t, plan.VerifyFallbacks(plan.FallbackChains()))
 	reordered := map[string][]string{route.Primary: {route.Fallbacks[1], route.Fallbacks[0]}}
-	require.ErrorIs(t, plan.verifyFallbacks(reordered), errNativeFallback, "Empryo must try backups in the chosen order")
-	hop := plan.fallbackChains()
+	require.ErrorIs(t, plan.VerifyFallbacks(reordered), config.ErrNativeFallback, "Empryo must try backups in the chosen order")
+	hop := plan.FallbackChains()
 	hop[route.Fallbacks[1]] = []string{"custom/undeclared"}
-	require.ErrorIs(t, plan.verifyFallbacks(hop), errNativeFallback, "a later backup may not route somewhere undeclared")
+	require.ErrorIs(t, plan.VerifyFallbacks(hop), config.ErrNativeFallback, "a later backup may not route somewhere undeclared")
 }
 
 func TestProviderChainRejectsBadInput(t *testing.T) {
 	connected := catalogProviders(threeProviderCatalog())
 	for _, ids := range [][]string{{"copilot", "copilot"}, {"devpass", "llmgateway"}, {"offline"}, {"a/b"}} {
 		_, err := providerChain(ids, connected)
-		require.ErrorIs(t, err, errProviderPolicy, ids)
+		require.ErrorIs(t, err, config.ErrProviderPolicy, ids)
 	}
 	_, _, err := providerArgs([]string{"copilot", "--project", "--global"})
 	require.ErrorIs(t, err, errProviderUsage)
@@ -196,12 +179,12 @@ func TestProviderChainRejectsBadInput(t *testing.T) {
 }
 
 func TestProviderPolicyKeepsOldSingleFallbackKey(t *testing.T) {
-	old := &ProviderPolicy{Primary: "devpass", Fallback: "copilot", Fallbacks: []string{"openrouter"}}
+	old := &config.ProviderPolicy{Primary: "devpass", Fallback: "copilot", Fallbacks: []string{"openrouter"}}
 	require.Equal(t, []string{"copilot", "openrouter"}, old.Backups(), "fallback stays first, then the list")
-	require.NoError(t, validateProviderPolicy(old))
-	require.ErrorIs(t, validateProviderPolicy(&ProviderPolicy{Primary: "copilot", Fallbacks: []string{"openrouter", "copilot"}}), errProviderPolicy)
-	require.True(t, sameProviderPolicy(old, newProviderPolicy("llmgateway", []string{"copilot", "openrouter"})), "the two spellings of one order are equal")
-	clone := old.clone()
+	require.NoError(t, config.ValidateProviderPolicy(old))
+	require.ErrorIs(t, config.ValidateProviderPolicy(&config.ProviderPolicy{Primary: "copilot", Fallbacks: []string{"openrouter", "copilot"}}), config.ErrProviderPolicy)
+	require.True(t, sameProviderPolicy(old, config.NewProviderPolicy("llmgateway", []string{"copilot", "openrouter"})), "the two spellings of one order are equal")
+	clone := old.Clone()
 	clone.Fallbacks[0] = "changed"
 	require.Equal(t, "openrouter", old.Fallbacks[0])
 }
@@ -210,7 +193,7 @@ func TestProviderSetSavesOnlyTheProviderKey(t *testing.T) {
 	home := t.TempDir()
 	root := t.TempDir()
 	t.Chdir(root)
-	require.NoError(t, writeConfigFile(home, Config{Model: "Sonnet 5.5", Review: ReviewConfig{Model: "GPT 6.1 Sol"}, Routing: map[string]string{"editing": "Sonnet 5.5"}}))
+	require.NoError(t, config.WriteFile(home, config.Config{Model: "Sonnet 5.5", Review: config.ReviewConfig{Model: "GPT 6.1 Sol"}, Routing: map[string]string{"editing": "Sonnet 5.5"}}))
 	bin := filepath.Join(t.TempDir(), "empryo")
 	require.NoError(t, os.WriteFile(bin, []byte(`#!/bin/sh
 case "$1" in
@@ -222,7 +205,7 @@ esac
 	var out strings.Builder
 	require.NoError(t, runProvider(t.Context(), home, bin, []string{"set", "devpass", "copilot", "--global"}, &out))
 	require.Contains(t, out.String(), "llmgateway > copilot")
-	cfg, err := readConfigFile(home)
+	cfg, err := config.ReadFile(home)
 	require.NoError(t, err)
 	require.Equal(t, "llmgateway", cfg.Providers.Primary)
 	require.Equal(t, []string{"copilot"}, cfg.Providers.Backups())
@@ -230,8 +213,8 @@ esac
 	require.Equal(t, "Sonnet 5.5", cfg.Routing["editing"])
 	out.Reset()
 	err = runProvider(t.Context(), home, bin, []string{"set", "devpass", "copilot", "openrouter", "--global"}, &out)
-	require.ErrorIs(t, err, errModelName, "openrouter has no frontier model to stand in for GPT 6.1 Sol, so the order is not saved half-working")
-	cfg, err = readConfigFile(home)
+	require.ErrorIs(t, err, config.ErrModelName, "openrouter has no frontier model to stand in for GPT 6.1 Sol, so the order is not saved half-working")
+	cfg, err = config.ReadFile(home)
 	require.NoError(t, err)
 	require.Equal(t, []string{"copilot"}, cfg.Providers.Backups(), "a failed set leaves the saved order alone")
 	out.Reset()
@@ -239,7 +222,7 @@ esac
 	require.Contains(t, out.String(), "Primary: llmgateway")
 	require.Contains(t, out.String(), "Backup 1: copilot")
 	require.NoError(t, runProvider(t.Context(), home, bin, []string{"clear", "--global"}, &out))
-	cfg, err = readConfigFile(home)
+	cfg, err = config.ReadFile(home)
 	require.NoError(t, err)
 	require.Nil(t, cfg.Providers)
 }

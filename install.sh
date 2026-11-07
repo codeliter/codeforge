@@ -25,9 +25,10 @@ curl -fsSL "$base/$asset" -o "$tmp/$asset"
 curl -fsSL "$base/checksums.txt" -o "$tmp/checksums.txt"
 
 (cd "$tmp" && grep " $asset\$" checksums.txt | shasum -a 256 -c -) >/dev/null
-tar -xzf "$tmp/$asset" -C "$tmp" codeforge
+tar -xzf "$tmp/$asset" -C "$tmp" codeforge codeforge-forms
 mkdir -p "$bin_dir"
 install -m 0755 "$tmp/codeforge" "$bin_dir/codeforge"
+install -m 0755 "$tmp/codeforge-forms" "$bin_dir/codeforge-forms"
 
 echo "codeforge installed to $bin_dir/codeforge"
 case ":$PATH:" in

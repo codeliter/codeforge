@@ -7,17 +7,19 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/codeliter/codeforge/src/config"
+
 	"github.com/stretchr/testify/require"
 	"go.yaml.in/yaml/v3"
 )
 
 func TestConfigurationLayersAndEnvironment(t *testing.T) {
 	home, project := t.TempDir(), t.TempDir()
-	global := Config{Model: "global/coder", Init: "global/writer", Review: ReviewConfig{Model: "global/reviewer"}, Routing: map[string]string{"research": "global/reader", "editing": "global/editor"}}
-	require.NoError(t, writeConfigFile(home, global))
-	require.NoError(t, writeConfigYAML(filepath.Join(project, ".codeforge"), Config{Model: "project/coder", Routing: map[string]string{"research": "project/reader", "editing": ""}}))
-	require.NoError(t, approveProjectConfig(home, project))
-	cfg, err := loadConfigAt(home, project)
+	global := config.Config{Model: "global/coder", Init: "global/writer", Review: config.ReviewConfig{Model: "global/reviewer"}, Routing: map[string]string{"research": "global/reader", "editing": "global/editor"}}
+	require.NoError(t, config.WriteFile(home, global))
+	require.NoError(t, config.WriteYAML(filepath.Join(project, ".codeforge"), config.Config{Model: "project/coder", Routing: map[string]string{"research": "project/reader", "editing": ""}}))
+	require.NoError(t, config.ApproveProject(home, project))
+	cfg, err := config.Load(home, project, nil)
 	require.NoError(t, err)
 	require.Equal(t, "project/coder", cfg.Model)
 	require.Equal(t, "global/writer", cfg.Init)
@@ -26,14 +28,14 @@ func TestConfigurationLayersAndEnvironment(t *testing.T) {
 	require.NotContains(t, cfg.Routing, "editing")
 	t.Setenv("CODEFORGE_MODEL", "environment/coder")
 	t.Setenv("CODEFORGE_INIT", "environment/writer")
-	cfg, err = loadConfigAt(home, project)
+	cfg, err = config.Load(home, project, nil)
 	require.NoError(t, err)
 	require.Equal(t, "environment/coder", cfg.Model)
 	require.Equal(t, "environment/writer", cfg.Init)
 	args, err := taskArgs(t.Context(), "/missing", cfg, []string{"--effort", "low", "--model", "cli/coder", "task"})
 	require.NoError(t, err)
 	require.Equal(t, "cli/coder", flagValue(args, "--model"))
-	preserved, err := readConfigFile(home)
+	preserved, err := config.ReadFile(home)
 	require.NoError(t, err)
 	require.Equal(t, "global/coder", preserved.Model)
 	require.Equal(t, "global/editor", preserved.Routing["editing"])
@@ -44,8 +46,8 @@ func TestYAMLValidationDoesNotFallBackToLegacy(t *testing.T) {
 		t.Run(body, func(t *testing.T) {
 			home := t.TempDir()
 			writeConfig(t, home, `{"model":"legacy/coder"}`)
-			require.NoError(t, os.WriteFile(filepath.Join(configDir(home), "config.yaml"), []byte(body), privateFile))
-			_, err := readConfigFile(home)
+			require.NoError(t, os.WriteFile(filepath.Join(config.Dir(home), "config.yaml"), []byte(body), privateFile))
+			_, err := config.ReadFile(home)
 			require.Error(t, err)
 		})
 	}
@@ -55,32 +57,32 @@ func TestLegacyJSONMigrationAndPrivateYAML(t *testing.T) {
 	home := t.TempDir()
 	legacy := `{"model":"old/coder","review":{"model":"old/reviewer"}}`
 	writeConfig(t, home, legacy)
-	cfg, err := readConfigFile(home)
+	cfg, err := config.ReadFile(home)
 	require.NoError(t, err)
 	cfg.Model = "new/coder"
-	require.NoError(t, writeConfigFile(home, cfg))
-	got, err := readConfigFile(home)
+	require.NoError(t, config.WriteFile(home, cfg))
+	got, err := config.ReadFile(home)
 	require.NoError(t, err)
 	require.Equal(t, "new/coder", got.Model)
-	data, err := os.ReadFile(filepath.Join(configDir(home), "config.json"))
+	data, err := os.ReadFile(filepath.Join(config.Dir(home), "config.json"))
 	require.NoError(t, err)
 	require.Equal(t, legacy, string(data))
-	info, err := os.Stat(filepath.Join(configDir(home), "config.yaml"))
+	info, err := os.Stat(filepath.Join(config.Dir(home), "config.yaml"))
 	require.NoError(t, err)
 	require.Equal(t, os.FileMode(privateFile), info.Mode().Perm())
 }
 
 func TestModelConfigurationCancellationAndValidationKeepFile(t *testing.T) {
 	dir := t.TempDir()
-	before := Config{Model: "saved/coder", Review: ReviewConfig{Model: "saved/reviewer"}}
-	require.NoError(t, writeConfigYAML(dir, before))
-	err := configureModelFile(dir, before, []string{"new/coder"}, func(cfg *Config, _ []string) error { cfg.Model = "new/coder"; return context.Canceled })
+	before := config.Config{Model: "saved/coder", Review: config.ReviewConfig{Model: "saved/reviewer"}}
+	require.NoError(t, config.WriteYAML(dir, before))
+	err := configureModelFile(dir, before, []string{"new/coder"}, func(cfg *config.Config, _ []string) error { cfg.Model = "new/coder"; return context.Canceled })
 	require.ErrorIs(t, err, context.Canceled)
-	err = configureModelFile(dir, before, nil, func(cfg *Config, _ []string) error { cfg.Review.Model = cfg.Model; return nil })
-	require.ErrorIs(t, err, errReviewerIsCoder)
+	err = configureModelFile(dir, before, nil, func(cfg *config.Config, _ []string) error { cfg.Review.Model = cfg.Model; return nil })
+	require.ErrorIs(t, err, config.ErrReviewerIsCoder)
 	data, err := os.ReadFile(filepath.Join(dir, "config.yaml"))
 	require.NoError(t, err)
-	var got Config
+	var got config.Config
 	require.NoError(t, yaml.Unmarshal(data, &got))
 	require.Equal(t, before, got)
 }
@@ -89,7 +91,7 @@ func TestProjectProfilesIsolateModelAndRoutingOverrides(t *testing.T) {
 	global, a, b := t.TempDir(), t.TempDir(), t.TempDir()
 	native := filepath.Join(global, "config.json")
 	require.NoError(t, os.WriteFile(native, []byte(`{"defaultModel":"keep/native"}`), privateFile))
-	base := Config{Model: "global/coder", Review: ReviewConfig{Model: "global/reviewer"}}
+	base := config.Config{Model: "global/coder", Review: config.ReviewConfig{Model: "global/reviewer"}}
 	require.NoError(t, syncAssets(global, base))
 	for _, tc := range []struct{ root, model string }{{a, "a/coder"}, {b, "b/coder"}} {
 		cfg := base
@@ -116,23 +118,22 @@ func TestProjectProfilesIsolateModelAndRoutingOverrides(t *testing.T) {
 }
 
 func TestSmallModelCatalogKeepsClearlyMarkedDefaults(t *testing.T) {
-	for _, model := range []string{"only/custom-model", defaultModel, defaultReviewModel, defaultSecondOpinion[0]} {
-		var cfg Config
+	for _, model := range []string{"only/custom-model", config.DefaultModel, config.DefaultReviewModel, config.DefaultSecondOpinion[0]} {
+		var cfg config.Config
 		seedModelChoices(&cfg, []string{model})
-		require.NoError(t, validate(cfg))
+		require.NoError(t, config.Validate(cfg))
 		require.NotEqual(t, cfg.Model, cfg.Review.Model)
 	}
 	options := modelOptions([]string{"available/model"}, "saved/model")
-	require.Contains(t, options[len(options)-1].Key, "not currently listed")
+	require.Contains(t, options[len(options)-1].Label, "not currently listed")
 }
 
 func TestDuplicateJurorsAreRejected(t *testing.T) {
-	require.ErrorIs(t, validate(Config{Review: ReviewConfig{SecondOpinion: []string{"provider/reviewer", "provider/reviewer"}}}), errDuplicateModels)
+	require.ErrorIs(t, config.Validate(config.Config{Review: config.ReviewConfig{SecondOpinion: []string{"provider/reviewer", "provider/reviewer"}}}), config.ErrDuplicateModels)
 }
 
 func TestUnsupportedBackgroundRoutingIsExplicit(t *testing.T) {
-	require.ErrorIs(t, validateRouting(map[string]string{"namer": "provider/model"}), errRoutingJob)
-	require.ErrorIs(t, validate(Config{Model: "provider/model\nforgeMode: auto"}), errNotProviderModel)
+	require.ErrorIs(t, config.Validate(config.Config{Model: "provider/model\nforgeMode: auto"}), config.ErrNotProviderModel)
 	scope, err := modelConfigurationScope([]string{"--project"})
 	require.NoError(t, err)
 	require.Equal(t, "project", scope)

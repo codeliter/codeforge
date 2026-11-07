@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/codeliter/codeforge/src/config"
+
 	"github.com/stretchr/testify/require"
 )
 
@@ -41,7 +43,7 @@ func TestCatalogCache(t *testing.T) {
 	require.Nil(t, readCatalogCache(home, bin, ready, now))
 	clearCatalogCache(home) // clearing twice is fine
 
-	require.NoError(t, os.MkdirAll(configDir(home), privateDir))
+	require.NoError(t, os.MkdirAll(config.Dir(home), privateDir))
 	require.NoError(t, os.WriteFile(catalogCachePath(home), []byte("not json"), privateFile))
 	require.Nil(t, readCatalogCache(home, bin, ready, now), "a damaged cache is ignored, not fatal")
 	writeCatalogCache(home, bin, ready, nil, now)

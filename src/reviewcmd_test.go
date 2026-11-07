@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/codeliter/codeforge/src/config"
+
 	"github.com/stretchr/testify/require"
 
 	"github.com/codeliter/codeforge/src/review"
@@ -16,17 +18,17 @@ func TestRepoFromURL(t *testing.T) {
 }
 
 func TestReviewArgs_RejectsBadRef(t *testing.T) {
-	_, err := reviewArgs(t.Context(), "", ReviewConfig{}, nil, nil, []string{"42;rm"})
+	_, err := reviewArgs(t.Context(), "", config.ReviewConfig{}, nil, nil, []string{"42;rm"})
 	require.ErrorIs(t, err, review.ErrNoPR)
 }
 
 func TestReviewArgs_RejectsEffortAboveCeiling(t *testing.T) {
-	_, err := reviewArgs(t.Context(), "", ReviewConfig{}, nil, nil, []string{"42", "--effort", "max"})
+	_, err := reviewArgs(t.Context(), "", config.ReviewConfig{}, nil, nil, []string{"42", "--effort", "max"})
 	require.ErrorIs(t, err, errEffortAboveCeiling)
 }
 
 func TestReviewArgs_FlagValueIsNotThePR(t *testing.T) {
-	_, err := reviewArgs(t.Context(), "", ReviewConfig{}, nil, nil, []string{"--max-steps", "1", "x"})
+	_, err := reviewArgs(t.Context(), "", config.ReviewConfig{}, nil, nil, []string{"--max-steps", "1", "x"})
 	require.ErrorIs(t, err, review.ErrNoPR, "x is the ref, not the --max-steps value")
 }
 

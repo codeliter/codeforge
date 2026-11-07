@@ -1,4 +1,4 @@
-package src
+package config
 
 import (
 	"errors"
@@ -10,10 +10,10 @@ import (
 	"unicode"
 )
 
-var errModelName = errors.New("model name cannot be resolved from the connected-provider catalog")
-var errAmbiguousModel = errors.New("model name is ambiguous; choose a primary provider or an explicit provider/model ID")
-var errProviderPolicy = errors.New("invalid provider policy")
-var errNativeFallback = errors.New("native fallback policy does not match Codeforge; native settings were not changed")
+var ErrModelName = errors.New("model name cannot be resolved from the connected-provider catalog")
+var ErrAmbiguousModel = errors.New("model name is ambiguous; choose a primary provider or an explicit provider/model ID")
+var ErrProviderPolicy = errors.New("invalid provider policy")
+var ErrNativeFallback = errors.New("native fallback policy does not match Codeforge; native settings were not changed")
 
 // ProviderPolicy is the primary provider and the ordered backups Empryo switches to when it fails or runs out of quota.
 // Fallback is the original single-backup key; Fallbacks adds more. Backups() returns them in order, Fallback first.
@@ -33,9 +33,9 @@ type ProviderRule struct {
 	Fallbacks []string `json:"fallbacks,omitempty" yaml:"fallbacks,omitempty"`
 }
 
-// ruleKey normalises a pattern or model reference the same way, so Sonnet-* and Sonnet* both mean claude-sonnet-*.
-func ruleKey(match string) string {
-	key := modelReferenceKey(match)
+// RuleKey normalises a pattern or model reference the same way, so Sonnet-* and Sonnet* both mean claude-sonnet-*.
+func RuleKey(match string) string {
+	key := ModelReferenceKey(match)
 	for _, family := range []string{"sonnet", "opus", "haiku"} {
 		if strings.HasPrefix(key, family) {
 			return "claude-" + key
@@ -44,36 +44,36 @@ func ruleKey(match string) string {
 	return key
 }
 
-// chainFor is the chain that serves a model: its rule's chain, else the default one (nil when there is none).
-func (policy *ProviderPolicy) chainFor(ref string) *ProviderPolicy {
-	if rule, ok := policy.ruleFor(ref); ok {
+// ChainFor is the chain that serves a model: its rule's chain, else the default one (nil when there is none).
+func (policy *ProviderPolicy) ChainFor(ref string) *ProviderPolicy {
+	if rule, ok := policy.RuleFor(ref); ok {
 		return rule
 	}
 	return policy
 }
 
-// primaryFor is the provider a model runs on first, or "" when no chain says.
-func (policy *ProviderPolicy) primaryFor(ref string) string {
-	if chain := policy.chainFor(ref); chain != nil {
-		return providerID(chain.Primary)
+// PrimaryFor is the provider a model runs on first, or "" when no chain says.
+func (policy *ProviderPolicy) PrimaryFor(ref string) string {
+	if chain := policy.ChainFor(ref); chain != nil {
+		return ProviderID(chain.Primary)
 	}
 	return ""
 }
 
-// chain is the rule's providers as an ordinary policy, so it is validated and resolved like the default one.
-func (rule ProviderRule) chain() *ProviderPolicy {
-	return newProviderPolicy(rule.Primary, rule.Fallbacks)
+// Chain is the rule's providers as an ordinary policy, so it is validated and resolved like the default one.
+func (rule ProviderRule) Chain() *ProviderPolicy {
+	return NewProviderPolicy(rule.Primary, rule.Fallbacks)
 }
 
-// ruleFor returns the chain of the first rule matching the model reference.
-func (policy *ProviderPolicy) ruleFor(ref string) (*ProviderPolicy, bool) {
+// RuleFor returns the chain of the first rule matching the model reference.
+func (policy *ProviderPolicy) RuleFor(ref string) (*ProviderPolicy, bool) {
 	if policy == nil {
 		return nil, false
 	}
-	key := ruleKey(ref)
+	key := RuleKey(ref)
 	for _, rule := range policy.Rules {
-		if ok, err := path.Match(ruleKey(rule.Match), key); err == nil && ok {
-			return rule.chain(), true
+		if ok, err := path.Match(RuleKey(rule.Match), key); err == nil && ok {
+			return rule.Chain(), true
 		}
 	}
 	return nil, false
@@ -86,14 +86,14 @@ func (policy *ProviderPolicy) Backups() []string {
 	}
 	var out []string
 	for _, id := range append([]string{policy.Fallback}, policy.Fallbacks...) {
-		if id = providerID(id); id != "" {
+		if id = ProviderID(id); id != "" {
 			out = append(out, id)
 		}
 	}
 	return out
 }
 
-func (policy *ProviderPolicy) clone() *ProviderPolicy {
+func (policy *ProviderPolicy) Clone() *ProviderPolicy {
 	if policy == nil {
 		return nil
 	}
@@ -106,9 +106,9 @@ func (policy *ProviderPolicy) clone() *ProviderPolicy {
 	return &out
 }
 
-// newProviderPolicy stores an ordered chain in the list form.
-func newProviderPolicy(primary string, backups []string) *ProviderPolicy {
-	return &ProviderPolicy{Primary: providerID(primary), Fallbacks: slices.Clone(backups)}
+// NewProviderPolicy stores an ordered chain in the list form.
+func NewProviderPolicy(primary string, backups []string) *ProviderPolicy {
+	return &ProviderPolicy{Primary: ProviderID(primary), Fallbacks: slices.Clone(backups)}
 }
 
 type ModelRoute struct {
@@ -126,7 +126,7 @@ type ModelPlan struct {
 	Routes []ModelRoute
 }
 
-func providerID(id string) string {
+func ProviderID(id string) string {
 	switch strings.ToLower(id) {
 	case "devpass", "llm-gateway", "llmgateway":
 		return "llmgateway"
@@ -137,57 +137,57 @@ func providerID(id string) string {
 	}
 }
 
-func validProviderID(id string) bool {
-	return id != "" && !strings.HasPrefix(id, "-") && !strings.Contains(id, "/") && validModelID(id+"/probe")
+func ValidProviderID(id string) bool {
+	return id != "" && !strings.HasPrefix(id, "-") && !strings.Contains(id, "/") && ValidModelID(id+"/probe")
 }
 
-func validateProviderPolicy(policy *ProviderPolicy) error {
+func ValidateProviderPolicy(policy *ProviderPolicy) error {
 	if policy == nil {
 		return nil
 	}
-	primary, backups := providerID(policy.Primary), policy.Backups()
+	primary, backups := ProviderID(policy.Primary), policy.Backups()
 	if primary == "" && len(backups) > 0 {
-		return fmt.Errorf("%w: fallback requires primary", errProviderPolicy)
+		return fmt.Errorf("%w: fallback requires primary", ErrProviderPolicy)
 	}
-	if primary != "" && !validProviderID(primary) {
-		return errProviderPolicy
+	if primary != "" && !ValidProviderID(primary) {
+		return ErrProviderPolicy
 	}
 	seen := map[string]bool{primary: true}
 	for _, backup := range backups {
-		if !validProviderID(backup) {
-			return errProviderPolicy
+		if !ValidProviderID(backup) {
+			return ErrProviderPolicy
 		}
 		if seen[backup] {
-			return fmt.Errorf("%w: %s is listed twice; primary and fallbacks must all differ", errProviderPolicy, backup)
+			return fmt.Errorf("%w: %s is listed twice; primary and fallbacks must all differ", ErrProviderPolicy, backup)
 		}
 		seen[backup] = true
 	}
 	matches := map[string]bool{}
 	for _, rule := range policy.Rules {
-		key := ruleKey(rule.Match)
+		key := RuleKey(rule.Match)
 		if key == "" || strings.TrimSpace(rule.Match) == "" {
-			return fmt.Errorf("%w: a rule needs a model pattern such as claude-*", errProviderPolicy)
+			return fmt.Errorf("%w: a rule needs a model pattern such as claude-*", ErrProviderPolicy)
 		}
 		// Only * and ? are wildcards, so path.Match can never reject the pattern.
 		if strings.ContainsAny(rule.Match, "[]\\/") {
-			return fmt.Errorf("%w: rule pattern %q must be a model name using only * and ? as wildcards (no provider prefix, brackets or backslash)", errProviderPolicy, rule.Match)
+			return fmt.Errorf("%w: rule pattern %q must be a model name using only * and ? as wildcards (no provider prefix, brackets or backslash)", ErrProviderPolicy, rule.Match)
 		}
 		if matches[key] {
-			return fmt.Errorf("%w: rule %q is listed twice", errProviderPolicy, rule.Match)
+			return fmt.Errorf("%w: rule %q is listed twice", ErrProviderPolicy, rule.Match)
 		}
 		matches[key] = true
-		if providerID(rule.Primary) == "" {
-			return fmt.Errorf("%w: rule %q needs a primary provider", errProviderPolicy, rule.Match)
+		if ProviderID(rule.Primary) == "" {
+			return fmt.Errorf("%w: rule %q needs a primary provider", ErrProviderPolicy, rule.Match)
 		}
-		if err := validateProviderPolicy(rule.chain()); err != nil {
+		if err := ValidateProviderPolicy(rule.Chain()); err != nil {
 			return fmt.Errorf("rule %q: %w", rule.Match, err)
 		}
 	}
 	return nil
 }
 
-func validModelReference(ref string) bool {
-	if validModelID(ref) {
+func ValidModelReference(ref string) bool {
+	if ValidModelID(ref) {
 		return true
 	}
 	if ref == "" || strings.TrimSpace(ref) == "" || strings.Contains(ref, "/") {
@@ -202,8 +202,8 @@ func validModelReference(ref string) bool {
 	return true
 }
 
-func modelReferenceKey(ref string) string {
-	key := modelKey(strings.Join(strings.Fields(ref), "-"))
+func ModelReferenceKey(ref string) string {
+	key := ModelKey(strings.Join(strings.Fields(ref), "-"))
 	for _, family := range []string{"sonnet", "opus", "haiku"} {
 		if strings.HasPrefix(key, family+"-") {
 			return "claude-" + key
@@ -212,8 +212,8 @@ func modelReferenceKey(ref string) string {
 	return key
 }
 
-func catalogModel(ref, provider string, catalog []string) (string, error) {
-	provider = providerID(provider)
+func CatalogModel(ref, provider string, catalog []string) (string, error) {
+	provider = ProviderID(provider)
 	var exact, matches []string
 	for _, id := range catalog {
 		p, name, ok := strings.Cut(id, "/")
@@ -223,7 +223,7 @@ func catalogModel(ref, provider string, catalog []string) (string, error) {
 		if name == ref {
 			exact = append(exact, id)
 		}
-		if modelReferenceKey(modelName(id)) == modelReferenceKey(modelName(ref)) {
+		if ModelReferenceKey(ModelName(id)) == ModelReferenceKey(ModelName(ref)) {
 			matches = append(matches, id)
 		}
 	}
@@ -236,30 +236,30 @@ func catalogModel(ref, provider string, catalog []string) (string, error) {
 		return matches[0], nil
 	}
 	if len(matches) > 1 {
-		return "", fmt.Errorf("%w: %q via %s", errAmbiguousModel, ref, strings.Join(matches, ", "))
+		return "", fmt.Errorf("%w: %q via %s", ErrAmbiguousModel, ref, strings.Join(matches, ", "))
 	}
-	return "", fmt.Errorf("%w: %q on provider %q", errModelName, ref, provider)
+	return "", fmt.Errorf("%w: %q on provider %q", ErrModelName, ref, provider)
 }
 
-func resolveModelReference(role, ref string, policy *ProviderPolicy, catalog []string) (ModelRoute, error) {
+func ResolveModelReference(role, ref string, policy *ProviderPolicy, catalog []string) (ModelRoute, error) {
 	route := ModelRoute{Role: role, Name: ref}
-	if validModelID(ref) {
+	if ValidModelID(ref) {
 		// Fully qualified IDs are deliberate advanced overrides. Preserve existing
 		// unavailable IDs and their native fallback behaviour, as before.
 		route.Primary, route.Explicit = ref, true
 		return route, nil
 	}
 	// A rule gives this model family its own chain; the default chain serves everything else.
-	rule, ruled := policy.ruleFor(ref)
+	rule, ruled := policy.RuleFor(ref)
 	if ruled {
 		policy = rule
 	}
 	primary := ""
 	if policy != nil {
-		primary = providerID(policy.Primary)
+		primary = ProviderID(policy.Primary)
 	}
 	var err error
-	route.Primary, err = catalogModel(ref, primary, catalog)
+	route.Primary, err = CatalogModel(ref, primary, catalog)
 	if err != nil {
 		return route, fmt.Errorf("%s: %w", role, err)
 	}
@@ -268,13 +268,13 @@ func resolveModelReference(role, ref string, policy *ProviderPolicy, catalog []s
 	// Under a rule, a stand-in stays in the model's own family: a Claude rule never falls back to a GPT model.
 	standIns := catalog
 	if ruled {
-		fam := family(route.Primary)
-		standIns = slices.DeleteFunc(slices.Clone(catalog), func(id string) bool { return family(id) != fam })
+		fam := Family(route.Primary)
+		standIns = slices.DeleteFunc(slices.Clone(catalog), func(id string) bool { return Family(id) != fam })
 	}
 	for _, backup := range policy.Backups() {
-		id, err := catalogModel(ref, backup, catalog)
-		if errors.Is(err, errModelName) {
-			if standIn, ok := equivalentModel(route.Primary, backup, standIns); ok {
+		id, err := CatalogModel(ref, backup, catalog)
+		if errors.Is(err, ErrModelName) {
+			if standIn, ok := EquivalentModel(route.Primary, backup, standIns); ok {
 				id, err = standIn, nil
 				if route.StandIns == nil {
 					route.StandIns = map[string]bool{}
@@ -290,55 +290,55 @@ func resolveModelReference(role, ref string, policy *ProviderPolicy, catalog []s
 	return route, nil
 }
 
-func resolveModelPlan(cfg Config, catalog []string) (ModelPlan, error) {
-	plan := ModelPlan{Config: cloneConfig(cfg)}
-	if err := validate(cfg); err != nil {
+func ResolvePlan(cfg Config, catalog []string) (ModelPlan, error) {
+	plan := ModelPlan{Config: Clone(cfg)}
+	if err := Validate(cfg); err != nil {
 		return plan, err
 	}
-	for _, role := range roles {
-		refs := current(cfg, role.key)
+	for _, role := range Roles {
+		refs := Current(cfg, role.Key)
 		var ids []string
 		for _, ref := range refs {
-			route, err := resolveModelReference(role.key, ref, cfg.Providers, catalog)
+			route, err := ResolveModelReference(role.Key, ref, cfg.Providers, catalog)
 			if err != nil {
 				return plan, err
 			}
 			ids = append(ids, route.Primary)
 			plan.Routes = append(plan.Routes, route)
 		}
-		assignModelRole(&plan.Config, role.key, ids)
+		AssignRole(&plan.Config, role.Key, ids)
 	}
 	for job, ref := range cfg.Routing {
 		if ref == "" {
 			continue
 		}
-		route, err := resolveModelReference("routing."+job, ref, cfg.Providers, catalog)
+		route, err := ResolveModelReference("routing."+job, ref, cfg.Providers, catalog)
 		if err != nil {
 			return plan, err
 		}
 		plan.Config.Routing[job] = route.Primary
 		plan.Routes = append(plan.Routes, route)
 	}
-	return plan, validate(plan.Config)
+	return plan, Validate(plan.Config)
 }
 
-func needsModelCatalog(cfg Config) bool {
-	for _, role := range roles {
-		for _, ref := range current(cfg, role.key) {
-			if !validModelID(ref) {
+func NeedsCatalog(cfg Config) bool {
+	for _, role := range Roles {
+		for _, ref := range Current(cfg, role.Key) {
+			if !ValidModelID(ref) {
 				return true
 			}
 		}
 	}
 	for _, ref := range cfg.Routing {
-		if ref != "" && !validModelID(ref) {
+		if ref != "" && !ValidModelID(ref) {
 			return true
 		}
 	}
 	return false
 }
 
-func (plan ModelPlan) fallbackChains() map[string][]string {
+func (plan ModelPlan) FallbackChains() map[string][]string {
 	chains := make(map[string][]string)
 	for _, route := range plan.Routes {
 		if len(route.Fallbacks) > 0 {
@@ -348,8 +348,8 @@ func (plan ModelPlan) fallbackChains() map[string][]string {
 	return chains
 }
 
-func (plan ModelPlan) verifyFallbacks(native map[string][]string) error {
-	chains := plan.fallbackChains()
+func (plan ModelPlan) VerifyFallbacks(native map[string][]string) error {
+	chains := plan.FallbackChains()
 	keys := make([]string, 0, len(chains))
 	for key := range chains {
 		keys = append(keys, key)
@@ -372,7 +372,7 @@ func (plan ModelPlan) verifyFallbacks(native map[string][]string) error {
 		}
 	}
 	if len(failures) > 0 {
-		return fmt.Errorf("%w:\n%s\nrun codeforge models apply to review and confirm changes, or configure these chains through Empryo /router", errNativeFallback, strings.Join(failures, "\n"))
+		return fmt.Errorf("%w:\n%s\nrun codeforge models apply to review and confirm changes, or configure these chains through Empryo /router", ErrNativeFallback, strings.Join(failures, "\n"))
 	}
 	return nil
 }

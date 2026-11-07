@@ -18,6 +18,8 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/codeliter/codeforge/src/config"
+
 	"github.com/codeliter/codeforge/src/store"
 )
 
@@ -120,7 +122,7 @@ func learnRepository(ctx context.Context) (string, error) {
 }
 
 func openLearning(ctx context.Context, home string) (*store.Store, error) {
-	return store.Open(ctx, filepath.Join(configDir(home), "sessions"))
+	return store.Open(ctx, filepath.Join(config.Dir(home), "sessions"))
 }
 
 // learnSession consumes a leading --session ID or --session=ID.

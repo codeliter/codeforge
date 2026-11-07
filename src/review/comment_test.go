@@ -10,6 +10,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/codeliter/codeforge/src/text"
 )
 
 type recordingRunner struct {
@@ -124,9 +126,9 @@ func TestCommentBody_AShortReviewLeavesRoomForManyBlockers(t *testing.T) {
 }
 
 func TestEngineOutput(t *testing.T) {
-	text, err := EngineOutput([]byte(`{"output":"Approve.","steps":3}`))
+	out, err := EngineOutput([]byte(`{"output":"Approve.","steps":3}`))
 	require.NoError(t, err)
-	require.Equal(t, "Approve.", text)
+	require.Equal(t, "Approve.", out)
 
 	_, err = EngineOutput([]byte(`{"output":"  \n"}`))
 	require.ErrorIs(t, err, ErrNoReviewText)
@@ -185,9 +187,9 @@ func TestFitSecondOpinion_NeverLosesABlocker(t *testing.T) {
 }
 
 func TestShorten(t *testing.T) {
-	require.Equal(t, "abc", shorten("abc", 5))
-	require.Equal(t, "ab…", shorten("abcdef", 2))
-	require.True(t, utf8.ValidString(shorten(strings.Repeat("é", 10), 5)), "never inside a character")
+	require.Equal(t, "abc", text.Shorten("abc", 5))
+	require.Equal(t, "ab…", text.Shorten("abcdef", 2))
+	require.True(t, utf8.ValidString(text.Shorten(strings.Repeat("é", 10), 5)), "never inside a character")
 }
 
 func TestCommentBody_NeverCutsInsideACharacter(t *testing.T) {

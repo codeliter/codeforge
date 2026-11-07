@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/codeliter/codeforge/src/config"
+
 	"github.com/stretchr/testify/require"
 )
 
@@ -16,8 +18,8 @@ func TestStarterPickerOptions(t *testing.T) {
 	for i, choice := range choices {
 		require.NotEmpty(t, choice.Description)
 		require.Equal(t, choice.Name, options[i].Value)
-		require.Contains(t, options[i].Key, choice.Name)
-		require.Contains(t, options[i].Key, choice.Description)
+		require.Contains(t, options[i].Label, choice.Name)
+		require.Contains(t, options[i].Label, choice.Description)
 	}
 }
 
@@ -47,7 +49,7 @@ func TestPersonaPickerWithoutTerminalListsChoicesAndWritesNothing(t *testing.T) 
 	}
 	home, repo := t.TempDir(), t.TempDir()
 	t.Chdir(repo)
-	err := runInit(t.Context(), home, "/missing-model-binary", Config{}, []string{"--persona"})
+	err := runInit(t.Context(), home, "/missing-model-binary", config.Config{}, []string{"--persona"})
 	require.ErrorIs(t, err, errInitUsage)
 	for _, choice := range starters() {
 		require.Contains(t, err.Error(), choice.Name+": "+choice.Description)

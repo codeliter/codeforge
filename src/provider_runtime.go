@@ -7,23 +7,25 @@ import (
 	"fmt"
 	"io"
 	"strings"
+
+	"github.com/codeliter/codeforge/src/config"
 )
 
-func resolveModelArguments(args []string, policy *ProviderPolicy, catalog []string) ([]string, []ModelRoute, error) {
+func resolveModelArguments(args []string, policy *config.ProviderPolicy, catalog []string) ([]string, []config.ModelRoute, error) {
 	out := append([]string(nil), args...)
-	var routes []ModelRoute
+	var routes []config.ModelRoute
 	for i := 0; i < len(out); i++ {
 		flag, value, equal := strings.Cut(out[i], "=")
 		if flag == "--model" {
 			at := i
 			if !equal {
 				if i+1 >= len(out) {
-					return nil, nil, fmt.Errorf("%w: --model needs a value", errModelName)
+					return nil, nil, fmt.Errorf("%w: --model needs a value", config.ErrModelName)
 				}
 				i++
 				value = out[i]
 			}
-			route, err := resolveModelReference("command-line model", value, policy, catalog)
+			route, err := config.ResolveModelReference("command-line model", value, policy, catalog)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -51,7 +53,7 @@ func argumentsNeedCatalog(args []string) bool {
 				i++
 				value = args[i]
 			}
-			if !validModelID(value) {
+			if !config.ValidModelID(value) {
 				return true
 			}
 		} else if flagsWithValue[flag] && !equal {
@@ -61,7 +63,7 @@ func argumentsNeedCatalog(args []string) bool {
 	return false
 }
 
-func printModelPlan(w io.Writer, plan ModelPlan) {
+func printModelPlan(w io.Writer, plan config.ModelPlan) {
 	fmt.Fprintln(w, "ROLE\tPRIMARY MODEL\tBACKUP")
 	for _, route := range plan.Routes {
 		backup := strings.Join(markStandIns(route), " > ")
@@ -73,7 +75,7 @@ func printModelPlan(w io.Writer, plan ModelPlan) {
 }
 
 // markStandIns labels backups that serve the closest comparable model rather than the exact one.
-func markStandIns(route ModelRoute) []string {
+func markStandIns(route config.ModelRoute) []string {
 	out := make([]string, len(route.Fallbacks))
 	for i, id := range route.Fallbacks {
 		out[i] = id
@@ -84,16 +86,16 @@ func markStandIns(route ModelRoute) []string {
 	return out
 }
 
-func verifyModelPlan(ctx context.Context, bin, workspace string, plan ModelPlan) error {
-	if len(plan.fallbackChains()) == 0 {
+func verifyModelPlan(ctx context.Context, bin, workspace string, plan config.ModelPlan) error {
+	if len(plan.FallbackChains()) == 0 {
 		return nil
 	}
 	native, err := readNativeFallbacks(ctx, bin, workspace)
 	if err != nil {
 		return err
 	}
-	if err := errors.Join(plan.verifyFallbacks(native.declaredFallbacks()), plan.verifyFallbacks(native.Effective)); err != nil {
-		data, encodeErr := json.MarshalIndent(map[string]any{"modelFallback": plan.fallbackChains()}, "", "  ")
+	if err := errors.Join(plan.VerifyFallbacks(native.declaredFallbacks()), plan.VerifyFallbacks(native.Effective)); err != nil {
+		data, encodeErr := json.MarshalIndent(map[string]any{"modelFallback": plan.FallbackChains()}, "", "  ")
 		if encodeErr != nil {
 			return err
 		}
@@ -104,19 +106,19 @@ func verifyModelPlan(ctx context.Context, bin, workspace string, plan ModelPlan)
 
 // Maintenance never guesses a provider-specific ID for an unresolved name.
 // A normal launch replaces these baseline templates with catalog-resolved profiles.
-func maintenanceProfileConfig(cfg Config) Config {
-	cfg = cloneConfig(cfg)
-	if !validModelID(cfg.Model) {
-		cfg.Model = defaultModel
+func maintenanceProfileConfig(cfg config.Config) config.Config {
+	cfg = config.Clone(cfg)
+	if !config.ValidModelID(cfg.Model) {
+		cfg.Model = config.DefaultModel
 	}
-	if !validModelID(cfg.Expert) {
-		cfg.Expert = defaultExpertModel
+	if !config.ValidModelID(cfg.Expert) {
+		cfg.Expert = config.DefaultExpertModel
 	}
-	if !validModelID(cfg.Review.Model) {
-		cfg.Review.Model = defaultReviewModel
+	if !config.ValidModelID(cfg.Review.Model) {
+		cfg.Review.Model = config.DefaultReviewModel
 	}
 	for job, ref := range cfg.Routing {
-		if !validModelID(ref) {
+		if !config.ValidModelID(ref) {
 			delete(cfg.Routing, job)
 		}
 	}

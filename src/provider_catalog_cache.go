@@ -10,6 +10,9 @@ import (
 	"path/filepath"
 	"slices"
 	"time"
+
+	"github.com/codeliter/codeforge/src/config"
+	"github.com/codeliter/codeforge/src/fsutil"
 )
 
 const (
@@ -37,7 +40,7 @@ func empryoFingerprint(bin string) string {
 }
 
 func catalogCachePath(home string) string {
-	return filepath.Join(configDir(home), catalogCacheFile)
+	return filepath.Join(config.Dir(home), catalogCacheFile)
 }
 
 // readCatalogCache returns the saved models when they are fresh and belong to this Empryo, else nil.
@@ -69,10 +72,10 @@ func writeCatalogCache(home, bin string, providers, models []string, now time.Ti
 	if err != nil {
 		return
 	}
-	if err := os.MkdirAll(configDir(home), privateDir); err != nil {
+	if err := os.MkdirAll(config.Dir(home), privateDir); err != nil {
 		return
 	}
-	_ = atomicWriteFile(catalogCachePath(home), data, privateFile) //nolint:errcheck // best-effort cache
+	_ = fsutil.AtomicWriteFile(catalogCachePath(home), data, privateFile) //nolint:errcheck // best-effort cache
 }
 
 // clearCatalogCache forgets the saved catalog, for commands that change which providers are connected.

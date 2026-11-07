@@ -9,9 +9,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/huh"
+	"github.com/codeliter/codeforge/src/config"
 
+	"github.com/codeliter/codeforge/src/forms"
 	"github.com/codeliter/codeforge/src/guard"
 )
 
@@ -36,7 +36,7 @@ type initAnswers struct {
 }
 
 // runInit sets the persona: interactively on a terminal, or from flags in scripts.
-func runInit(ctx context.Context, home, bin string, cfg Config, args []string) error {
+func runInit(ctx context.Context, home, bin string, cfg config.Config, args []string) error {
 	ans, err := initFromArgs(args)
 	if err != nil {
 		return err
@@ -58,7 +58,7 @@ func runInit(ctx context.Context, home, bin string, cfg Config, args []string) e
 		}
 	}
 	if ans.scope == scopeGlobal {
-		_, statErr := os.Stat(filepath.Join(configDir(home), "persona.md"))
+		_, statErr := os.Stat(filepath.Join(config.Dir(home), "persona.md"))
 		if statErr != nil && !errors.Is(statErr, fs.ErrNotExist) {
 			return fmt.Errorf("checking persona: %w", statErr)
 		}
@@ -176,62 +176,31 @@ func initFromArgs(args []string) (initAnswers, error) {
 
 func askInit() (initAnswers, error) {
 	ans := initAnswers{scope: scopeGlobal, source: sourceLearn, repos: "."}
-
-	options := starterOptions(starters())
-
-	form := huh.NewForm(
-		huh.NewGroup(
-			huh.NewSelect[string]().
-				Title("Which persona are you setting up?").
-				Options(
-					huh.NewOption("Global: how I work, in every repository", scopeGlobal),
-					huh.NewOption("This repository: team conventions that override my global persona here", scopeRepo),
-				).
-				Value(&ans.scope),
-		),
-		huh.NewGroup(
-			huh.NewSelect[string]().
-				Title("Where should codeforge learn how you work?").
-				Options(
-					huh.NewOption("From my history in one or more repositories", sourceLearn),
-					huh.NewOption("Start from a ready-made persona (new repo or no history)", sourceStarter),
-				).
-				Value(&ans.source),
-		).WithHideFunc(func() bool { return ans.scope != scopeGlobal }),
-		huh.NewGroup(
-			huh.NewSelect[string]().
-				Title("Start the repository persona from").
-				Options(
-					huh.NewOption("A blank template I fill in", sourceBlank),
-					huh.NewOption("A ready-made persona", sourceStarter),
-				).
-				Value(&ans.source),
-		).WithHideFunc(func() bool { return ans.scope != scopeRepo }),
-		huh.NewGroup(
-			huh.NewInput().
-				Title("Repositories to learn from").
-				Description("Comma separated paths. Use another repo you have worked in when this one is new.").
-				Value(&ans.repos).
-				Validate(validateRepos),
-		).WithHideFunc(func() bool { return ans.scope != scopeGlobal || ans.source != sourceLearn }),
-		huh.NewGroup(
-			huh.NewSelect[string]().
-				Title("Starter persona").
-				Options(options...).
-				Value(&ans.starter),
-		).WithHideFunc(func() bool { return ans.source != sourceStarter }),
-		huh.NewGroup(
-			huh.NewText().
-				Title("Anything codeforge should always know? (optional)").
-				Description("For example: ticket format, PR template, words you avoid.").
-				Value(&ans.notes),
-		),
-	).WithProgramOptions(tea.WithAltScreen())
-
-	if err := form.Run(); err != nil {
-		return ans, fmt.Errorf("init form: %w", err)
+	// Two pages ask for the source, one per scope, so each offers only what makes sense there; both answer "source".
+	answers, err := forms.Run(forms.Form{Name: "init form", Groups: []forms.Group{
+		{Fields: []forms.Field{{Key: "scope", Kind: forms.Select, Title: "Which persona are you setting up?", Value: ans.scope, Options: []forms.Option{
+			{Label: "Global: how I work, in every repository", Value: scopeGlobal},
+			{Label: "This repository: team conventions that override my global persona here", Value: scopeRepo},
+		}}}},
+		{When: &forms.When{Key: "scope", Is: []string{scopeGlobal}}, Fields: []forms.Field{{Key: "source", Kind: forms.Select, Title: "Where should codeforge learn how you work?", Value: sourceLearn, Options: []forms.Option{
+			{Label: "From my history in one or more repositories", Value: sourceLearn},
+			{Label: "Start from a ready-made persona (new repo or no history)", Value: sourceStarter},
+		}}}},
+		{When: &forms.When{Key: "scope", Is: []string{scopeRepo}}, Fields: []forms.Field{{Key: "source", Kind: forms.Select, Title: "Start the repository persona from", Options: []forms.Option{
+			{Label: "A blank template I fill in", Value: sourceBlank},
+			{Label: "A ready-made persona", Value: sourceStarter},
+		}}}},
+		{When: &forms.When{Key: "scope", Is: []string{scopeGlobal}, And: &forms.When{Key: "source", Is: []string{sourceLearn}}}, Fields: []forms.Field{{Key: "repos", Kind: forms.Input, Title: "Repositories to learn from", Value: ans.repos, Check: forms.CheckPaths,
+			Description: "Comma separated paths. Use another repo you have worked in when this one is new."}}},
+		{When: &forms.When{Key: "source", Is: []string{sourceStarter}}, Fields: []forms.Field{{Key: "starter", Kind: forms.Select, Title: "Starter persona", Options: starterOptions(starters())}}},
+		{Fields: []forms.Field{{Key: "notes", Kind: forms.Text, Title: "Anything codeforge should always know? (optional)",
+			Description: "For example: ticket format, PR template, words you avoid."}}},
+	}})
+	if err != nil {
+		return ans, err
 	}
-
+	ans.scope, ans.source = answers.String("scope"), answers.String("source")
+	ans.repos, ans.starter, ans.notes = answers.String("repos"), answers.String("starter"), answers.String("notes")
 	// The repo scope has no "learn" option, so an untouched source means the blank template.
 	if ans.scope == scopeRepo && ans.source == sourceLearn {
 		ans.source = sourceBlank
@@ -243,14 +212,5 @@ func buildPersona(ctx context.Context, bin, model string, ans initAnswers) ([]by
 	if ans.source == sourceStarter {
 		return starterPersona(ans.starter)
 	}
-	return learnPersona(ctx, bin, model, splitList(ans.repos))
-}
-
-func validateRepos(s string) error {
-	for _, repo := range splitList(s) {
-		if _, err := os.Stat(repo); err != nil {
-			return fmt.Errorf("%s: %w", repo, err)
-		}
-	}
-	return nil
+	return learnPersona(ctx, bin, model, config.SplitList(ans.repos))
 }

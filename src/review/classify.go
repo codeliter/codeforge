@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/codeliter/codeforge/assets"
+	"github.com/codeliter/codeforge/src/text"
 )
 
 const (
@@ -144,11 +145,7 @@ const maxJudgeError = 160
 func firstError(errs []error) string {
 	for _, err := range errs {
 		if err != nil {
-			msg := err.Error()
-			if len(msg) > maxJudgeError {
-				msg = msg[:maxJudgeError] + "…"
-			}
-			return msg
+			return text.Shorten(err.Error(), maxJudgeError)
 		}
 	}
 	return "no reason"

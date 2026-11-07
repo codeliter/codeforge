@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/codeliter/codeforge/src/config"
+
 	"github.com/stretchr/testify/require"
 )
 
@@ -23,9 +25,9 @@ func TestAutoRepairVersion(t *testing.T) {
 	require.Empty(t, autoRepairVersion(home), "development builds never repair on their own")
 	withVersion(t, "0.5.3")
 	require.Equal(t, "0.5.3", autoRepairVersion(home), "no stamp means the installed files predate this version")
-	require.NoError(t, writeFile(configDir(home), repairStampFile, []byte("0.5.2\n"), privateFile))
+	require.NoError(t, writeFile(config.Dir(home), repairStampFile, []byte("0.5.2\n"), privateFile))
 	require.Equal(t, "0.5.3", autoRepairVersion(home), "an older stamp repairs")
-	require.NoError(t, writeFile(configDir(home), repairStampFile, []byte("0.5.3\n"), privateFile))
+	require.NoError(t, writeFile(config.Dir(home), repairStampFile, []byte("0.5.3\n"), privateFile))
 	require.Empty(t, autoRepairVersion(home), "the same version does not repair again")
 	t.Setenv(launchMarker, "1")
 	withVersion(t, "0.5.4")
@@ -53,7 +55,7 @@ func TestAutoRepairRebuildsOnceAndKeepsUserData(t *testing.T) {
 	require.Contains(t, string(data), "notify-user", "user hooks are kept")
 	require.Contains(t, string(data), filepath.Join(empryoDir, "hooks", "cf"), "the guard points at the stable hook binary")
 	require.NoFileExists(t, shimPath, "the gh shim is removed")
-	stamp, err := os.ReadFile(filepath.Join(configDir(home), repairStampFile))
+	stamp, err := os.ReadFile(filepath.Join(config.Dir(home), repairStampFile))
 	require.NoError(t, err)
 	require.Equal(t, "0.5.3\n", string(stamp))
 	persona, err := os.ReadFile(global)

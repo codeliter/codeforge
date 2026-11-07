@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/codeliter/codeforge/src/config"
+
 	"github.com/stretchr/testify/require"
 
 	"github.com/codeliter/codeforge/src/store"
@@ -89,7 +91,7 @@ func TestRunObserve_RealPayloadBecomesAHabit(t *testing.T) {
 	require.Len(t, habits, 1)
 	require.Equal(t, "go test ./...", habits[0].Command)
 
-	data, err := os.ReadFile(filepath.Join(configDir(home), shapeLogFile))
+	data, err := os.ReadFile(filepath.Join(config.Dir(home), shapeLogFile))
 	require.NoError(t, err)
 	require.Contains(t, string(data), "response_keys=output,success result=recorded:passed")
 }
@@ -100,7 +102,7 @@ func TestRunObserve_ShapeLogSaysWhyAnEventWasSkipped(t *testing.T) {
 	t.Setenv("CODEFORGE_GUARD", "")
 	runObserve(t.Context(), home, observePayloadJSON(t, repo, "PostToolUse", "Bash", "ls -la", `{"output":"x","success":true}`))
 	runObserve(t.Context(), home, observePayloadJSON(t, repo, "PostToolUse", "Bash", "go test ./...", `{"output":"x","success":true}`))
-	data, err := os.ReadFile(filepath.Join(configDir(home), shapeLogFile))
+	data, err := os.ReadFile(filepath.Join(config.Dir(home), shapeLogFile))
 	require.NoError(t, err)
 	require.Contains(t, string(data), "result=skipped:not-a-verification-command")
 	require.Contains(t, string(data), "result=skipped:session-not-launched-by-codeforge-here")
@@ -231,7 +233,7 @@ func TestRunObserve_LogsShapeWithoutValues(t *testing.T) {
 	t.Setenv("CODEFORGE_GUARD", "")
 	runObserve(t.Context(), home, observePayloadJSON(t, repo, "PostToolUse", "Bash", "echo secret-value", `{"output":"secret-value","isError":false}`))
 
-	data, err := os.ReadFile(filepath.Join(configDir(home), shapeLogFile))
+	data, err := os.ReadFile(filepath.Join(config.Dir(home), shapeLogFile))
 	require.NoError(t, err)
 	require.Contains(t, string(data), "event=PostToolUse response_keys=isError,output result=")
 	require.NotContains(t, string(data), "secret-value", "only key names are logged")

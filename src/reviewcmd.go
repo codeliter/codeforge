@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/codeliter/codeforge/src/config"
+
 	"github.com/codeliter/codeforge/src/effort"
 	"github.com/codeliter/codeforge/src/guard"
 	"github.com/codeliter/codeforge/src/review"
@@ -64,7 +66,7 @@ type jurorFactory func(ctx context.Context, models []string, tier review.Tier, s
 // never waits for them. Their findings are printed after the review (see printLeads). scratch is set when the change is
 // not in this checkout. Without a pipeline or a factory the brief carries the old dispatch wording, and with no time for
 // the jurors it carries no jury wording at all.
-func panelBrief(ctx context.Context, rc ReviewConfig, jurors jurorFactory, tier review.Tier, scratch bool, brief func(tier review.Tier, jury []string) string) string {
+func panelBrief(ctx context.Context, rc config.ReviewConfig, jurors jurorFactory, tier review.Tier, scratch bool, brief func(tier review.Tier, jury []string) string) string {
 	models := review.JuryFor(tier, rc.SecondOpinion)
 	pipe := review.PipelineOf(ctx)
 	if jurors == nil || pipe == nil || len(models) == 0 {
@@ -115,7 +117,7 @@ func clampFlag(args []string, name string, limit int) []string {
 
 // reviewArgs turns `codeforge review [pr] [--repo owner/name] [empryo flags]` into an Empryo launch.
 // With no PR it reviews the current branch and uncommitted work against the base branch.
-func reviewArgs(ctx context.Context, bin string, rc ReviewConfig, judges []review.Judge, jurors jurorFactory, args []string) ([]string, error) {
+func reviewArgs(ctx context.Context, bin string, rc config.ReviewConfig, judges []review.Judge, jurors jurorFactory, args []string) ([]string, error) {
 	var ref, repo string
 	var rest []string
 	comment, preapproved := false, false

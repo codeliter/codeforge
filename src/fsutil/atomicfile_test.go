@@ -1,4 +1,4 @@
-package src
+package fsutil
 
 import (
 	"bytes"
@@ -13,7 +13,7 @@ func TestAtomicManagedFileReadersSeeCompleteVersions(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "profile.md")
 	a, b := bytes.Repeat([]byte("a"), 128*1024), bytes.Repeat([]byte("b"), 128*1024)
-	require.NoError(t, atomicWriteFile(path, a, privateFile))
+	require.NoError(t, AtomicWriteFile(path, a, PrivateFile))
 	done := make(chan error, 1)
 	go func() {
 		for i := 0; i < 30; i++ {
@@ -21,7 +21,7 @@ func TestAtomicManagedFileReadersSeeCompleteVersions(t *testing.T) {
 			if i%2 == 0 {
 				body = b
 			}
-			if err := atomicWriteFile(path, body, privateFile); err != nil {
+			if err := AtomicWriteFile(path, body, PrivateFile); err != nil {
 				done <- err
 				return
 			}
@@ -39,17 +39,4 @@ func TestAtomicManagedFileReadersSeeCompleteVersions(t *testing.T) {
 			require.True(t, bytes.Equal(data, a) || bytes.Equal(data, b), "readers must never see a truncated profile")
 		}
 	}
-}
-
-func TestUnchangedProjectProfilesKeepTheirFileIdentity(t *testing.T) {
-	root := t.TempDir()
-	cfg := Config{Model: "provider/coder", Review: ReviewConfig{Model: "other/reviewer"}}
-	require.NoError(t, syncProjectAgents(root, cfg))
-	path := filepath.Join(root, ".empryo", "agents", "codeforge-work.md")
-	before, err := os.Stat(path)
-	require.NoError(t, err)
-	require.NoError(t, syncProjectAgents(root, cfg))
-	after, err := os.Stat(path)
-	require.NoError(t, err)
-	require.True(t, os.SameFile(before, after))
 }

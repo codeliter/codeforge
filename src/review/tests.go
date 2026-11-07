@@ -7,7 +7,8 @@ import (
 	"slices"
 	"strings"
 	"time"
-	"unicode/utf8"
+
+	"github.com/codeliter/codeforge/src/text"
 )
 
 const (
@@ -52,11 +53,11 @@ func Verify(ctx context.Context, r DirRunner, repo string, files []string) []Fin
 		return nil
 	}
 
-	text := string(out)
+	output := string(out)
 	var findings []Finding
 	// go test prints a package's output, then its ok or FAIL line, so each section belongs to the line that closes it.
 	var section []string
-	for line := range strings.SplitSeq(text, "\n") {
+	for line := range strings.SplitSeq(output, "\n") {
 		rest, ok := strings.CutPrefix(line, "FAIL\t")
 		if !ok {
 			if isPackageResult(line) {
@@ -75,7 +76,7 @@ func Verify(ctx context.Context, r DirRunner, repo string, files []string) []Fin
 	}
 	if len(findings) == 0 {
 		// A build failure or a missing toolchain prints no FAIL line; it still means the change is unverified.
-		findings = append(findings, Finding{File: fileIn(dirs, files, ""), What: "the repository's own tests could not be run: " + tail(text)})
+		findings = append(findings, Finding{File: fileIn(dirs, files, ""), What: "the repository's own tests could not be run: " + tail(output)})
 	}
 	return findings
 }
@@ -132,19 +133,8 @@ func reason(out string) string {
 	for line := range strings.SplitSeq(out, "\n") {
 		line = strings.TrimSpace(line)
 		if strings.Contains(line, "--- FAIL") || strings.Contains(line, "build failed") || strings.Contains(line, "cannot find") {
-			return ": " + truncateRunes(line, maxVerifyShown)
+			return ": " + text.Cut(line, maxVerifyShown)
 		}
 	}
 	return ""
-}
-
-// truncateRunes cuts at a rune boundary, so a multi-byte character is never split.
-func truncateRunes(s string, limit int) string {
-	if len(s) <= limit {
-		return s
-	}
-	for limit > 0 && !utf8.RuneStart(s[limit]) {
-		limit--
-	}
-	return s[:limit]
 }

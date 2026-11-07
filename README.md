@@ -9,6 +9,13 @@ It runs on [Empryo](https://empryo.com).
 brew install codeliter/tap/codeforge
 ```
 
+Building from source? Use `make install`, not `go install`: Codeforge is two programs, `codeforge` and
+`codeforge-forms` (its menus and prompts), and `make install` installs both.
+
+```sh
+git clone https://github.com/codeliter/codeforge && cd codeforge && make install
+```
+
 You also need Git 2.54 or newer and GitHub CLI (`gh`).
 
 ## 2. Set up your project

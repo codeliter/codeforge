@@ -7,7 +7,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/charmbracelet/huh"
+	"github.com/codeliter/codeforge/src/config"
+	"github.com/codeliter/codeforge/src/forms"
 )
 
 func catalogProviders(catalog []string) []string {
@@ -22,22 +23,26 @@ func catalogProviders(catalog []string) []string {
 	return slices.Compact(ids)
 }
 
-func pickProviderPolicy(cfg *Config, catalog []string) error {
+func pickProviderPolicy(cfg *config.Config, catalog []string) error {
 	mode := "defaults"
 	if cfg.Providers == nil || cfg.Providers.Primary == "" && len(cfg.Providers.Rules) == 0 {
 		mode = "advanced"
 	}
-	if err := runForm("provider selection style", huh.NewSelect[string]().Title("How should models use providers?").Options(huh.NewOption("Choose primary/fallback once, then use model names (recommended)", "defaults"), huh.NewOption("Keep explicit provider/model choices (advanced)", "advanced")).Value(&mode)); err != nil {
+	mode, err := forms.Choose("How should models use providers?", "", []forms.Option{
+		{Label: "Choose primary/fallback once, then use model names (recommended)", Value: "defaults"},
+		{Label: "Keep explicit provider/model choices (advanced)", Value: "advanced"},
+	}, mode)
+	if err != nil {
 		return err
 	}
 	if mode == "advanced" {
 		// Resolve names using the previous policy before dropping that context.
-		if needsModelCatalog(*cfg) {
-			source := cloneConfig(*cfg)
+		if config.NeedsCatalog(*cfg) {
+			source := config.Clone(*cfg)
 			if source.Providers != nil {
 				source.Providers.Fallback, source.Providers.Fallbacks = "", nil
 			}
-			plan, err := resolveModelPlan(source, catalog)
+			plan, err := config.ResolvePlan(source, catalog)
 			if err != nil {
 				return err
 			}
@@ -51,7 +56,7 @@ func pickProviderPolicy(cfg *Config, catalog []string) error {
 	}
 	ids := catalogProviders(catalog)
 	if len(ids) == 0 {
-		return errNoModels
+		return config.ErrNoModels
 	}
 	primary, backup, extra := ids[0], "", []string(nil)
 	if slices.Contains(ids, "llmgateway") {
@@ -60,8 +65,8 @@ func pickProviderPolicy(cfg *Config, catalog []string) error {
 		primary = "copilot"
 	}
 	if cfg.Providers != nil {
-		if slices.Contains(ids, providerID(cfg.Providers.Primary)) {
-			primary = providerID(cfg.Providers.Primary)
+		if slices.Contains(ids, config.ProviderID(cfg.Providers.Primary)) {
+			primary = config.ProviderID(cfg.Providers.Primary)
 		}
 		if backups := cfg.Providers.Backups(); len(backups) > 0 {
 			backup, extra = backups[0], backups[1:]
@@ -69,27 +74,27 @@ func pickProviderPolicy(cfg *Config, catalog []string) error {
 	} else if primary != "copilot" && slices.Contains(ids, "copilot") {
 		backup = "copilot"
 	}
-	var primaries []huh.Option[string]
+	var primaries []forms.Option
 	for _, id := range ids {
 		label := id
 		if id == "llmgateway" {
 			label = "LLM Gateway / DevPass (uses your existing sign-in)"
 		}
-		primaries = append(primaries, huh.NewOption(label, id))
+		primaries = append(primaries, forms.Option{Label: label, Value: id})
 	}
-	if err := runForm("primary provider", huh.NewSelect[string]().Title("Primary provider").Description("Codeforge does not change accounts, keys, or subscription billing.").Options(primaries...).Value(&primary)); err != nil {
+	if primary, err = forms.Choose("Primary provider", "Codeforge does not change accounts, keys, or subscription billing.", primaries, primary); err != nil {
 		return err
 	}
 	if backup == primary || !slices.Contains(ids, backup) {
 		backup = ""
 	}
-	fallbacks := []huh.Option[string]{huh.NewOption("Keep native Empryo fallback policy (no Codeforge preference)", "")}
+	fallbacks := []forms.Option{{Label: "Keep native Empryo fallback policy (no Codeforge preference)", Value: ""}}
 	for _, id := range ids {
 		if id != primary {
-			fallbacks = append(fallbacks, huh.NewOption(id, id))
+			fallbacks = append(fallbacks, forms.Option{Label: id, Value: id})
 		}
 	}
-	if err := runForm("fallback provider", huh.NewSelect[string]().Title("First fallback provider").Description("Empryo switches to it when the primary fails or runs out of quota. Add more, in order, with codeforge provider set.").Options(fallbacks...).Value(&backup)); err != nil {
+	if backup, err = forms.Choose("First fallback provider", "Empryo switches to it when the primary fails or runs out of quota. Add more, in order, with codeforge provider set.", fallbacks, backup); err != nil {
 		return err
 	}
 	var chain []string
@@ -102,53 +107,53 @@ func pickProviderPolicy(cfg *Config, catalog []string) error {
 			}
 		}
 	}
-	policy := newProviderPolicy(primary, chain)
+	policy := config.NewProviderPolicy(primary, chain)
 	if cfg.Providers != nil {
-		policy.Rules = cfg.Providers.clone().Rules
+		policy.Rules = cfg.Providers.Clone().Rules
 	}
 	useProviderDefaults(cfg, policy, catalog)
 	return nil
 }
-func useProviderDefaults(cfg *Config, policy *ProviderPolicy, catalog []string) {
-	cfg.Providers = policy.clone()
+func useProviderDefaults(cfg *config.Config, policy *config.ProviderPolicy, catalog []string) {
+	cfg.Providers = policy.Clone()
 	// A pinned ID becomes a name only when the provider its model runs on first (its rule's, else the default) serves it.
 	name := func(ref string) string {
-		if primary := cfg.Providers.primaryFor(modelName(ref)); primary != "" {
-			if id, err := catalogModel(modelName(ref), primary, catalog); err == nil {
-				return modelName(id)
+		if primary := cfg.Providers.PrimaryFor(config.ModelName(ref)); primary != "" {
+			if id, err := config.CatalogModel(config.ModelName(ref), primary, catalog); err == nil {
+				return config.ModelName(id)
 			}
 		}
 		return ref
 	}
-	for _, role := range roles {
-		refs := slices.Clone(current(*cfg, role.key))
+	for _, role := range config.Roles {
+		refs := slices.Clone(config.Current(*cfg, role.Key))
 		for i, ref := range refs {
-			if validModelID(ref) {
+			if config.ValidModelID(ref) {
 				refs[i] = name(ref)
 			}
 		}
-		assignModelRole(cfg, role.key, refs)
+		config.AssignRole(cfg, role.Key, refs)
 	}
 	for job, ref := range cfg.Routing {
-		if validModelID(ref) {
+		if config.ValidModelID(ref) {
 			cfg.Routing[job] = name(ref)
 		}
 	}
 }
 
-func providerModelOptions(catalog []string, policy *ProviderPolicy, saved ...string) []huh.Option[string] {
+func providerModelOptions(catalog []string, policy *config.ProviderPolicy, saved ...string) []forms.Option {
 	if policy == nil || policy.Primary == "" && len(policy.Rules) == 0 {
 		return modelOptions(catalog, saved...)
 	}
-	var options []huh.Option[string]
+	var options []forms.Option
 	seen := make(map[string]bool)
 	for _, id := range catalog {
 		p, _, _ := strings.Cut(id, "/")
-		value := modelName(id)
+		value := config.ModelName(id)
 		// Each model is offered on the provider its own chain starts with: its rule's, else the default one.
-		chain := policy.chainFor(value)
-		primary := providerID(chain.Primary)
-		if !suggestedModel(id) {
+		chain := policy.ChainFor(value)
+		primary := config.ProviderID(chain.Primary)
+		if !config.SuggestedModel(id) {
 			continue
 		}
 		label := value
@@ -158,7 +163,7 @@ func providerModelOptions(catalog []string, policy *ProviderPolicy, saved ...str
 			ref, text := id, id+" (explicit; native fallback)"
 			same := 0
 			for _, other := range catalog {
-				if modelReferenceKey(modelName(other)) == modelReferenceKey(value) {
+				if config.ModelReferenceKey(config.ModelName(other)) == config.ModelReferenceKey(value) {
 					same++
 				}
 			}
@@ -167,14 +172,14 @@ func providerModelOptions(catalog []string, policy *ProviderPolicy, saved ...str
 			}
 			if !seen[ref] {
 				seen[ref] = true
-				options = append(options, huh.NewOption(text, ref))
+				options = append(options, forms.Option{Label: text, Value: ref})
 			}
 			continue
 		}
 		if p != primary {
 			continue
 		}
-		if _, err := catalogModel(value, primary, catalog); err != nil {
+		if _, err := config.CatalogModel(value, primary, catalog); err != nil {
 			value = id
 			label = id + " (explicit override; native fallback)"
 		}
@@ -187,14 +192,14 @@ func providerModelOptions(catalog []string, policy *ProviderPolicy, saved ...str
 			missing := false
 			// Under a rule a stand-in stays in the model's own family, as resolveModelReference does.
 			standIns := catalog
-			if _, ruled := policy.ruleFor(value); ruled {
-				fam := family(id)
-				standIns = slices.DeleteFunc(slices.Clone(catalog), func(c string) bool { return family(c) != fam })
+			if _, ruled := policy.RuleFor(value); ruled {
+				fam := config.Family(id)
+				standIns = slices.DeleteFunc(slices.Clone(catalog), func(c string) bool { return config.Family(c) != fam })
 			}
 			for _, provider := range chain.Backups() {
-				if backup, err := catalogModel(value, provider, catalog); err == nil {
+				if backup, err := config.CatalogModel(value, provider, catalog); err == nil {
 					backups = append(backups, backup)
-				} else if standIn, ok := equivalentModel(id, provider, standIns); ok {
+				} else if standIn, ok := config.EquivalentModel(id, provider, standIns); ok {
 					backups = append(backups, standIn+" (closest)")
 				} else {
 					missing = true
@@ -206,23 +211,23 @@ func providerModelOptions(catalog []string, policy *ProviderPolicy, saved ...str
 				label += " (backups: " + strings.Join(backups, " > ") + ")"
 			}
 		}
-		options = append(options, huh.NewOption(label, value))
+		options = append(options, forms.Option{Label: label, Value: value})
 	}
 	for _, ref := range saved {
-		if ref == "" || seen[ref] || !suggestedModel(ref) {
+		if ref == "" || seen[ref] || !config.SuggestedModel(ref) {
 			continue
 		}
 		seen[ref] = true
 		label := "Saved name: " + ref
-		if validModelID(ref) {
+		if config.ValidModelID(ref) {
 			label = "Saved explicit override: " + ref
 		}
-		options = append(options, huh.NewOption(label, ref))
+		options = append(options, forms.Option{Label: label, Value: ref})
 	}
 	return options
 }
 
-func modelPlanPreview(plan ModelPlan) string {
+func modelPlanPreview(plan config.ModelPlan) string {
 	var text strings.Builder
 	fmt.Fprintln(&text, "Resolved catalog IDs:")
 	for _, route := range plan.Routes {
@@ -232,7 +237,7 @@ func modelPlanPreview(plan ModelPlan) string {
 		}
 		fmt.Fprintf(&text, "%s: %s; backup: %s\n", route.Role, route.Primary, backup)
 	}
-	if len(plan.fallbackChains()) > 0 {
+	if len(plan.FallbackChains()) > 0 {
 		fmt.Fprintln(&text, "Normal launches only verify these chains. Run codeforge models apply to choose scope, review changes, and confirm applying them.")
 	}
 	return text.String()

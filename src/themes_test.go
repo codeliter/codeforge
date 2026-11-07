@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/codeliter/codeforge/src/config"
+
 	"github.com/stretchr/testify/require"
 
 	"github.com/codeliter/codeforge/assets"
@@ -116,7 +118,7 @@ func TestCodeforgeSteelThemes_AreReadableAndCoolSteel(t *testing.T) {
 
 func TestSyncAssets_InstallsTheThemesBesideProfiles(t *testing.T) {
 	empryo := t.TempDir()
-	require.NoError(t, syncAssets(empryo, Config{}))
+	require.NoError(t, syncAssets(empryo, config.Config{}))
 	for _, name := range []string{"codeforge-steel.json", "codeforge-steel-light.json"} {
 		got, err := os.ReadFile(filepath.Join(empryo, "themes", name))
 		require.NoError(t, err)

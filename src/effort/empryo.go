@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"os/exec"
 	"time"
+
+	"github.com/codeliter/codeforge/src/text"
 )
 
 // DefaultJudges pairs two model families so one family's blind spots do not decide alone.
@@ -81,7 +83,7 @@ func (j EmpryoJudge) Ask(ctx context.Context, system, user string) (string, erro
 	var res EmpryoResult
 	if err := json.Unmarshal(out, &res); err != nil {
 		if runErr != nil {
-			return "", fmt.Errorf("running empryo: %w: %s", runErr, truncate(stderr.String(), maxStderrBytes))
+			return "", fmt.Errorf("running empryo: %w: %s", runErr, text.Shorten(stderr.String(), maxStderrBytes))
 		}
 		return "", fmt.Errorf("decoding empryo result: %w", err)
 	}
@@ -97,7 +99,7 @@ func (j EmpryoJudge) Ask(ctx context.Context, system, user string) (string, erro
 		return "", fmt.Errorf("%w: %s", errEmpryo, res.Error)
 	}
 	if runErr != nil {
-		return "", fmt.Errorf("running empryo: %w: %s", runErr, truncate(stderr.String(), maxStderrBytes))
+		return "", fmt.Errorf("running empryo: %w: %s", runErr, text.Shorten(stderr.String(), maxStderrBytes))
 	}
 	return "", fmt.Errorf("%w: empty answer", errEmpryo)
 }

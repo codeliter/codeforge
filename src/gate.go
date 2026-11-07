@@ -13,6 +13,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/codeliter/codeforge/src/config"
+
 	"github.com/codeliter/codeforge/assets"
 	"github.com/codeliter/codeforge/src/guard"
 	"github.com/codeliter/codeforge/src/review"
@@ -23,12 +25,12 @@ import (
 var errGateFailed = errors.New("review gate failed")
 
 func stateDir(home string) string {
-	return configDir(home)
+	return config.Dir(home)
 }
 
 // runGate reviews the current branch and uncommitted work and records a pass. It is voluntary: nothing,
 // pushing and opening a PR included, waits for it.
-func runGate(ctx context.Context, home, bin string, cfg Config, w io.Writer) error {
+func runGate(ctx context.Context, home, bin string, cfg config.Config, w io.Writer) error {
 	// The gate is a review, so it has the same hard limit as codeforge review: one clock for collecting, classifying,
 	// the reviewers and the tests. The reserve after the panel deadline is for the tree checks and recording the pass.
 	end := time.Now().Add(review.HardLimit)
@@ -59,7 +61,7 @@ func runGate(ctx context.Context, home, bin string, cfg Config, w io.Writer) err
 	// A follow-up round after blocking findings sends the findings and only the files changed since, not the whole pack,
 	// and keeps the tier the earlier round was judged at instead of paying the judges to size the same work again.
 	usage := &gateUsage{}
-	rounds := review.Rounds{Dir: filepath.Join(configDir(home), "review-rounds")}
+	rounds := review.Rounds{Dir: filepath.Join(config.Dir(home), "review-rounds")}
 	roundKey := review.RoundKey(repo, local.Branch, local.Base)
 	digests := review.FileDigests(repo, local.Files)
 	packed, note := local, ""
@@ -81,7 +83,7 @@ func runGate(ctx context.Context, home, bin string, cfg Config, w io.Writer) err
 
 	// Cheap judges read the change and size the review; simple changes get one reviewer, risky ones the jury.
 	if tier.Name == "" {
-		classes := review.TierCache{Dir: filepath.Join(configDir(home), "review-cache")}
+		classes := review.TierCache{Dir: filepath.Join(config.Dir(home), "review-cache")}
 		classKey := review.CacheKey(tree, strings.Join(cfg.Judges, ","), assets.ReviewRubric)
 		var seen bool
 		if tier, why, seen = classes.Get(classKey, time.Now()); !seen {
@@ -106,7 +108,7 @@ func runGate(ctx context.Context, home, bin string, cfg Config, w io.Writer) err
 	brief := review.PromptLocal(local, tier, nil) + note + review.Pack(ctx, review.ExecRunner{}, repo, packed, tier)
 	rubric := review.CacheKey(assets.Gate, review.VerdictInstructions, tier.Name, strconv.FormatBool(followUp))
 	opts := review.JuryOptions{
-		Cache:    &review.Cache{Dir: filepath.Join(configDir(home), "review-cache")},
+		Cache:    &review.Cache{Dir: filepath.Join(config.Dir(home), "review-cache")},
 		CacheKey: func(model string) string { return review.CacheKey(tree, model, rubric) },
 		// Every reviewer finishes: cancelling the others at the first blocker is why findings arrived one round at a time.
 		StopEarly: false,
@@ -213,7 +215,7 @@ func runGate(ctx context.Context, home, bin string, cfg Config, w io.Writer) err
 
 // reviewerFor picks the reviewer for a tier: the light model for docs when one is set, else the normal reviewer.
 // The jury for bigger tiers always keeps the normal reviewer first.
-func reviewerFor(t review.Tier, rc ReviewConfig) string {
+func reviewerFor(t review.Tier, rc config.ReviewConfig) string {
 	if t.Light && rc.Light != "" {
 		return rc.Light
 	}

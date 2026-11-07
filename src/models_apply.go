@@ -12,7 +12,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/charmbracelet/huh"
+	"github.com/codeliter/codeforge/src/config"
+	"github.com/codeliter/codeforge/src/forms"
 
 	"github.com/codeliter/codeforge/src/guard"
 )
@@ -54,26 +55,26 @@ func defaultModelApplyScope(inProject bool) string {
 	}
 	return "global"
 }
-func readModelApplyConfig(home, project, scope string) (Config, error) {
+func readModelApplyConfig(home, project, scope string) (config.Config, error) {
 	cfg, _, err := readModelApplyLayers(home, project, scope)
 	return cfg, err
 }
 
 // readModelApplyLayers is readModelApplyConfig that also returns the project file's own settings
 // (empty for global scope), read once, so callers never trigger a second trust prompt for the same file.
-func readModelApplyLayers(home, project, scope string) (merged, local Config, err error) {
-	merged, err = readConfigFile(home)
+func readModelApplyLayers(home, project, scope string) (merged, local config.Config, err error) {
+	merged, err = config.ReadFile(home)
 	if err != nil {
-		return merged, Config{}, err
+		return merged, config.Config{}, err
 	}
 	if scope == "project" {
-		if local, err = readTrustedProjectConfig(home, project); err != nil {
+		if local, err = config.ReadTrustedProject(home, project, modelTrustApprover()); err != nil {
 			return merged, local, err
 		}
-		merged = mergeConfig(merged, local)
+		merged = config.Merge(merged, local)
 	}
-	merged = configDefaults(merged)
-	return merged, local, validate(merged)
+	merged = config.Defaults(merged)
+	return merged, local, config.Validate(merged)
 }
 
 func runModelApply(ctx context.Context, home, bin string, args []string) error {
@@ -93,16 +94,16 @@ func runModelApply(ctx context.Context, home, bin string, args []string) error {
 		root = wd
 	}
 	if scope == "" {
-		_, projectErr := os.Stat(projectConfigPath(root))
+		_, projectErr := os.Stat(config.ProjectPath(root))
 		scope = defaultModelApplyScope(gitErr == nil || projectErr == nil)
-		if sameConfigScope(home, root) {
+		if config.SameScope(home, root) {
 			scope = "global"
 		}
-		options := []huh.Option[string]{huh.NewOption("Global defaults (projects can override)", "global")}
-		if !sameConfigScope(home, root) {
-			options = append(options, huh.NewOption("This project: "+root, "project"))
+		options := []forms.Option{{Label: "Global defaults (projects can override)", Value: "global"}}
+		if !config.SameScope(home, root) {
+			options = append(options, forms.Option{Label: "This project: " + root, Value: "project"})
 		}
-		if err := runForm("apply model settings scope", huh.NewSelect[string]().Title("Where should these model settings apply?").Description(applyScopeDescription(recommended)).Options(options...).Value(&scope)); err != nil {
+		if scope, err = forms.Choose("Where should these model settings apply?", applyScopeDescription(recommended), options, scope); err != nil {
 			return err
 		}
 	}
@@ -134,14 +135,14 @@ func runModelApply(ctx context.Context, home, bin string, args []string) error {
 			return err
 		}
 	}
-	if catalog == nil && needsModelCatalog(cfg) {
+	if catalog == nil && config.NeedsCatalog(cfg) {
 		fmt.Fprintln(os.Stderr, "codeforge: resolving saved model choices through connected providers...")
 		catalog, err = connectedModelCatalogAt(ctx, bin, workspace)
 		if err != nil {
 			return err
 		}
 	}
-	plan, err := resolveModelPlan(cfg, catalog)
+	plan, err := config.ResolvePlan(cfg, catalog)
 	if err != nil {
 		return err
 	}
@@ -155,17 +156,14 @@ func runModelApply(ctx context.Context, home, bin string, args []string) error {
 		return func(preview string) bool {
 			description := fmt.Sprintf("Native target: %q\n%s", target, preview)
 			fmt.Fprintln(os.Stderr, description)
-			approved := false
-			if err := runForm("confirm native model settings", huh.NewConfirm().Title(title).Description(description).Value(&approved)); err != nil {
-				return false
-			}
-			return approved
+			approved, err := forms.YesNo(title, description)
+			return err == nil && approved
 		}
 	}
 	if err := applyModelPlan(ctx, bin, workspace, scope, plan, confirmNative("Apply these changes to "+scope+" Empryo settings?")); err != nil {
 		return err
 	}
-	if scope == "global" && !sameConfigScope(home, root) {
+	if scope == "global" && !config.SameScope(home, root) {
 		if warning := globalDefaultModelShadowed(root, plan); warning != "" {
 			fmt.Fprintln(os.Stderr, "codeforge: "+warning)
 		}
@@ -180,34 +178,34 @@ func applyScopeDescription(recommended bool) string {
 }
 
 // recommendedModelConfig replaces every role with a recommendation where one exists.
-func recommendedModelConfig(cfg Config, catalog []string) (Config, map[string][]string, error) {
-	next := cloneConfig(cfg)
+func recommendedModelConfig(cfg config.Config, catalog []string) (config.Config, map[string][]string, error) {
+	next := config.Clone(cfg)
 	rec := recommendConfigured(catalog, next, false)
-	for _, r := range roles {
-		if len(rec[r.key]) > 0 {
-			assignModelRole(&next, r.key, slices.Clone(rec[r.key]))
+	for _, r := range config.Roles {
+		if len(rec[r.Key]) > 0 {
+			config.AssignRole(&next, r.Key, slices.Clone(rec[r.Key]))
 		}
 	}
-	if err := validate(next); err != nil {
+	if err := config.Validate(next); err != nil {
 		return cfg, rec, err
 	}
-	if _, err := resolveModelPlan(next, catalog); err != nil {
+	if _, err := config.ResolvePlan(next, catalog); err != nil {
 		return cfg, rec, err
 	}
 	return next, rec, nil
 }
 
-func recommendedModelsPreview(before, after Config) (string, bool) {
+func recommendedModelsPreview(before, after config.Config) (string, bool) {
 	var text strings.Builder
 	changed := false
 	fmt.Fprintln(&text, "Recommended role changes:")
-	for _, r := range roles {
-		old, next := current(before, r.key), current(after, r.key)
+	for _, r := range config.Roles {
+		old, next := config.Current(before, r.Key), config.Current(after, r.Key)
 		if slices.Equal(old, next) {
 			continue
 		}
 		changed = true
-		fmt.Fprintf(&text, "  %s: %s -> %s\n", r.key, displayModels(old), displayModels(next))
+		fmt.Fprintf(&text, "  %s: %s -> %s\n", r.Key, displayModels(old), displayModels(next))
 	}
 	return text.String(), changed
 }
@@ -221,14 +219,11 @@ func displayModels(ids []string) string {
 
 func confirmRecommendedModels(scope, preview string) bool {
 	fmt.Fprintln(os.Stderr, preview)
-	ok := false
-	if err := runForm("confirm recommended models", huh.NewConfirm().Title("Save these recommended models to "+scope+" Codeforge settings?").Description(preview).Value(&ok)); err != nil {
-		return false
-	}
-	return ok
+	ok, err := forms.YesNo("Save these recommended models to "+scope+" Codeforge settings?", preview)
+	return err == nil && ok
 }
 
-func saveRecommendedModels(home, root, scope string, cfg Config, catalog []string, approve func(string, string) bool) (Config, error) {
+func saveRecommendedModels(home, root, scope string, cfg config.Config, catalog []string, approve func(string, string) bool) (config.Config, error) {
 	next, _, err := recommendedModelConfig(cfg, catalog)
 	if err != nil {
 		return cfg, err
@@ -242,41 +237,41 @@ func saveRecommendedModels(home, root, scope string, cfg Config, catalog []strin
 		return cfg, errModelApplyCancelled
 	}
 	if scope == "global" {
-		global, err := readConfigFile(home)
+		global, err := config.ReadFile(home)
 		if err != nil {
 			return cfg, err
 		}
-		for _, r := range roles {
-			assignModelRole(&global, r.key, slices.Clone(current(next, r.key)))
+		for _, r := range config.Roles {
+			config.AssignRole(&global, r.Key, slices.Clone(config.Current(next, r.Key)))
 		}
-		if err := writeConfigFile(home, global); err != nil {
+		if err := config.WriteFile(home, global); err != nil {
 			return cfg, err
 		}
-		fmt.Fprintf(os.Stdout, "Saved recommended models to %s.\n", filepath.Join(configDir(home), "config.yaml"))
+		fmt.Fprintf(os.Stdout, "Saved recommended models to %s.\n", filepath.Join(config.Dir(home), "config.yaml"))
 		return next, nil
 	}
-	if err := ensureProjectModelEditing(home, root, func() bool {
+	if err := config.EnsureProjectEditing(home, root, func() bool {
 		return confirm("Replace the unapproved project model file with recommended choices? It is kept if you cancel.")
 	}); err != nil {
 		return cfg, err
 	}
 	if isSymlinked(root, filepath.Join(".codeforge", "config.yaml")) {
-		return cfg, errConfigSymlink
+		return cfg, config.ErrConfigSymlink
 	}
-	local, err := readTrustedProjectConfig(home, root)
+	local, err := config.ReadTrustedProject(home, root, modelTrustApprover())
 	if err != nil {
 		return cfg, err
 	}
 	delta := projectModelDelta(local, cfg, next)
 	// Recommendations change roles only; inherited helper routing must stay inherited.
-	delta.Routing = cloneConfig(local).Routing
-	dir := filepath.Dir(projectConfigPath(root))
-	if err := configureModelFile(dir, delta, catalog, func(*Config, []string) error { return nil }, func(_ string, content string) error {
-		return trust(home, projectConfigPath(root), content)
+	delta.Routing = config.Clone(local).Routing
+	dir := filepath.Dir(config.ProjectPath(root))
+	if err := configureModelFile(dir, delta, catalog, func(*config.Config, []string) error { return nil }, func(_ string, content string) error {
+		return config.Trust(home, config.ProjectPath(root), content)
 	}); err != nil {
 		return cfg, err
 	}
-	fmt.Fprintf(os.Stdout, "Saved and approved recommended models in %s.\n", projectConfigPath(root))
+	fmt.Fprintf(os.Stdout, "Saved and approved recommended models in %s.\n", config.ProjectPath(root))
 	return next, nil
 }
 
@@ -291,7 +286,7 @@ func fallbackTarget(snapshot *nativeFallbackSnapshot, scope string) map[string][
 	return snapshot.Project
 }
 
-func plannedNativeFallbacks(plan ModelPlan, snapshot *nativeFallbackSnapshot, scope string) (map[string][]string, error) {
+func plannedNativeFallbacks(plan config.ModelPlan, snapshot *nativeFallbackSnapshot, scope string) (map[string][]string, error) {
 	desired := maps.Clone(fallbackTarget(snapshot, scope))
 	if scope == "project" {
 		// Native project modelFallback replaces the entire global map, not each row.
@@ -305,10 +300,10 @@ func plannedNativeFallbacks(plan ModelPlan, snapshot *nativeFallbackSnapshot, sc
 	if desired == nil {
 		desired = make(map[string][]string)
 	}
-	for primary, backups := range plan.fallbackChains() {
+	for primary, backups := range plan.FallbackChains() {
 		desired[primary] = slices.Clone(backups)
 	}
-	for primary, backups := range plan.fallbackChains() {
+	for primary, backups := range plan.FallbackChains() {
 		allowed := append([]string{primary}, backups...)
 		for _, backup := range backups {
 			for _, further := range desired[backup] {
@@ -319,7 +314,7 @@ func plannedNativeFallbacks(plan ModelPlan, snapshot *nativeFallbackSnapshot, sc
 			}
 		}
 	}
-	return desired, plan.verifyFallbacks(desired)
+	return desired, plan.VerifyFallbacks(desired)
 }
 
 func nativeFallbackPreview(before, after map[string][]string) string {
@@ -375,12 +370,12 @@ func readNativeModelSnapshot(request nativeConfigRequest, session, scope string)
 
 // applyModelPlan writes the plan's fallback chains and coder model to one Empryo scope.
 // It reads once, asks once for every change, then writes and verifies in a single session.
-func applyModelPlan(ctx context.Context, bin, workspace, scope string, plan ModelPlan, approve func(string) bool) error {
+func applyModelPlan(ctx context.Context, bin, workspace, scope string, plan config.ModelPlan, approve func(string) bool) error {
 	if scope != "global" && scope != "project" {
 		return errModelApplyUsage
 	}
 	model := plannedDefaultModel(plan)
-	if len(plan.fallbackChains()) == 0 && model == "" {
+	if len(plan.FallbackChains()) == 0 && model == "" {
 		return nil
 	}
 	var before *nativeModelSnapshot
@@ -393,13 +388,13 @@ func applyModelPlan(ctx context.Context, bin, workspace, scope string, plan Mode
 	}
 	var change nativeModelChange
 	var preview strings.Builder
-	if len(plan.fallbackChains()) > 0 {
+	if len(plan.FallbackChains()) > 0 {
 		desired, err := plannedNativeFallbacks(plan, before.Fallbacks, scope)
 		if err != nil {
 			return err
 		}
 		if sameFallbackMap(fallbackTarget(before.Fallbacks, scope), desired) {
-			if err := plan.verifyFallbacks(before.Fallbacks.Effective); err != nil {
+			if err := plan.VerifyFallbacks(before.Fallbacks.Effective); err != nil {
 				return err
 			}
 		} else {
@@ -426,7 +421,7 @@ func applyModelPlan(ctx context.Context, bin, workspace, scope string, plan Mode
 }
 
 // plannedDefaultModel is the resolved coder model the Empryo TUI should preselect.
-func plannedDefaultModel(plan ModelPlan) string {
+func plannedDefaultModel(plan config.ModelPlan) string {
 	for _, route := range plan.Routes {
 		if route.Role == "model" && route.Primary != "" {
 			return route.Primary
@@ -475,7 +470,7 @@ func projectDefaultModel(root string) string {
 }
 
 // globalDefaultModelShadowed explains when a project setting will keep the TUI on another model.
-func globalDefaultModelShadowed(root string, plan ModelPlan) string {
+func globalDefaultModelShadowed(root string, plan config.ModelPlan) string {
 	model, project := plannedDefaultModel(plan), projectDefaultModel(root)
 	if model == "" || project == "" || project == model {
 		return ""
@@ -483,7 +478,7 @@ func globalDefaultModelShadowed(root string, plan ModelPlan) string {
 	return fmt.Sprintf("This project's Empryo settings select %q, which overrides the global default %q here. Run codeforge models apply --project to change it.", project, model)
 }
 
-func writeNativeModelChange(ctx context.Context, bin, workspace, scope string, plan ModelPlan, before *nativeModelSnapshot, change nativeModelChange) error {
+func writeNativeModelChange(ctx context.Context, bin, workspace, scope string, plan config.ModelPlan, before *nativeModelSnapshot, change nativeModelChange) error {
 	attempted := false
 	err := withNativeConfig(ctx, bin, workspace, func(request nativeConfigRequest, session string) error {
 		current, err := readNativeModelSnapshot(request, session, scope)
@@ -525,7 +520,7 @@ func writeNativeModelChange(ctx context.Context, bin, workspace, scope string, p
 		if !sameFallbackMap(fallbackTarget(was, other), fallbackTarget(after.Fallbacks, other)) {
 			return fmt.Errorf("%w: native API changed the other scope", errNativeConfigApply)
 		}
-		return errors.Join(plan.verifyFallbacks(after.Fallbacks.declaredFallbacks()), plan.verifyFallbacks(after.Fallbacks.Effective))
+		return errors.Join(plan.VerifyFallbacks(after.Fallbacks.declaredFallbacks()), plan.VerifyFallbacks(after.Fallbacks.Effective))
 	})
 	if err != nil && attempted {
 		return fmt.Errorf("%w: native settings may have changed; run models plan to inspect them: %w", errNativeConfigApply, err)

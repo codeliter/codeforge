@@ -3,7 +3,8 @@ version: 2
 project_name: codeforge
 
 builds:
-  - main: .
+  - id: codeforge
+    main: .
     binary: codeforge
     env:
       - CGO_ENABLED=0
@@ -12,6 +13,17 @@ builds:
     flags: [-trimpath]
     ldflags:
       - -s -w -X github.com/codeliter/codeforge/src.Version={{.Version}}
+  # The terminal forms are their own program, so codeforge itself never links the terminal UI library.
+  - id: codeforge-forms
+    main: ./cmd/codeforge-forms
+    binary: codeforge-forms
+    env:
+      - CGO_ENABLED=0
+    goos: [darwin, linux]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w
 
 archives:
   - formats: [tar.gz]
@@ -35,5 +47,6 @@ brews:
     license: Apache-2.0
     install: |
       bin.install "codeforge"
+      bin.install "codeforge-forms"
     test: |
       assert_match version.to_s, shell_output("#{bin}/codeforge version")

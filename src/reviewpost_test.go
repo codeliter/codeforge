@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/codeliter/codeforge/src/config"
+
 	"github.com/stretchr/testify/require"
 
 	"github.com/codeliter/codeforge/src/review"
@@ -93,10 +95,10 @@ func TestRunReviewEngine_ReportsAFailedPost(t *testing.T) {
 }
 
 func TestReviewArgs_CommentNeedsAPullRequest(t *testing.T) {
-	_, err := reviewArgs(t.Context(), "", ReviewConfig{}, nil, nil, []string{"--comment"})
+	_, err := reviewArgs(t.Context(), "", config.ReviewConfig{}, nil, nil, []string{"--comment"})
 	require.ErrorIs(t, err, errCommentNeedsPR)
 
-	_, err = reviewArgs(t.Context(), "", ReviewConfig{}, nil, nil, []string{"42;rm", "--comment"})
+	_, err = reviewArgs(t.Context(), "", config.ReviewConfig{}, nil, nil, []string{"42;rm", "--comment"})
 	require.ErrorIs(t, err, review.ErrNoPR, "--comment with a PR reference is parsed like any review")
 }
 
@@ -196,10 +198,10 @@ func (blockingJuror) Review(context.Context, string) (string, error) {
 }
 
 func TestReviewArgs_CommentFlagValues(t *testing.T) {
-	_, err := reviewArgs(t.Context(), "", ReviewConfig{}, nil, nil, []string{"42", "--comment=maybe"})
+	_, err := reviewArgs(t.Context(), "", config.ReviewConfig{}, nil, nil, []string{"42", "--comment=maybe"})
 	require.ErrorIs(t, err, errCommentValue)
-	_, err = reviewArgs(t.Context(), "", ReviewConfig{}, nil, nil, []string{"42", "--comment", "--json"})
+	_, err = reviewArgs(t.Context(), "", config.ReviewConfig{}, nil, nil, []string{"42", "--comment", "--json"})
 	require.ErrorIs(t, err, errCommentJSON)
-	_, err = reviewArgs(t.Context(), "", ReviewConfig{}, nil, nil, []string{"--comment=yes"})
+	_, err = reviewArgs(t.Context(), "", config.ReviewConfig{}, nil, nil, []string{"--comment=yes"})
 	require.ErrorIs(t, err, errCommentNeedsPR)
 }

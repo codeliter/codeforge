@@ -7,14 +7,16 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/codeliter/codeforge/src/config"
+
 	"github.com/stretchr/testify/require"
 )
 
 func TestValidMode(t *testing.T) {
 	for _, m := range []string{"", modeTicket, modeChat, modeWork, modeReview} {
-		require.NoError(t, validMode(m), m)
+		require.NoError(t, config.ValidMode(m), m)
 	}
-	require.ErrorIs(t, validMode("pair"), errUnknownMode)
+	require.ErrorIs(t, config.ValidMode("pair"), errUnknownMode)
 }
 
 func TestUnknownCommand(t *testing.T) {
@@ -29,15 +31,15 @@ func TestUnknownCommand(t *testing.T) {
 }
 
 func TestPickMode(t *testing.T) {
-	got, err := pickMode(Config{DefaultMode: modeReview}, []string{"anything"})
+	got, err := pickMode(config.Config{DefaultMode: modeReview}, []string{"anything"})
 	require.NoError(t, err)
 	require.Equal(t, modeReview, got)
 
-	got, err = pickMode(Config{}, []string{"why", "is", "this", "slow"})
+	got, err = pickMode(config.Config{}, []string{"why", "is", "this", "slow"})
 	require.NoError(t, err)
 	require.Equal(t, modeChat, got, "a question on the command line goes to chat")
 
-	got, err = pickMode(Config{}, nil)
+	got, err = pickMode(config.Config{}, nil)
 	require.NoError(t, err)
 	require.Equal(t, modeChat, got, "no terminal and no default falls back to chat")
 }
@@ -45,7 +47,7 @@ func TestPickMode(t *testing.T) {
 func TestPickMode_ResumeSkipsInitialization(t *testing.T) {
 	for _, args := range [][]string{{"--resume", "session-123"}, {"--resume=session-123"}, {"--session", "session-123"}, {"--session=session-123"}, {"-s", "session-123"}} {
 		for _, defaultMode := range []string{"", modeTicket, modeWork, modeReview} {
-			_, err := pickMode(Config{DefaultMode: defaultMode}, args)
+			_, err := pickMode(config.Config{DefaultMode: defaultMode}, args)
 			require.ErrorIs(t, err, errSessionMode)
 		}
 	}
@@ -54,17 +56,17 @@ func TestPickMode_ResumeSkipsInitialization(t *testing.T) {
 func TestLoadConfig_DefaultMode(t *testing.T) {
 	home := t.TempDir()
 	writeConfig(t, home, `{"default_mode":"ticket"}`)
-	cfg, err := loadConfig(home)
+	cfg, err := config.LoadGlobal(home)
 	require.NoError(t, err)
 	require.Equal(t, modeTicket, cfg.DefaultMode)
 
 	t.Setenv("CODEFORGE_MODE", "nope")
-	_, err = loadConfig(home)
+	_, err = config.LoadGlobal(home)
 	require.ErrorIs(t, err, errUnknownMode)
 }
 
 func TestModeArgs_Chat(t *testing.T) {
-	cfg := Config{Model: "a/coder"}
+	cfg := config.Config{Model: "a/coder"}
 
 	mode, args, err := modeArgs(t.Context(), "/nonexistent", cfg, modeChat, nil)
 	require.NoError(t, err)
@@ -81,25 +83,25 @@ func TestModeArgs_Resume(t *testing.T) {
 			{"-s", "session-123", "continue"},
 		} {
 			t.Run(mode+"/"+want[0], func(t *testing.T) {
-				gotMode, args, err := modeArgs(t.Context(), "/nonexistent", Config{Model: "a/coder"}, mode, want)
+				gotMode, args, err := modeArgs(t.Context(), "/nonexistent", config.Config{Model: "a/coder"}, mode, want)
 				require.NoError(t, err)
 				require.Equal(t, mode, gotMode)
 				require.Equal(t, want, args)
 			})
 		}
 	}
-	_, _, err := modeArgs(t.Context(), "/nonexistent", Config{}, modeChat, []string{"--resume", "session-123", "--effort", "max"})
+	_, _, err := modeArgs(t.Context(), "/nonexistent", config.Config{}, modeChat, []string{"--resume", "session-123", "--effort", "max"})
 	require.ErrorIs(t, err, errEffortAboveCeiling)
 }
 
 func TestModeArgs_TicketNeedsSummaryWithoutTerminal(t *testing.T) {
-	_, _, err := modeArgs(t.Context(), "/nonexistent", Config{}, modeTicket, []string{"--ticket", "ABC-1"})
+	_, _, err := modeArgs(t.Context(), "/nonexistent", config.Config{}, modeTicket, []string{"--ticket", "ABC-1"})
 	require.ErrorIs(t, err, errStartUsage)
 }
 
 func TestSyncAssets_FillsModels(t *testing.T) {
 	dir := t.TempDir()
-	cfg := Config{Model: "a/coder", Review: ReviewConfig{Model: "b/reviewer"}}
+	cfg := config.Config{Model: "a/coder", Review: config.ReviewConfig{Model: "b/reviewer"}}
 	require.NoError(t, syncAssets(dir, cfg))
 
 	for mode, want := range map[string]string{modeTicket: "a/coder", modeChat: "a/coder", modeWork: "a/coder", modeReview: "b/reviewer"} {

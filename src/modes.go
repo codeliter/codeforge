@@ -1,7 +1,6 @@
 package src
 
 import (
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -9,22 +8,24 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/charmbracelet/huh"
+	"github.com/codeliter/codeforge/src/config"
+	"github.com/codeliter/codeforge/src/forms"
+
 	"golang.org/x/term"
 
 	"github.com/codeliter/codeforge/src/review"
 )
 
 const (
-	modeTicket = "ticket"
-	modeChat   = "chat"
-	modeWork   = "work"
-	modeReview = "review"
+	modeTicket = config.ModeTicket
+	modeChat   = config.ModeChat
+	modeWork   = config.ModeWork
+	modeReview = config.ModeReview
 )
 
 var (
-	modes          = []string{modeTicket, modeChat, modeWork, modeReview}
-	errUnknownMode = errors.New("unknown mode")
+	modes          = config.Modes
+	errUnknownMode = config.ErrUnknownMode
 )
 
 func profileFor(mode string) string {
@@ -40,18 +41,11 @@ func modeTitle(mode string) string {
 // TUI does not set a title of its own. It pushes the previous title and pops it back on return.
 func showModeTitle(w io.Writer, mode string) func() {
 	f, ok := w.(*os.File)
-	if !ok || validMode(mode) != nil || mode == "" || !term.IsTerminal(int(f.Fd())) || os.Getenv("TERM") == "dumb" || os.Getenv("NO_COLOR") != "" {
+	if !ok || config.ValidMode(mode) != nil || mode == "" || !term.IsTerminal(int(f.Fd())) || os.Getenv("TERM") == "dumb" || os.Getenv("NO_COLOR") != "" {
 		return func() {}
 	}
 	fmt.Fprintf(w, "\x1b[22;0t\x1b]0;%s\x07", modeTitle(mode))
 	return func() { fmt.Fprint(w, "\x1b[23;0t") }
-}
-
-func validMode(mode string) error {
-	if mode == "" || slices.Contains(modes, mode) {
-		return nil
-	}
-	return fmt.Errorf("%w %q; use %v", errUnknownMode, mode, modes)
 }
 
 // commands are the words Run handles before or instead of a mode; any of them is never a task.
@@ -97,7 +91,7 @@ func validPRRef(ref string) bool {
 }
 
 // pickMode asks for new launches only; the resume check defends this invariant for other callers.
-func pickMode(cfg Config, args []string) (string, error) {
+func pickMode(cfg config.Config, args []string) (string, error) {
 	if _, resume, err := sessionID(args); err != nil {
 		return "", err
 	} else if resume {
@@ -112,14 +106,10 @@ func pickMode(cfg Config, args []string) (string, error) {
 	if promptOf(args) != "" || !interactive() {
 		return modeChat, nil
 	}
-	mode := modeTicket
-	err := runForm("mode picker", huh.NewSelect[string]().
-		Title("What are we doing?").
-		Options(
-			huh.NewOption("Ticket: take a task to a verified change and draft PR", modeTicket),
-			huh.NewOption("Chat: questions, explanations, small edits", modeChat),
-			huh.NewOption("Work: conversational tasks through implementation and verification", modeWork),
-			huh.NewOption("Review: a PR or my local work", modeReview),
-		).Value(&mode))
-	return mode, err
+	return forms.Choose("What are we doing?", "", []forms.Option{
+		{Label: "Ticket: take a task to a verified change and draft PR", Value: modeTicket},
+		{Label: "Chat: questions, explanations, small edits", Value: modeChat},
+		{Label: "Work: conversational tasks through implementation and verification", Value: modeWork},
+		{Label: "Review: a PR or my local work", Value: modeReview},
+	}, modeTicket)
 }

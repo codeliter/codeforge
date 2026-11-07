@@ -14,8 +14,11 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/codeliter/codeforge/src/config"
+
 	"github.com/codeliter/codeforge/assets"
 	"github.com/codeliter/codeforge/src/review"
+	"github.com/codeliter/codeforge/src/text"
 )
 
 const (
@@ -101,7 +104,7 @@ func learnPersona(ctx context.Context, bin, model string, repos []string) ([]byt
 	}
 
 	fmt.Fprintln(os.Stderr, "codeforge: learning your style, this takes a minute or two")
-	return distil(ctx, bin, model, truncate(corpus.String(), maxCorpusBytes))
+	return distil(ctx, bin, model, text.Cut(corpus.String(), maxCorpusBytes))
 }
 
 func distil(ctx context.Context, bin, model, corpus string) ([]byte, error) {
@@ -116,7 +119,7 @@ func distil(ctx context.Context, bin, model, corpus string) ([]byte, error) {
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
 	if err != nil {
-		return nil, fmt.Errorf("running empryo: %w: %s", err, truncate(stderr.String(), maxStderrBytes))
+		return nil, fmt.Errorf("running empryo: %w: %s", err, text.Cut(stderr.String(), maxStderrBytes))
 	}
 
 	var res struct {
@@ -136,11 +139,11 @@ func savePersona(home string, persona []byte) (string, error) {
 	if strings.TrimSpace(string(persona)) == "" {
 		return "", errEmptyPersona
 	}
-	if err := os.MkdirAll(configDir(home), privateDir); err != nil {
+	if err := os.MkdirAll(config.Dir(home), privateDir); err != nil {
 		return "", fmt.Errorf("creating config dir: %w", err)
 	}
 
-	p := filepath.Join(configDir(home), "persona.md")
+	p := filepath.Join(config.Dir(home), "persona.md")
 	if err := os.WriteFile(p, persona, privateFile); err != nil {
 		return "", fmt.Errorf("writing persona: %w", err)
 	}
@@ -150,7 +153,7 @@ func savePersona(home string, persona []byte) (string, error) {
 // installPersonaSkill installs the persona, or a placeholder so the profile's skill list always resolves.
 func installPersonaSkill(home string) error {
 	body := emptyPersona
-	data, err := os.ReadFile(filepath.Join(configDir(home), "persona.md"))
+	data, err := os.ReadFile(filepath.Join(config.Dir(home), "persona.md"))
 	switch {
 	case err == nil:
 		if strings.TrimSpace(string(data)) != "" {
@@ -194,7 +197,7 @@ func collect(ctx context.Context, r review.Runner, repo string, w *bytes.Buffer)
 	}
 
 	section("commit subjects", git("log", "--author="+email, "--no-merges", "-n", "300", "--pretty=%s"))
-	section("code you wrote (recent diffs)", truncate(git("log", "--author="+email, "--no-merges", "-n", "25", "-p", "--unified=2", "--pretty=### %s"), maxDiffBytes))
+	section("code you wrote (recent diffs)", text.Cut(git("log", "--author="+email, "--no-merges", "-n", "25", "-p", "--unified=2", "--pretty=### %s"), maxDiffBytes))
 	if slug == "" {
 		return nil
 	}
@@ -218,11 +221,4 @@ func repoSlug(remote string) string {
 		}
 	}
 	return ""
-}
-
-func truncate(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[:n]
 }

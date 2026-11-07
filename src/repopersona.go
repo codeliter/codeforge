@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/codeliter/codeforge/src/config"
+
 	"github.com/codeliter/codeforge/assets"
 	"github.com/codeliter/codeforge/src/effort"
 )
@@ -108,7 +110,7 @@ func runTrust(ctx context.Context, home string) error {
 		return fmt.Errorf("%w: %s", errNoRepoPersona, p)
 	}
 
-	if err := trust(home, p, persona); err != nil {
+	if err := config.Trust(home, p, persona); err != nil {
 		return err
 	}
 	fmt.Fprintf(os.Stderr, "codeforge: trusted %s\n", p)
@@ -133,7 +135,7 @@ func saveRepoPersona(home, root string, persona []byte) (string, error) {
 	if err := writeFile(root, repoPersonaPath, persona, publicFile); err != nil {
 		return "", err
 	}
-	return p, trust(home, p, strings.TrimSpace(string(persona)))
+	return p, config.Trust(home, p, strings.TrimSpace(string(persona)))
 }
 
 func unfinishedRepoPersona(data []byte) bool {

@@ -9,7 +9,8 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/charmbracelet/huh"
+	"github.com/codeliter/codeforge/src/config"
+	"github.com/codeliter/codeforge/src/forms"
 )
 
 var errProviderConfigureTerminal = errors.New("provider configure needs a terminal; use codeforge provider set PRIMARY [BACKUP...] instead")
@@ -33,32 +34,32 @@ func providerLabel(id string, missing []string, standIns ...string) string {
 }
 
 // savedModelNames lists the model names the config resolves through providers; explicit provider/model IDs never move.
-func savedModelNames(cfg Config) []string {
+func savedModelNames(cfg config.Config) []string {
 	var refs []string
-	for _, role := range roles {
-		refs = append(refs, current(cfg, role.key)...)
+	for _, role := range config.Roles {
+		refs = append(refs, config.Current(cfg, role.Key)...)
 	}
 	for _, ref := range cfg.Routing {
 		refs = append(refs, ref)
 	}
-	refs = slices.DeleteFunc(refs, func(ref string) bool { return ref == "" || validModelID(ref) })
+	refs = slices.DeleteFunc(refs, func(ref string) bool { return ref == "" || config.ValidModelID(ref) })
 	slices.Sort(refs)
 	return slices.Compact(refs)
 }
 
 // providerCoverage reports, for one provider, the stand-ins it would use ("Sonnet 5.5 → copilot/claude-sonnet-5")
 // and the saved names it has nothing comparable for.
-func providerCoverage(cfg Config, provider string, catalog []string) (standIns, missing []string) {
+func providerCoverage(cfg config.Config, provider string, catalog []string) (standIns, missing []string) {
 	for _, ref := range savedModelNames(cfg) {
 		// A model a rule routes elsewhere does not use the default chain, so this provider never has to cover it.
-		if _, ruled := cfg.Providers.ruleFor(ref); ruled {
+		if _, ruled := cfg.Providers.RuleFor(ref); ruled {
 			continue
 		}
-		if _, err := catalogModel(ref, provider, catalog); err == nil {
+		if _, err := config.CatalogModel(ref, provider, catalog); err == nil {
 			continue
 		}
-		if id, ok := equivalentModel(ref, provider, catalog); ok {
-			standIns = append(standIns, ref+" → "+modelName(id))
+		if id, ok := config.EquivalentModel(ref, provider, catalog); ok {
+			standIns = append(standIns, ref+" → "+config.ModelName(id))
 		} else {
 			missing = append(missing, ref)
 		}
@@ -67,29 +68,29 @@ func providerCoverage(cfg Config, provider string, catalog []string) (standIns, 
 }
 
 // missingModels lists the saved model names a provider has nothing comparable for.
-func missingModels(cfg Config, provider string, catalog []string) []string {
+func missingModels(cfg config.Config, provider string, catalog []string) []string {
 	_, missing := providerCoverage(cfg, provider, catalog)
 	return missing
 }
 
-func coverageLabel(cfg Config, id string, catalog []string) string {
+func coverageLabel(cfg config.Config, id string, catalog []string) string {
 	standIns, missing := providerCoverage(cfg, id, catalog)
 	return providerLabel(id, missing, standIns...)
 }
 
 // backupOptions offers every connected provider not already in the chain, plus Done to stop adding.
-func backupOptions(cfg Config, connected, chain []string, catalog []string) []huh.Option[string] {
-	options := []huh.Option[string]{huh.NewOption("Done — no more backups", providerDone)}
+func backupOptions(cfg config.Config, connected, chain []string, catalog []string) []forms.Option {
+	options := []forms.Option{{Label: "Done — no more backups", Value: providerDone}}
 	for _, id := range connected {
 		if !slices.Contains(chain, id) {
-			options = append(options, huh.NewOption(coverageLabel(cfg, id, catalog), id))
+			options = append(options, forms.Option{Label: coverageLabel(cfg, id, catalog), Value: id})
 		}
 	}
 	return options
 }
 
 // providerChainPreview shows the order as Empryo will try it.
-func providerChainPreview(scope string, chain []string, rules ...ProviderRule) string {
+func providerChainPreview(scope string, chain []string, rules ...config.ProviderRule) string {
 	var text strings.Builder
 	fmt.Fprintf(&text, "Provider order (%s):\n", scope)
 	for i, id := range chain {
@@ -103,25 +104,35 @@ func providerChainPreview(scope string, chain []string, rules ...ProviderRule) s
 		fmt.Fprintln(&text, "  No backups: if the primary fails, Empryo keeps its own fallback settings.")
 	}
 	for _, rule := range rules {
-		fmt.Fprintf(&text, "  Models %s: %s\n", rule.Match, strings.Join(append([]string{providerID(rule.Primary)}, rule.chain().Backups()...), " > "))
+		fmt.Fprintf(&text, "  Models %s: %s\n", rule.Match, strings.Join(append([]string{config.ProviderID(rule.Primary)}, rule.Chain().Backups()...), " > "))
 	}
 	return text.String()
 }
 
 // providerAsker asks one question; tests replace it to drive the menu without a terminal.
 type providerAsker interface {
-	choose(title, description string, options []huh.Option[string], value *string) error
+	choose(title, description string, options []forms.Option, value *string) error
 	confirm(title, description string, value *bool) error
 }
 
 type formAsker struct{}
 
-func (formAsker) choose(title, description string, options []huh.Option[string], value *string) error {
-	return runForm(title, huh.NewSelect[string]().Title(title).Description(description).Options(options...).Value(value))
+func (formAsker) choose(title, description string, options []forms.Option, value *string) error {
+	chosen, err := forms.Choose(title, description, options, *value)
+	if err != nil {
+		return err
+	}
+	*value = chosen
+	return nil
 }
 
 func (formAsker) confirm(title, description string, value *bool) error {
-	return runForm(title, huh.NewConfirm().Title(title).Description(description).Value(value))
+	a, err := forms.Ask(title, forms.Field{Kind: forms.Confirm, Title: title, Description: description, Yes: *value})
+	if err != nil {
+		return err
+	}
+	*value = a.Yes
+	return nil
 }
 
 // configureProviders is the interactive form for provider set: scope, primary, then backups one at a time, in order.
@@ -149,16 +160,16 @@ func configureProviders(ctx context.Context, home, bin, root string, inGit bool,
 func pickProviderOrder(ask providerAsker, home, root string, inGit bool, scope string, catalog []string, w io.Writer) (string, error) {
 	connected := catalogProviders(catalog)
 	if len(connected) == 0 {
-		return "", errNoModels
+		return "", config.ErrNoModels
 	}
 	if scope == "" {
 		scope = "global"
-		options := []huh.Option[string]{huh.NewOption("All projects", "global")}
-		if !sameConfigScope(home, root) {
+		options := []forms.Option{{Label: "All projects", Value: "global"}}
+		if !config.SameScope(home, root) {
 			if inGit {
 				scope = "project"
 			}
-			options = append([]huh.Option[string]{huh.NewOption("This project: "+root, "project")}, options...)
+			options = append([]forms.Option{{Label: "This project: " + root, Value: "project"}}, options...)
 		}
 		if err := ask.choose("Where should this provider order apply?", "", options, &scope); err != nil {
 			return "", err
@@ -170,7 +181,7 @@ func pickProviderOrder(ask providerAsker, home, root string, inGit bool, scope s
 	}
 	current := []string{}
 	if cfg.Providers != nil && cfg.Providers.Primary != "" {
-		current = append([]string{providerID(cfg.Providers.Primary)}, cfg.Providers.Backups()...)
+		current = append([]string{config.ProviderID(cfg.Providers.Primary)}, cfg.Providers.Backups()...)
 	}
 	primary := connected[0]
 	if len(current) > 0 && slices.Contains(connected, current[0]) {
@@ -178,9 +189,9 @@ func pickProviderOrder(ask providerAsker, home, root string, inGit bool, scope s
 	} else if slices.Contains(connected, "llmgateway") {
 		primary = "llmgateway"
 	}
-	var primaries []huh.Option[string]
+	var primaries []forms.Option
 	for _, id := range connected {
-		primaries = append(primaries, huh.NewOption(providerLabel(id, missingModels(cfg, id, catalog)), id))
+		primaries = append(primaries, forms.Option{Label: providerLabel(id, missingModels(cfg, id, catalog)), Value: id})
 	}
 	description := "Every model name runs here first. Connect more providers with /login in Empryo."
 	if len(current) > 0 {
@@ -213,7 +224,7 @@ func pickProviderOrder(ask providerAsker, home, root string, inGit bool, scope s
 		return "", err
 	}
 	if cfg.Providers != nil {
-		policy.Rules = cfg.Providers.clone().Rules
+		policy.Rules = cfg.Providers.Clone().Rules
 	}
 	if err := checkProviderChain(home, root, scope, policy, catalog); err != nil {
 		return "", err

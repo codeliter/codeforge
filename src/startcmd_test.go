@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/codeliter/codeforge/src/config"
+
 	"github.com/stretchr/testify/require"
 )
 
@@ -56,7 +58,7 @@ func TestTicketJudgeScoresDescriptionOnly(t *testing.T) {
 	capture := filepath.Join(t.TempDir(), "judge-input")
 	t.Setenv("CODEFORGE_JUDGE_CAPTURE", capture)
 	require.NoError(t, os.WriteFile(bin, []byte("#!/bin/sh\nfor a; do last=$a; done\nprintf '%s' \"$last\" > \"$CODEFORGE_JUDGE_CAPTURE\"\nprintf '%s' '{\"output\":\"{\\\"ambiguity\\\":0,\\\"blast\\\":0,\\\"risk\\\":0,\\\"novelty\\\":0,\\\"verify\\\":0,\\\"reason\\\":\\\"typo\\\"}\"}'\n"), execPerm))
-	mode, args, err := modeArgs(t.Context(), bin, Config{Model: "a/coder", Judges: []string{"a/judge"}}, modeTicket, []string{"--ticket", "ABC-1", "fix", "the", "typo"})
+	mode, args, err := modeArgs(t.Context(), bin, config.Config{Model: "a/coder", Judges: []string{"a/judge"}}, modeTicket, []string{"--ticket", "ABC-1", "fix", "the", "typo"})
 	require.NoError(t, err)
 	require.Equal(t, modeTicket, mode)
 	require.Equal(t, "low", flagValue(args, "--effort"))

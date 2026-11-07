@@ -13,6 +13,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/codeliter/codeforge/src/config"
+	"github.com/codeliter/codeforge/src/forms"
+
 	"github.com/codeliter/codeforge/src/guard"
 )
 
@@ -60,7 +63,7 @@ func doctorItems(ctx context.Context, home string) []doctorItem {
 			items = append(items, doctorItem{check: check{name: "sign-in", ok: true, note: strings.Join(ready, ", ")}})
 		}
 	}
-	for _, c := range []check{checkGit(ctx), checkGH(ctx, empryoDir), checkSandbox()} {
+	for _, c := range []check{checkGit(ctx), checkGH(ctx, empryoDir), checkSandbox(), checkForms()} {
 		item := doctorItem{check: c, fix: doctorFix(c.name)}
 		if c.ok && c.name == "sandbox" && runtime.GOOS != "darwin" {
 			item.ok, item.warn = false, true // review mode cannot start here, which is not a plain pass
@@ -85,6 +88,8 @@ func doctorFix(name string) string {
 		return "install Git 2.54 or newer"
 	case "gh":
 		return "gh auth login"
+	case "forms":
+		return "run `make install` in the codeforge checkout (from source) or reinstall codeforge, or point " + forms.HelperEnv + " at codeforge-forms"
 	default:
 		return "codeforge init"
 	}
@@ -92,7 +97,7 @@ func doctorFix(name string) string {
 
 // doctorModels warns, not fails, when roles are unset: built-in model choices still work.
 func doctorModels(home, root string) doctorItem {
-	cfg, err := readConfigFile(home)
+	cfg, err := config.ReadFile(home)
 	if err != nil {
 		return doctorItem{check: check{name: "models", note: err.Error()}, fix: "fix or remove ~/.codeforge/config.yaml"}
 	}
@@ -103,14 +108,14 @@ func doctorModels(home, root string) doctorItem {
 		return doctorItem{check: check{name: "models", note: "invalid " + scope + " configuration: " + err.Error()}, fix: "edit the " + scope + " config.yaml, or run codeforge models configure --" + scope}
 	}
 	unset := 0
-	for _, r := range roles {
-		if len(current(explicit, r.key)) == 0 {
+	for _, r := range config.Roles {
+		if len(config.Current(explicit, r.Key)) == 0 {
 			unset++
 		}
 	}
 	structural := "; model names are checked at launch, see codeforge models plan"
 	if unset > 0 {
-		return doctorItem{check: check{name: "models", note: fmt.Sprintf("%d of %d roles use built-in defaults%s", unset, len(roles), structural)}, warn: true, fix: "codeforge models configure"}
+		return doctorItem{check: check{name: "models", note: fmt.Sprintf("%d of %d roles use built-in defaults%s", unset, len(config.Roles), structural)}, warn: true, fix: "codeforge models configure"}
 	}
 	return doctorItem{check: check{name: "models", ok: true, note: "all roles chosen" + structural}}
 }
@@ -118,29 +123,29 @@ func doctorModels(home, root string) doctorItem {
 // doctorEffective merges the project config only when it is approved, as a launch does, applies environment
 // overrides, and validates the result with defaults. It returns the explicitly chosen settings (before defaults)
 // and names the scope that most likely holds a problem: project when an approved project file exists.
-func doctorEffective(home, root string, global Config) (Config, string, error) {
+func doctorEffective(home, root string, global config.Config) (config.Config, string, error) {
 	scope := "global"
 	cfg := global
-	if root != "" && !sameConfigScope(home, root) {
-		path := projectConfigPath(root)
+	if root != "" && !config.SameScope(home, root) {
+		path := config.ProjectPath(root)
 		data, err := os.ReadFile(path)
 		switch {
 		case errors.Is(err, fs.ErrNotExist):
 		case err != nil:
 			return cfg, "project", fmt.Errorf("reading %s: %w", path, err)
 		default:
-			if ledger, lerr := loadTrust(home); lerr == nil && ledger[path] == digest(string(data)) {
-				local, derr := decodeConfig(path, data)
+			if ledger, lerr := config.LoadTrust(home); lerr == nil && ledger[path] == config.Digest(string(data)) {
+				local, derr := config.Decode(path, data)
 				if derr != nil {
 					return cfg, "project", derr
 				}
-				cfg = mergeConfig(global, local)
+				cfg = config.Merge(global, local)
 				scope = "project"
 			}
 		}
 	}
-	explicit := configEnvironment(cfg)
-	if err := validate(configDefaults(explicit)); err != nil {
+	explicit := config.Environment(cfg)
+	if err := config.Validate(config.Defaults(explicit)); err != nil {
 		return explicit, scope, err
 	}
 	return explicit, scope, nil
@@ -152,17 +157,17 @@ func doctorRepo(home, root string) []doctorItem {
 	if root == "" {
 		return []doctorItem{{check: check{name: "project", ok: true, note: "not in a Git project; only global settings apply"}}}
 	}
-	ledger, err := loadTrust(home)
+	ledger, err := config.LoadTrust(home)
 	if err != nil {
 		return []doctorItem{{check: check{name: "trust", note: err.Error()}, fix: "remove the unreadable file in ~/.codeforge"}}
 	}
 	persona := doctorFile("persona", filepath.Join(root, repoPersonaPath), ledger, "codeforge init", "codeforge trust")
-	config := doctorFile("config", projectConfigPath(root), ledger, "", "codeforge trust --models")
-	return slices.DeleteFunc([]doctorItem{persona, config}, func(d doctorItem) bool { return d.name == "" })
+	project := doctorFile("config", config.ProjectPath(root), ledger, "", "codeforge trust --models")
+	return slices.DeleteFunc([]doctorItem{persona, project}, func(d doctorItem) bool { return d.name == "" })
 }
 
 // doctorFile reports one repository file. A missing persona is a warning; a missing config is normal.
-func doctorFile(name, path string, ledger trustStore, createFix, trustFix string) doctorItem {
+func doctorFile(name, path string, ledger config.Store, createFix, trustFix string) doctorItem {
 	data, err := os.ReadFile(path)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
@@ -177,7 +182,7 @@ func doctorFile(name, path string, ledger trustStore, createFix, trustFix string
 	if name == "persona" {
 		content = strings.TrimSpace(content) // the trust ledger stores the trimmed persona, as loadRepoPersona returns it
 	}
-	if ledger[path] == digest(content) {
+	if ledger[path] == config.Digest(content) {
 		return doctorItem{check: check{name: name, ok: true, note: "approved"}}
 	}
 	return doctorItem{check: check{name: name, note: "new or changed since you approved it; ignored until approved"}, warn: true, fix: trustFix}
@@ -212,4 +217,13 @@ func renderDoctor(w io.Writer, items []doctorItem) bool {
 		fmt.Fprintf(w, "Next: %s\n", next)
 	}
 	return failed
+}
+
+// checkForms looks for the program that asks questions at the terminal; without it every menu and prompt fails.
+func checkForms() check {
+	p, err := forms.Helper()
+	if err != nil {
+		return check{name: "forms", note: "codeforge-forms not found"}
+	}
+	return check{name: "forms", ok: true, note: p}
 }

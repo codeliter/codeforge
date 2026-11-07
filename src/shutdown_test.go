@@ -18,6 +18,13 @@ import (
 	"golang.org/x/term"
 )
 
+// underScript runs the test binary in a pseudo-terminal from script(1). Nothing must query that terminal: it answers
+// nothing, and a query waits for its timeout. Bubble Tea, which asks for the background colour at start-up, is for that
+// reason linked only into codeforge-forms, never into codeforge.
+func underScript(ctx context.Context, script string, args ...string) *exec.Cmd {
+	return exec.CommandContext(ctx, script, append([]string{"-q", "/dev/null"}, args...)...)
+}
+
 //nolint:revive // The subprocess exercises the real launch lifecycle.
 func TestLaunchExitHint(t *testing.T) {
 	if os.Getenv("CODEFORGE_SHUTDOWN_TEST") == "1" {
@@ -86,11 +93,10 @@ func TestExitHintColors(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 			defer cancel()
-			argv := []string{os.Args[0], "-test.run=^TestLaunchExitHint$"}
+			cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestLaunchExitHint$")
 			if tt.tty {
-				argv = append([]string{script, "-q", "/dev/null"}, argv...)
+				cmd = underScript(ctx, script, os.Args[0], "-test.run=^TestLaunchExitHint$")
 			}
-			cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 			cmd.Env = append(os.Environ(), "HOME="+home, "CODEFORGE_SHUTDOWN_TEST=1", "CODEFORGE_TEST_ENGINE="+engine, "CODEFORGE_HEADLESS_TEST=0", "TERM="+tt.term, "NO_COLOR="+tt.noColor)
 			out, err := cmd.CombinedOutput()
 			require.NoError(t, err, string(out))
@@ -176,6 +182,12 @@ func TestInteractiveTerminal(t *testing.T) {
 		before, err := term.GetState(int(os.Stdin.Fd()))
 		require.NoError(t, err)
 		require.NoError(t, runInteractive(t.Context(), []string{os.Getenv("CODEFORGE_TEST_ENGINE")}, os.Environ()))
+		// Turning canonical mode back on marks the terminal "input pending" (PENDIN) until something reads from it,
+		// which the next prompt would; one empty read here stands in for it, so only the settings are compared.
+		fd := int(os.Stdin.Fd())
+		require.NoError(t, syscall.SetNonblock(fd, true))
+		_, _ = syscall.Read(fd, make([]byte, 1)) //nolint:errcheck // nothing to read (EAGAIN) is expected
+		require.NoError(t, syscall.SetNonblock(fd, false))
 		after, err := term.GetState(int(os.Stdin.Fd()))
 		require.NoError(t, err)
 		require.Equal(t, before, after)
@@ -191,7 +203,7 @@ func TestInteractiveTerminal(t *testing.T) {
 	require.NoError(t, os.WriteFile(engine, []byte("#!/bin/sh\nstty -echo -icanon\n"), execPerm))
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, script, "-q", "/dev/null", os.Args[0], "-test.run=^TestInteractiveTerminal$")
+	cmd := underScript(ctx, script, os.Args[0], "-test.run=^TestInteractiveTerminal$")
 	cmd.Env = append(os.Environ(), "CODEFORGE_TTY_TEST=1", "CODEFORGE_TEST_ENGINE="+engine)
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, string(out))
@@ -253,7 +265,7 @@ func TestLaunchTitleAndEmptySessionInTerminal(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 			defer cancel()
-			cmd := exec.CommandContext(ctx, script, "-q", "/dev/null", os.Args[0], "-test.run=^TestLaunchExitHint$")
+			cmd := underScript(ctx, script, os.Args[0], "-test.run=^TestLaunchExitHint$")
 			cmd.Env = append(os.Environ(), "HOME="+home, "CODEFORGE_SHUTDOWN_TEST=1", "CODEFORGE_TEST_ENGINE="+engine, "CODEFORGE_HEADLESS_TEST=0", "TERM=xterm-256color", "NO_COLOR=", "CODEFORGE_TEST_META="+tt.meta, "CODEFORGE_TEST_META_PATH="+meta)
 			raw, err := cmd.CombinedOutput()
 			out := string(raw)

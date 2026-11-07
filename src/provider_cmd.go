@@ -10,6 +10,8 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/codeliter/codeforge/src/config"
+
 	"github.com/codeliter/codeforge/src/guard"
 )
 
@@ -111,11 +113,11 @@ func runProvider(ctx context.Context, home, bin string, args []string, w io.Writ
 		}
 		if scope == "" {
 			scope = "global"
-			if gitErr == nil && !sameConfigScope(home, root) {
+			if gitErr == nil && !config.SameScope(home, root) {
 				scope = "project"
 			}
 		}
-		var policy *ProviderPolicy
+		var policy *config.ProviderPolicy
 		inherited := false
 		if sub == "set" {
 			catalog, err := connectedModelCatalog(ctx, bin)
@@ -128,8 +130,8 @@ func runProvider(ctx context.Context, home, bin string, args []string, w io.Writ
 			if err != nil {
 				return err
 			}
-			if policy = saved.Providers.clone(); policy == nil {
-				policy = &ProviderPolicy{}
+			if policy = saved.Providers.Clone(); policy == nil {
+				policy = &config.ProviderPolicy{}
 			}
 			hadRules := len(policy.Rules) > 0
 			// A project's providers block replaces the global one, so a project without its own copies whatever this keeps.
@@ -153,7 +155,7 @@ func runProvider(ctx context.Context, home, bin string, args []string, w io.Writ
 				}
 				return errProviderUsage
 			}
-			if err := validateProviderPolicy(policy); err != nil {
+			if err := config.ValidateProviderPolicy(policy); err != nil {
 				return err
 			}
 			if err := checkProviderPolicy(saved, policy, catalog); err != nil {
@@ -172,7 +174,7 @@ func runProvider(ctx context.Context, home, bin string, args []string, w io.Writ
 				fmt.Fprintf(w, "Saved %s provider rules (no default provider order).\n", scope)
 			}
 			for _, rule := range policy.Rules {
-				fmt.Fprintf(w, "  %s: %s\n", rule.Match, strings.Join(append([]string{rule.Primary}, rule.chain().Backups()...), " > "))
+				fmt.Fprintf(w, "  %s: %s\n", rule.Match, strings.Join(append([]string{rule.Primary}, rule.Chain().Backups()...), " > "))
 			}
 		}
 		if inherited {
@@ -187,41 +189,41 @@ func runProvider(ctx context.Context, home, bin string, args []string, w io.Writ
 }
 
 // providerRules turns each --for pair into a rule whose providers are connected and listed once.
-func providerRules(args []ruleArg, connected []string) ([]ProviderRule, error) {
-	var rules []ProviderRule
+func providerRules(args []ruleArg, connected []string) ([]config.ProviderRule, error) {
+	var rules []config.ProviderRule
 	for _, arg := range args {
 		chain, err := providerChain(arg.ids, connected)
 		if err != nil {
 			return nil, fmt.Errorf("--for %s: %w", arg.match, err)
 		}
-		rules = append(rules, ProviderRule{Match: arg.match, Primary: chain.Primary, Fallbacks: chain.Fallbacks})
+		rules = append(rules, config.ProviderRule{Match: arg.match, Primary: chain.Primary, Fallbacks: chain.Fallbacks})
 	}
 	return rules, nil
 }
 
 // providerChain normalises aliases and checks every provider is connected and listed once.
-func providerChain(ids, connected []string) (*ProviderPolicy, error) {
+func providerChain(ids, connected []string) (*config.ProviderPolicy, error) {
 	var chain []string
 	for _, id := range ids {
-		id = providerID(id)
-		if !validProviderID(id) {
-			return nil, fmt.Errorf("%w: %q is not a provider ID", errProviderPolicy, id)
+		id = config.ProviderID(id)
+		if !config.ValidProviderID(id) {
+			return nil, fmt.Errorf("%w: %q is not a provider ID", config.ErrProviderPolicy, id)
 		}
 		if !slices.Contains(connected, id) {
-			return nil, fmt.Errorf("%w: %s is not connected in Empryo (connected: %s); sign in with /login first", errProviderPolicy, id, strings.Join(connected, ", "))
+			return nil, fmt.Errorf("%w: %s is not connected in Empryo (connected: %s); sign in with /login first", config.ErrProviderPolicy, id, strings.Join(connected, ", "))
 		}
 		if slices.Contains(chain, id) {
-			return nil, fmt.Errorf("%w: %s is listed twice", errProviderPolicy, id)
+			return nil, fmt.Errorf("%w: %s is listed twice", config.ErrProviderPolicy, id)
 		}
 		chain = append(chain, id)
 	}
-	policy := newProviderPolicy(chain[0], chain[1:])
-	return policy, validateProviderPolicy(policy)
+	policy := config.NewProviderPolicy(chain[0], chain[1:])
+	return policy, config.ValidateProviderPolicy(policy)
 }
 
 // checkProviderChain resolves every saved role on every provider, so the order is never saved half-working.
 // A backup without the exact model uses its closest model of the same level; only a provider with nothing comparable fails.
-func checkProviderChain(home, root, scope string, policy *ProviderPolicy, catalog []string) error {
+func checkProviderChain(home, root, scope string, policy *config.ProviderPolicy, catalog []string) error {
 	cfg, err := readModelApplyConfig(home, root, scope)
 	if err != nil {
 		return err
@@ -230,51 +232,51 @@ func checkProviderChain(home, root, scope string, policy *ProviderPolicy, catalo
 }
 
 // checkProviderPolicy is checkProviderChain on a configuration that is already read.
-func checkProviderPolicy(cfg Config, policy *ProviderPolicy, catalog []string) error {
+func checkProviderPolicy(cfg config.Config, policy *config.ProviderPolicy, catalog []string) error {
 	cfg.Providers = policy
-	if _, err := resolveModelPlan(cfg, catalog); err != nil {
+	if _, err := config.ResolvePlan(cfg, catalog); err != nil {
 		return fmt.Errorf("%w\nThat provider has no model of the same level to stand in. Choose another model with codeforge models configure, or leave that provider out", err)
 	}
 	return nil
 }
 
 // saveProviderPolicy writes only the providers key of the chosen scope; every other saved choice is kept.
-func saveProviderPolicy(home, root, scope string, policy *ProviderPolicy) error {
+func saveProviderPolicy(home, root, scope string, policy *config.ProviderPolicy) error {
 	if scope == "global" {
-		cfg, err := readConfigFile(home)
+		cfg, err := config.ReadFile(home)
 		if err != nil {
 			return err
 		}
 		cfg.Providers = policy
-		return writeConfigFile(home, cfg)
+		return config.WriteFile(home, cfg)
 	}
-	if sameConfigScope(home, root) {
+	if config.SameScope(home, root) {
 		return fmt.Errorf("%w: this project path is your global configuration; use --global", errProviderUsage)
 	}
-	if err := ensureProjectModelEditing(home, root, func() bool {
+	if err := config.EnsureProjectEditing(home, root, func() bool {
 		return confirm("Replace the unapproved project model file? It is kept if you cancel.")
 	}); err != nil {
 		return err
 	}
 	if isSymlinked(root, filepath.Join(".codeforge", "config.yaml")) {
-		return errConfigSymlink
+		return config.ErrConfigSymlink
 	}
-	local, err := readTrustedProjectConfig(home, root)
+	local, err := config.ReadTrustedProject(home, root, modelTrustApprover())
 	if err != nil {
 		return err
 	}
 	if policy == nil {
 		// An empty project policy overrides an inherited global one.
-		policy = &ProviderPolicy{}
+		policy = &config.ProviderPolicy{}
 	}
 	local.Providers = policy
-	return configureModelFile(filepath.Dir(projectConfigPath(root)), local, nil, func(*Config, []string) error { return nil }, func(_ string, content string) error {
-		return trust(home, projectConfigPath(root), content)
+	return configureModelFile(filepath.Dir(config.ProjectPath(root)), local, nil, func(*config.Config, []string) error { return nil }, func(_ string, content string) error {
+		return config.Trust(home, config.ProjectPath(root), content)
 	})
 }
 
 func showProviders(ctx context.Context, home, bin, root string, w io.Writer) error {
-	cfg, err := loadConfigAt(home, root)
+	cfg, err := config.Load(home, root, modelTrustApprover())
 	if err != nil {
 		return err
 	}
@@ -288,7 +290,7 @@ func showProviders(ctx context.Context, home, bin, root string, w io.Writer) err
 	}
 	if cfg.Providers != nil {
 		for _, rule := range cfg.Providers.Rules {
-			fmt.Fprintf(w, "Models %s: %s\n", rule.Match, strings.Join(append([]string{providerID(rule.Primary)}, rule.chain().Backups()...), " > "))
+			fmt.Fprintf(w, "Models %s: %s\n", rule.Match, strings.Join(append([]string{config.ProviderID(rule.Primary)}, rule.Chain().Backups()...), " > "))
 		}
 	}
 	if catalog, err := connectedModelCatalog(ctx, bin); err == nil {

@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/codeliter/codeforge/src/config"
+
 	"github.com/stretchr/testify/require"
 
 	"github.com/codeliter/codeforge/src/store"
@@ -43,7 +45,7 @@ func TestLearn_CorrectListRevert(t *testing.T) {
 	require.Contains(t, listLearning(t, home, "--all"), "reverted")
 	require.ErrorIs(t, runLearn(t.Context(), home, []string{"revert", "2"}, &out), store.ErrNoObservation)
 
-	s, err := store.Open(t.Context(), filepath.Join(configDir(home), "sessions"))
+	s, err := store.Open(t.Context(), filepath.Join(config.Dir(home), "sessions"))
 	require.NoError(t, err)
 	obs, err := s.Observations(t.Context(), repo, true)
 	require.NoError(t, err)
@@ -74,7 +76,7 @@ func TestLearn_RejectsBadInput(t *testing.T) {
 
 func TestLearn_SessionMustBelongToRepository(t *testing.T) {
 	home, repo := learnFixture(t)
-	s, err := store.Open(t.Context(), filepath.Join(configDir(home), "sessions"))
+	s, err := store.Open(t.Context(), filepath.Join(config.Dir(home), "sessions"))
 	require.NoError(t, err)
 	require.NoError(t, s.Put(t.Context(), store.Session{ID: "here", Mode: modeChat, Profile: profileFor(modeChat), Repository: repo}))
 	require.NoError(t, s.Put(t.Context(), store.Session{ID: "there", Mode: modeChat, Profile: profileFor(modeChat), Repository: "/elsewhere"}))
@@ -95,7 +97,7 @@ func TestLearn_OutcomeRecordsStatusNotOutput(t *testing.T) {
 	require.ErrorIs(t, learnOutcome(t.Context(), home, "/repo", []string{"--", "sleep", "5"}, &out, 100*time.Millisecond), errCheckFailed)
 	require.Error(t, learnOutcome(t.Context(), home, "/repo", []string{"--", "/does/not/exist"}, &out, time.Minute))
 
-	s, err := store.Open(t.Context(), filepath.Join(configDir(home), "sessions"))
+	s, err := store.Open(t.Context(), filepath.Join(config.Dir(home), "sessions"))
 	require.NoError(t, err)
 	obs, err := s.Observations(t.Context(), "/repo", true)
 	require.NoError(t, err)
@@ -126,7 +128,7 @@ func TestLearn_RunDispatchKeepsArgvAndSkipsSetup(t *testing.T) {
 	require.NoError(t, Run(t.Context(), []string{"learn", "outcome", "--", "sh", "-c", "exit 0", "--cwd", "/nope"}))
 	require.ErrorIs(t, Run(t.Context(), []string{"learn", "correct", "text", "--session", "s1"}), errLearnUsage)
 	require.ErrorIs(t, Run(t.Context(), []string{"--cwd", repo, "learn", "list"}), errLearnCwd)
-	s, err := store.Open(t.Context(), filepath.Join(configDir(home), "sessions"))
+	s, err := store.Open(t.Context(), filepath.Join(config.Dir(home), "sessions"))
 	require.NoError(t, err)
 	obs, err := s.Observations(t.Context(), repo, true)
 	require.NoError(t, err)

@@ -82,6 +82,7 @@ func TestModesCLI(t *testing.T) {
 	} {
 		for _, variant := range []string{"tui", "headless", "failure"} {
 			t.Run(tc.name+"/"+variant, func(t *testing.T) {
+				t.Parallel() // every case has its own home, workspace and fixtures
 				if tc.mode == modeReview && runtime.GOOS != "darwin" {
 					t.Skip("review requires macOS sandbox-exec")
 				}

@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/codeliter/codeforge/src/config"
+
 	"github.com/stretchr/testify/require"
 )
 
@@ -13,8 +15,8 @@ func TestModelsApplyRequiresConfirmationAndPreservesSavedChoices(t *testing.T) {
 		t.Skip("non-interactive apply")
 	}
 	home := t.TempDir()
-	require.NoError(t, writeConfigFile(home, Config{Model: "saved/coder", Review: ReviewConfig{Model: "saved/reviewer"}}))
-	path := filepath.Join(configDir(home), "config.yaml")
+	require.NoError(t, config.WriteFile(home, config.Config{Model: "saved/coder", Review: config.ReviewConfig{Model: "saved/reviewer"}}))
+	path := filepath.Join(config.Dir(home), "config.yaml")
 	before, err := os.ReadFile(path)
 	require.NoError(t, err)
 	bin := filepath.Join(t.TempDir(), "empryo")
@@ -63,8 +65,8 @@ func TestSaveRecommendedModels(t *testing.T) {
 	}
 	catalog := []string{"copilot/claude-sonnet-5.5", "copilot/claude-opus-5.5", "copilot/claude-haiku-5.5", "copilot/gpt-6-luna", "copilot/gpt-6.1-sol", "copilot/kimi-k3"}
 	home, root := t.TempDir(), t.TempDir()
-	require.NoError(t, writeConfigFile(home, Config{Model: "copilot/gpt-6.1-sol", Review: ReviewConfig{Model: "copilot/claude-opus-5.5"}, DefaultMode: "work", Routing: map[string]string{"editing": "copilot/gpt-6-luna"}}))
-	path := filepath.Join(configDir(home), "config.yaml")
+	require.NoError(t, config.WriteFile(home, config.Config{Model: "copilot/gpt-6.1-sol", Review: config.ReviewConfig{Model: "copilot/claude-opus-5.5"}, DefaultMode: "work", Routing: map[string]string{"editing": "copilot/gpt-6-luna"}}))
+	path := filepath.Join(config.Dir(home), "config.yaml")
 	before, err := os.ReadFile(path)
 	require.NoError(t, err)
 	cfg, err := readModelApplyConfig(home, root, "global")
@@ -79,7 +81,7 @@ func TestSaveRecommendedModels(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, preview, "model: copilot/gpt-6.1-sol -> copilot/claude-sonnet-5.5")
 	require.Equal(t, "copilot/claude-sonnet-5.5", next.Model)
-	saved, err := readConfigFile(home)
+	saved, err := config.ReadFile(home)
 	require.NoError(t, err)
 	require.Equal(t, "copilot/claude-sonnet-5.5", saved.Model)
 	require.Equal(t, "copilot/gpt-6.1-sol", saved.Review.Model)
@@ -90,28 +92,28 @@ func TestSaveRecommendedModels(t *testing.T) {
 
 	cfg, err = readModelApplyConfig(home, root, "project")
 	require.NoError(t, err)
-	project := cloneConfig(cfg)
+	project := config.Clone(cfg)
 	project.Model = "copilot/gpt-6.1-sol"
 	project.Review.Model = "copilot/claude-opus-5.5"
-	require.NoError(t, writeConfigYAML(filepath.Join(root, ".codeforge"), Config{Model: project.Model, Review: ReviewConfig{Model: project.Review.Model}}))
-	require.NoError(t, approveProjectConfig(home, root))
+	require.NoError(t, config.WriteYAML(filepath.Join(root, ".codeforge"), config.Config{Model: project.Model, Review: config.ReviewConfig{Model: project.Review.Model}}))
+	require.NoError(t, config.ApproveProject(home, root))
 	cfg, err = readModelApplyConfig(home, root, "project")
 	require.NoError(t, err)
 	_, err = saveRecommendedModels(home, root, "project", cfg, catalog, func(string, string) bool { return true })
 	require.NoError(t, err)
-	effective, err := loadConfigAt(home, root)
+	effective, err := config.Load(home, root, nil)
 	require.NoError(t, err)
 	require.Equal(t, "copilot/claude-sonnet-5.5", effective.Model, "saved project choices are approved and used")
-	globalAfter, err := readConfigFile(home)
+	globalAfter, err := config.ReadFile(home)
 	require.NoError(t, err)
 	require.Equal(t, saved.Model, globalAfter.Model, "project application must not change global settings")
-	local, err := readTrustedProjectConfig(home, root)
+	local, err := config.ReadTrustedProject(home, root, nil)
 	require.NoError(t, err)
 	require.Empty(t, local.Routing, "global helper routing must not be copied into the project file")
 }
 
 func TestRecommendedModelsKeepProviderNames(t *testing.T) {
-	cfg := Config{Providers: &ProviderPolicy{Primary: "devpass", Fallback: "copilot"}, Model: "GPT 6.1 Sol"}
+	cfg := config.Config{Providers: &config.ProviderPolicy{Primary: "devpass", Fallback: "copilot"}, Model: "GPT 6.1 Sol"}
 	next, _, err := recommendedModelConfig(cfg, providerTestCatalog())
 	require.NoError(t, err)
 	require.Equal(t, "claude-sonnet-5-5", next.Model, "recommendations follow the primary provider and stay provider-neutral names")
@@ -122,9 +124,9 @@ func TestModelApplyLoadsOnlySelectedSavedScope(t *testing.T) {
 		t.Skip("non-interactive trust behaviour")
 	}
 	home, root := t.TempDir(), t.TempDir()
-	require.NoError(t, writeConfigFile(home, Config{Model: "global/coder"}))
-	require.NoError(t, writeConfigYAML(filepath.Join(root, ".codeforge"), Config{Model: "project/coder"}))
-	require.NoError(t, approveProjectConfig(home, root))
+	require.NoError(t, config.WriteFile(home, config.Config{Model: "global/coder"}))
+	require.NoError(t, config.WriteYAML(filepath.Join(root, ".codeforge"), config.Config{Model: "project/coder"}))
+	require.NoError(t, config.ApproveProject(home, root))
 	t.Setenv("CODEFORGE_MODEL", "oneoff/coder")
 	global, err := readModelApplyConfig(home, root, "global")
 	require.NoError(t, err)
@@ -132,7 +134,7 @@ func TestModelApplyLoadsOnlySelectedSavedScope(t *testing.T) {
 	project, err := readModelApplyConfig(home, root, "project")
 	require.NoError(t, err)
 	require.Equal(t, "project/coder", project.Model)
-	require.NoError(t, os.WriteFile(projectConfigPath(root), []byte("invalid: broken\n"), privateFile))
+	require.NoError(t, os.WriteFile(config.ProjectPath(root), []byte("invalid: broken\n"), privateFile))
 	global, err = readModelApplyConfig(home, root, "global")
 	require.NoError(t, err)
 	require.Equal(t, "global/coder", global.Model, "global application must not load checkout configuration")
@@ -142,7 +144,7 @@ func TestModelApplyLoadsOnlySelectedSavedScope(t *testing.T) {
 }
 
 func TestPlannedNativeFallbacksPreserveUnrelatedRows(t *testing.T) {
-	plan := ModelPlan{Routes: []ModelRoute{{Role: "model", Primary: "primary/model", Fallbacks: []string{"backup/model"}}}}
+	plan := config.ModelPlan{Routes: []config.ModelRoute{{Role: "model", Primary: "primary/model", Fallbacks: []string{"backup/model"}}}}
 	native := &nativeFallbackSnapshot{Global: map[string][]string{"primary/model": {"old/model"}, "backup/model": {"extra/model"}, "other/model": {"other/backup"}}, Effective: map[string][]string{"primary/model": {"old/model"}, "backup/model": {"extra/model"}, "other/model": {"other/backup"}}}
 	global, err := plannedNativeFallbacks(plan, native, "global")
 	require.NoError(t, err)
@@ -160,7 +162,7 @@ func TestPlannedNativeFallbacksPreserveUnrelatedRows(t *testing.T) {
 	require.Equal(t, []string{"project/backup"}, project["project/model"])
 	require.NotContains(t, project, "other/model", "do not revive inactive global fallback rows")
 	require.Equal(t, native.Project, native.declaredFallbacks(), "native project maps replace the whole global key")
-	require.NoError(t, plan.verifyFallbacks(project), "inactive global backup hops must not fail verification")
+	require.NoError(t, plan.VerifyFallbacks(project), "inactive global backup hops must not fail verification")
 	preview := nativeFallbackPreview(native.Global, global)
 	require.Contains(t, preview, `"primary/model": ["old/model"] -> ["backup/model"]`)
 	require.Contains(t, preview, `"backup/model": ["extra/model"] -> []`)
@@ -169,7 +171,7 @@ func TestPlannedNativeFallbacksPreserveUnrelatedRows(t *testing.T) {
 
 func TestGlobalDefaultModelShadowedByProject(t *testing.T) {
 	root := t.TempDir()
-	plan := ModelPlan{Routes: []ModelRoute{{Role: "model", Primary: "a/coder"}}}
+	plan := config.ModelPlan{Routes: []config.ModelRoute{{Role: "model", Primary: "a/coder"}}}
 	require.Empty(t, globalDefaultModelShadowed(root, plan), "no project file")
 	dir := filepath.Join(root, ".empryo")
 	require.NoError(t, os.MkdirAll(dir, privateDir))

@@ -13,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/codeliter/codeforge/src/config"
+
 	"github.com/stretchr/testify/require"
 	_ "modernc.org/sqlite"
 
@@ -173,7 +175,7 @@ func TestObservePrompt_AgentStartedSessionsTeachNothing(t *testing.T) {
 		runObserve(t.Context(), home, strings.NewReader(string(data)))
 	}
 	require.Empty(t, loadObservations(t, home, repo), "a prompt typed by the agent into a session it launched is not the user's word")
-	shape, err := os.ReadFile(filepath.Join(configDir(home), shapeLogFile))
+	shape, err := os.ReadFile(filepath.Join(config.Dir(home), shapeLogFile))
 	require.NoError(t, err)
 	require.Contains(t, string(shape), "result=skipped:not-a-launch-from-a-terminal")
 }
@@ -344,7 +346,7 @@ func TestObservePrompt_RecordsCorrectionsOnly(t *testing.T) {
 	require.Equal(t, store.OriginHook, obs[0].Origin)
 	require.Equal(t, "sess-1", obs[0].SessionID)
 
-	data, err := os.ReadFile(filepath.Join(configDir(home), shapeLogFile))
+	data, err := os.ReadFile(filepath.Join(config.Dir(home), shapeLogFile))
 	require.NoError(t, err)
 	require.Contains(t, string(data), "event=UserPromptSubmit")
 	require.Contains(t, string(data), "result=recorded:correction")
@@ -553,7 +555,7 @@ func TestHelp_ListsRuleCommands(t *testing.T) {
 
 func TestVectorNeighbours_OtherRepositoriesCannotCrowdOutAMatch(t *testing.T) {
 	home := t.TempDir()
-	s, err := store.Open(t.Context(), filepath.Join(configDir(home), "sessions"))
+	s, err := store.Open(t.Context(), filepath.Join(config.Dir(home), "sessions"))
 	require.NoError(t, err)
 	defer func() { require.NoError(t, s.Close()) }()
 	now := time.Now()
@@ -579,7 +581,7 @@ func TestVectorNeighbours_OtherRepositoriesCannotCrowdOutAMatch(t *testing.T) {
 
 func TestVectorNeighbours_UnavailableFallsBackToWordOverlap(t *testing.T) {
 	home := t.TempDir()
-	s, err := store.OpenWith(t.Context(), filepath.Join(configDir(home), "sessions"), store.Options{DisableVector: true})
+	s, err := store.OpenWith(t.Context(), filepath.Join(config.Dir(home), "sessions"), store.Options{DisableVector: true})
 	require.NoError(t, err)
 	defer func() { require.NoError(t, s.Close()) }()
 	_, err = vectorNeighbours(t.Context(), s, nil)
@@ -589,7 +591,7 @@ func TestVectorNeighbours_UnavailableFallsBackToWordOverlap(t *testing.T) {
 func TestLoadLearning_BrokenVectorTableStillProposes(t *testing.T) {
 	home, repo := learnRepo(t)
 	teachCorrections(t, home, repo, "always use table-driven tests", "prefer table tests")
-	db, err := sql.Open("sqlite", "file:"+filepath.Join(configDir(home), "sessions", "sessions.db"))
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(config.Dir(home), "sessions", "sessions.db"))
 	require.NoError(t, err)
 	for _, stmt := range []string{"DROP TABLE IF EXISTS correction_vec", "CREATE TABLE correction_vec (note TEXT)"} {
 		_, err := db.ExecContext(t.Context(), stmt)
@@ -679,7 +681,7 @@ func TestProposals_ReplacementDirectionNeverMerges(t *testing.T) {
 
 func TestVectorNeighbours_OtherDirectoriesCannotCrowdOutAMatch(t *testing.T) {
 	home := t.TempDir()
-	s, err := store.Open(t.Context(), filepath.Join(configDir(home), "sessions"))
+	s, err := store.Open(t.Context(), filepath.Join(config.Dir(home), "sessions"))
 	require.NoError(t, err)
 	defer func() { require.NoError(t, s.Close()) }()
 	now := time.Now()
@@ -702,7 +704,7 @@ func TestVectorNeighbours_OtherDirectoriesCannotCrowdOutAMatch(t *testing.T) {
 
 func TestVectorNeighbours_WindowExhaustedFallsBack(t *testing.T) {
 	home := t.TempDir()
-	s, err := store.Open(t.Context(), filepath.Join(configDir(home), "sessions"))
+	s, err := store.Open(t.Context(), filepath.Join(config.Dir(home), "sessions"))
 	require.NoError(t, err)
 	defer func() { require.NoError(t, s.Close()) }()
 	saved := neighbourCap

@@ -1,4 +1,4 @@
-package src
+package config
 
 import (
 	"slices"
@@ -32,7 +32,7 @@ type modelShape struct {
 func shapeOf(name string) modelShape {
 	var words []string
 	var shape modelShape
-	for _, token := range strings.Split(modelReferenceKey(modelName(name)), "-") {
+	for _, token := range strings.Split(ModelReferenceKey(ModelName(name)), "-") {
 		if n, err := strconv.Atoi(token); err == nil {
 			shape.version = append(shape.version, n)
 			continue
@@ -74,13 +74,13 @@ func compareVersions(a, b []int) int {
 // then a model of the same level from the same vendor, then from any vendor, newest first.
 // It reports false when nothing of the same line or level exists, so a provider is only refused when it truly
 // has nothing comparable.
-func equivalentModel(want, provider string, catalog []string) (string, bool) {
+func EquivalentModel(want, provider string, catalog []string) (string, bool) {
 	target := shapeOf(want)
-	provider = providerID(provider)
+	provider = ProviderID(provider)
 	var sameLine, sameLevel []string
 	for _, id := range catalog {
 		p, _, ok := strings.Cut(id, "/")
-		if !ok || p != provider || !suggestedModel(id) {
+		if !ok || p != provider || !SuggestedModel(id) {
 			continue
 		}
 		shape := shapeOf(id)
@@ -125,4 +125,9 @@ func equivalentModel(want, provider string, catalog []string) (string, bool) {
 		return sameLevel[0], true
 	}
 	return "", false
+}
+
+// SuggestedModel excludes models the project must never recommend or offer.
+func SuggestedModel(id string) bool {
+	return !strings.HasPrefix(ModelReferenceKey(ModelName(id)), "gemini-4-argon")
 }

@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/codeliter/codeforge/src/config"
+
 	"github.com/codeliter/codeforge/src/effort"
 )
 
@@ -28,7 +30,7 @@ var flagsWithValue = map[string]bool{
 }
 
 // taskArgs prepends the coding model and an effort to a task launch; an explicit --effort wins if within the ceiling.
-func taskArgs(ctx context.Context, bin string, cfg Config, args []string) ([]string, error) {
+func taskArgs(ctx context.Context, bin string, cfg config.Config, args []string) ([]string, error) {
 	if err := checkEffort(args); err != nil {
 		return nil, err
 	}

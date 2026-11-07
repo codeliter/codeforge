@@ -10,10 +10,12 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/codeliter/codeforge/src/config"
+
 	"github.com/stretchr/testify/require"
 )
 
-func nativeApplyFixture(t *testing.T, projectOverride bool) (bin, home, root string, plan ModelPlan, calls *atomic.Int32) {
+func nativeApplyFixture(t *testing.T, projectOverride bool) (bin, home, root string, plan config.ModelPlan, calls *atomic.Int32) {
 	t.Helper()
 	if os.Getenv("CODEFORGE_NATIVE_PRESET_PROBE") != "1" {
 		t.Skip("optional isolated installed-runtime integration")
@@ -46,7 +48,7 @@ func nativeApplyFixture(t *testing.T, projectOverride bool) (bin, home, root str
 		require.NoError(t, err)
 		require.NoError(t, os.WriteFile(filepath.Join(dir, "config.json"), data, privateFile))
 	}
-	plan = ModelPlan{Routes: []ModelRoute{{Role: "model", Primary: "cf-config-probe/unit", Fallbacks: []string{"cf-backup-probe/unit"}}}}
+	plan = config.ModelPlan{Routes: []config.ModelRoute{{Role: "model", Primary: "cf-config-probe/unit", Fallbacks: []string{"cf-backup-probe/unit"}}}}
 	return bin, home, root, plan, calls
 }
 
@@ -168,9 +170,9 @@ func TestNativeModelApplyAsksOnceForFallbackAndDefaultModel(t *testing.T) {
 }
 
 func TestPlannedDefaultModel(t *testing.T) {
-	require.Equal(t, "a/coder", plannedDefaultModel(ModelPlan{Routes: []ModelRoute{{Role: "expert", Primary: "x/y"}, {Role: "model", Primary: "a/coder"}}}))
-	require.Equal(t, "b/coder", plannedDefaultModel(ModelPlan{Config: Config{Model: "b/coder"}}))
-	require.Empty(t, plannedDefaultModel(ModelPlan{}))
+	require.Equal(t, "a/coder", plannedDefaultModel(config.ModelPlan{Routes: []config.ModelRoute{{Role: "expert", Primary: "x/y"}, {Role: "model", Primary: "a/coder"}}}))
+	require.Equal(t, "b/coder", plannedDefaultModel(config.ModelPlan{Config: config.Config{Model: "b/coder"}}))
+	require.Empty(t, plannedDefaultModel(config.ModelPlan{}))
 }
 
 func TestNativeModelApplyCancellationAndStalePreview(t *testing.T) {

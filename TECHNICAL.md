@@ -71,6 +71,17 @@ SIGTERM sent to the supervising CLI is forwarded to its child.
 Implementation: [run.go](src/run.go), [shutdown.go](src/shutdown.go),
 [sessions.go](src/sessions.go), [acknowledge.go](src/acknowledge.go).
 
+### Terminal forms
+
+Every menu and prompt (mode picker, init, model and provider wizards, trust questions) is a declarative
+[forms.Form](src/forms/forms.go) that codeforge hands to `codeforge-forms`, a second program shipped next to it,
+over a pipe; the answers come back the same way while the terminal itself stays with the helper. The terminal UI
+library (huh/Bubble Tea) is linked only into that helper: at start-up it asks the terminal for its colours and waits
+five seconds where nothing answers, a cost codeforge, its hooks and every `gh`/`git` interception would otherwise
+pay on each run. `codeforge doctor` reports the helper; `CODEFORGE_FORMS` points at it when it lives elsewhere.
+
+Implementation: [forms](src/forms/forms.go), [cmd/codeforge-forms](cmd/codeforge-forms/main.go).
+
 ## 2. Initialisation, personas, and repair
 
 ```mermaid
@@ -233,7 +244,7 @@ backoff, and backup-model attempts. Changing provider does not bypass shared con
 and an acknowledgement is not proof that the provider request succeeded.
 
 Implementation: [launch.go](src/launch.go), [effort/effort.go](src/effort/effort.go),
-[models.go](src/models.go), [config.go](src/config.go).
+[models.go](src/models.go), [config](src/config/config.go).
 The project design paper and historical evaluation are in [adaptive-effort.md](docs/adaptive-effort.md).
 Its small evaluation set is not a release-by-release benchmark or a guarantee of calibration.
 
@@ -311,7 +322,7 @@ remain under Empryo's task router. Unsupported routing keys are rejected, not si
 Provider authentication, quotas, fallback chains, retries, and native background routing remain Empryo responsibilities.
 See [Empryo profile routing](https://empryo.com/docs/tools/profiles#routing-jobs).
 
-Implementation: [config_yaml.go](src/config_yaml.go), [models_configure.go](src/models_configure.go),
+Implementation: [config/yaml.go](src/config/yaml.go), [models_configure.go](src/models_configure.go),
 [profile_routing.go](src/profile_routing.go), and [config.example.yaml](config.example.yaml).
 
 ## 5. Reviews and independent checks
@@ -424,7 +435,6 @@ Implementation: [reviewer definition](assets/agents/codeforge-reviewer.md),
 | `~/.empryo/hooks/cf` | Permanent managed hook executable |
 | `~/.empryo/hooks.json` | Hook registration; other user hooks are retained |
 | `~/.empryo/agents` and `~/.empryo/skills` | Generated Codeforge profiles and skills |
-| `~/.empryo/bin/gh` | Managed GitHub CLI shim |
 
 Session identity is recorded before the engine starts. Resume checks the saved workspace, metadata,
 and transcript; missing or mismatched state fails instead of creating a fresh conversation.
