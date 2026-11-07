@@ -83,10 +83,47 @@ type Group struct {
 	When   *When   `json:"when,omitempty"`
 }
 
-// Form is what the user is asked, page by page, on the alternate screen.
+// Form is what the user is asked, page by page, on the alternate screen. A form with an Accordion shows that instead.
 type Form struct {
-	Name   string  `json:"name"`
-	Groups []Group `json:"groups"`
+	Name      string     `json:"name"`
+	Groups    []Group    `json:"groups"`
+	Accordion *Accordion `json:"accordion,omitempty"`
+}
+
+// Accordion shows a long text as sections the user opens and closes, one row each, on the alternate screen. Every
+// text is already laid out for the terminal, colours included; the helper only arranges and scrolls it.
+type Accordion struct {
+	// Intro is shown above the sections, Outro below them.
+	Intro string    `json:"intro,omitempty"`
+	Outro string    `json:"outro,omitempty"`
+	Items []Section `json:"items"`
+	// Open opens every section at the start.
+	Open bool `json:"open,omitempty"`
+	// Confirm, when set, is offered as a key: pressing ConfirmKey answers AccordionConfirm with Yes, leaving answers No.
+	Confirm    string `json:"confirm,omitempty"`
+	ConfirmKey string `json:"confirm_key,omitempty"`
+	// Accent and Dim are the escapes for the cursor and the key help, so the view matches the caller's theme.
+	Accent string `json:"accent,omitempty"`
+	Dim    string `json:"dim,omitempty"`
+}
+
+// Section is one row of an Accordion: its title and summary on the row, its body under it while it is open.
+type Section struct {
+	Title   string `json:"title"`
+	Summary string `json:"summary,omitempty"`
+	Body    string `json:"body,omitempty"`
+}
+
+// AccordionConfirm is the answer key of an Accordion's Confirm.
+const AccordionConfirm = "confirm"
+
+// Show runs an accordion and reports whether its Confirm key was pressed.
+func Show(name string, a Accordion) (bool, error) {
+	answers, err := Run(Form{Name: name, Accordion: &a})
+	if err != nil {
+		return false, err
+	}
+	return answers.Bool(AccordionConfirm), nil
 }
 
 // Answer is what the user gave for one field.

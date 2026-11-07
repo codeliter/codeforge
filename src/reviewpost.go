@@ -13,6 +13,7 @@ import (
 
 	"golang.org/x/term"
 
+	"github.com/codeliter/codeforge/src/forms"
 	"github.com/codeliter/codeforge/src/review"
 )
 
@@ -50,16 +51,23 @@ func runReviewEngine(ctx context.Context, argv, env []string, limit time.Time) e
 	if !hasFlag(argv, "--json") {
 		argv = append(slices.Clone(argv), "--json")
 	}
+	// On a terminal the engine's own start-up warnings are held back so the review stands alone; they are shown when the
+	// run fails, where they may explain why.
+	var chatter bytes.Buffer
+	engineCtx := ctx
 	if styled {
 		fmt.Fprintln(os.Stderr, "codeforge: reviewing; the review appears here when the model is done.")
+		engineCtx = withEngineStderr(ctx, &chatter)
 	}
 	var out bytes.Buffer
-	if err := runEngineTo(ctx, argv, env, limit, &out); err != nil {
+	if err := runEngineTo(engineCtx, argv, env, limit, &out); err != nil {
+		fmt.Fprint(os.Stderr, chatter.String())
 		fmt.Fprint(os.Stdout, out.String())
 		return err
 	}
 	text, err := review.EngineOutput(out.Bytes())
 	if err != nil {
+		fmt.Fprint(os.Stderr, chatter.String())
 		fmt.Fprint(os.Stdout, out.String())
 		if !post.Enabled() {
 			return err
@@ -67,28 +75,34 @@ func runReviewEngine(ctx context.Context, argv, env []string, limit time.Time) e
 		return fmt.Errorf("not posting the review: %w", err)
 	}
 	text = review.StripVerdict(text)
-	if styled {
-		st := codeStyleFor(ctx, os.Stdout)
-		fmt.Fprint(os.Stdout, renderReview(text, st, reviewCode(ctx, st))+runFooter(out.Bytes(), st))
-	} else {
-		fmt.Fprintln(os.Stdout, text)
-	}
-	if !post.Enabled() {
-		return nil // the jurors' leads follow from finishLeads
-	}
-	// A blocker a juror found must not be missing from what goes up; everything else the jury says stays out.
+	// A blocker a juror found must not be missing from what goes up; everything else the jury says stays out. Without
+	// posting, the leads follow from finishLeads.
 	leads := ""
-	if pipe := review.PipelineOf(ctx); pipe != nil {
+	if pipe := review.PipelineOf(ctx); pipe != nil && post.Enabled() {
 		leads = pipe.Leads(ctx)
 	}
-	if leads != "" {
-		fmt.Fprintln(os.Stdout, "\n"+leads)
+	asked, answer := false, false
+	if styled {
+		asked, answer = showReview(ctx, text, leads, out.Bytes(), post.Enabled() && !post.Preapproved())
+	} else {
+		fmt.Fprintln(os.Stdout, text)
+		if leads != "" {
+			fmt.Fprintln(os.Stdout, "\n"+leads)
+		}
+	}
+	if !post.Enabled() {
+		return nil
 	}
 
 	// The review has ended; waiting for the user's answer is not part of its clock, so only the posting is bounded.
-	if !post.Preapproved() && !confirmed(ctx, os.Stderr, "Post this review on the PR as your comment?") {
-		fmt.Fprintln(os.Stderr, "codeforge: not posted. The review is above; run with --comment=yes to post without asking.")
-		return nil
+	if !post.Preapproved() {
+		if !asked {
+			answer = confirmed(ctx, os.Stderr, "Post this review on the PR as your comment?")
+		}
+		if !answer {
+			fmt.Fprintln(os.Stderr, "codeforge: not posted. Press p in the review to post it, or run with --comment=yes to post without asking.")
+			return nil
+		}
 	}
 	if ctx.Err() != nil {
 		fmt.Fprintln(os.Stderr, "codeforge: cancelled, so the review was not posted.")
@@ -110,6 +124,44 @@ func runReviewEngine(ctx context.Context, argv, env []string, limit time.Time) e
 	}
 	return nil
 }
+
+// showReview shows a finished review on the terminal: as an accordion of its files when the forms helper is there,
+// else printed in full. ask offers posting inside the accordion (key p); asked reports whether that question was put,
+// and post the answer.
+func showReview(ctx context.Context, text, leads string, raw []byte, ask bool) (asked, post bool) {
+	st := codeStyleFor(ctx, os.Stdout)
+	code := reviewCode(ctx, st)
+	footer := runFooter(raw, st)
+	if accordionAvailable() {
+		a := reviewAccordion(text, leads, st, code)
+		a.Outro = footer
+		if ask {
+			a.Confirm, a.ConfirmKey = "post on the PR", "p"
+		}
+		yes, err := showAccordion("review", a)
+		if err == nil || errors.Is(err, forms.ErrAborted) {
+			fmt.Fprint(os.Stdout, accordionRecap(a, st))
+			return ask, yes
+		}
+		fmt.Fprintln(os.Stderr, "codeforge: could not open the review view:", err)
+	}
+	full := renderReview(text, st, code)
+	if leads != "" {
+		full += "\n" + renderReview(leads, st, nil)
+	}
+	if footer != "" {
+		full += "\n" + footer + "\n"
+	}
+	fmt.Fprint(os.Stdout, full)
+	return false, false
+}
+
+// showAccordion runs the accordion through the forms helper, and accordionAvailable says whether there is one; tests
+// replace both.
+var (
+	showAccordion      = forms.Show
+	accordionAvailable = func() bool { _, err := forms.Helper(); return err == nil }
+)
 
 // readLine reads one line a byte at a time, so nothing typed after it is taken from the terminal: the TUI that may open
 // next must still get it. End of input gives what was read, which is not a yes.

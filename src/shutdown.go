@@ -44,6 +44,21 @@ func runEngineTo(ctx context.Context, argv, env []string, limit time.Time, stdou
 	return runEngineWith(ctx, argv, env, limit, stdout, nil)
 }
 
+type engineStderrKey struct{}
+
+// withEngineStderr sends the engine's standard error to w instead of the terminal, so a caller can hold back the
+// engine's start-up chatter and show it only when the run fails.
+func withEngineStderr(ctx context.Context, w io.Writer) context.Context {
+	return context.WithValue(ctx, engineStderrKey{}, w)
+}
+
+func engineStderr(ctx context.Context) io.Writer {
+	if w, ok := ctx.Value(engineStderrKey{}).(io.Writer); ok && w != nil {
+		return w
+	}
+	return os.Stderr
+}
+
 // catchableSignals are the signals codeforge handles while an engine runs. SIGHUP is left alone when the process started
 // with it ignored (nohup): registering for it would replace that, and a closed terminal would then end a run that was
 // meant to outlive it.
@@ -92,7 +107,7 @@ func runEngineWith(ctx context.Context, argv, env []string, limit time.Time, std
 	// Cancellation from main's signal context must not kill Empryo before it saves.
 	cmd := exec.CommandContext(context.WithoutCancel(ctx), argv[0], argv[1:]...)
 	cmd.Env = env
-	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, stdout, os.Stderr
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, stdout, engineStderr(ctx)
 	var expired <-chan time.Time
 	if !limit.IsZero() {
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}

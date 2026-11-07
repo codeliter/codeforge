@@ -12,6 +12,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/codeliter/codeforge/src/effort"
+	"github.com/codeliter/codeforge/src/forms"
 	"github.com/codeliter/codeforge/src/guard"
 	"github.com/codeliter/codeforge/src/review"
 )
@@ -291,6 +292,120 @@ func reviewCode(ctx context.Context, st codeStyle) codeSource {
 	return nil
 }
 
+// reviewAccordion splits a review at its headings into the sections of an accordion: the text before the first heading
+// is the intro, each heading a row whose summary counts its findings by label, and extra (the jurors' leads) a last
+// section of its own. Bodies are laid out for the accordion's indent.
+func reviewAccordion(text, extra string, st codeStyle, code codeSource) forms.Accordion {
+	body := st
+	if body.wrap {
+		body.width = max(minCodeWidth, body.width-len(accordionIndent))
+	}
+	var a forms.Accordion
+	lines := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
+	start, title := 0, ""
+	flush := func(end int) {
+		chunk := lines[start:end]
+		if title == "" && start == 0 {
+			if intro := strings.TrimSpace(renderReview(strings.Join(chunk, "\n"), st, code)); intro != "" {
+				a.Intro = intro
+			}
+			return
+		}
+		color := st.pal.bold
+		if looksLikePath(title) {
+			color = st.pal.accent
+		}
+		a.Items = append(a.Items, forms.Section{
+			Title:   st.paint(color, title),
+			Summary: findingCounts(chunk),
+			Body:    strings.Trim(renderReview(strings.Join(chunk, "\n"), body, code), "\n"),
+		})
+	}
+	inFence := false
+	for i, l := range lines {
+		if mdFence.MatchString(l) {
+			inFence = !inFence
+		}
+		if inFence || !mdHeading.MatchString(l) {
+			continue
+		}
+		flush(i)
+		start, title = i+1, plainInline(mdHeading.FindStringSubmatch(l)[1])
+	}
+	flush(len(lines))
+	if len(a.Items) == 0 && a.Intro != "" {
+		a.Items = []forms.Section{{Title: st.paint(st.pal.bold, "Review"), Body: a.Intro}}
+		a.Intro = ""
+	}
+	if strings.TrimSpace(extra) != "" {
+		a.Items = append(a.Items, forms.Section{
+			Title: st.paint(st.pal.issue, "Unconfirmed blocking leads"),
+			Body:  strings.Trim(renderReview(extra, body, nil), "\n"),
+		})
+	}
+	a.Accent, a.Dim = st.pal.accent, st.pal.dim
+	return a
+}
+
+// accordionIndent is how far the accordion indents an open section's body.
+const accordionIndent = "    "
+
+// labelOrder is the order findingCounts lists labels in: what asks most of the author first.
+var labelOrder = []string{"issue", "suggestion", "question", "todo", "nitpick", "nit", "chore", "thought", "note", "optional", "fyi", "praise"}
+
+// findingCounts summarises a section's findings by label ("1 issue · 2 suggestions"), or counts its points when it has
+// no labelled findings.
+func findingCounts(lines []string) string {
+	counts := map[string]int{}
+	points := 0
+	for _, l := range lines {
+		if f, ok := review.ParseLabeled(l); ok {
+			kind, _, _ := strings.Cut(strings.ToLower(f.Label), " ")
+			counts[strings.TrimSuffix(kind, ":")]++
+			continue
+		}
+		if m := mdBullet.FindStringSubmatch(l); m != nil && m[1] == "" {
+			points++
+		}
+	}
+	var parts []string
+	for _, k := range labelOrder {
+		if n := counts[k]; n > 0 {
+			parts = append(parts, plural(n, k))
+		}
+	}
+	if len(parts) == 0 && points > 0 {
+		parts = append(parts, plural(points, "point"))
+	}
+	return strings.Join(parts, " · ")
+}
+
+func plural(n int, word string) string {
+	if n == 1 || word == "fyi" || word == "praise" {
+		return fmt.Sprintf("%d %s", n, word)
+	}
+	return fmt.Sprintf("%d %ss", n, word)
+}
+
+// accordionRecap is what stays in the terminal after the accordion closes: the intro and each section's row.
+func accordionRecap(a forms.Accordion, st codeStyle) string {
+	var b strings.Builder
+	if a.Intro != "" {
+		b.WriteString(a.Intro + "\n\n")
+	}
+	for _, s := range a.Items {
+		b.WriteString("  " + s.Title)
+		if s.Summary != "" {
+			b.WriteString("  " + st.paint(st.pal.dim, s.Summary))
+		}
+		b.WriteString("\n")
+	}
+	if a.Outro != "" {
+		b.WriteString("\n" + a.Outro + "\n")
+	}
+	return b.String()
+}
+
 // gitShowLimit bounds reading one file from the PR's head ref.
 const gitShowLimit = 5 * time.Second
 
@@ -305,5 +420,5 @@ func runFooter(raw []byte, st codeStyle) string {
 	}
 	const msPerSecond = 1000
 	line := fmt.Sprintf("%d steps, $%.4f, %.1fs", res.Steps, res.Cost, float64(res.DurationMS)/msPerSecond)
-	return "\n" + st.paint(st.pal.dim, line) + "\n"
+	return st.paint(st.pal.dim, line)
 }
