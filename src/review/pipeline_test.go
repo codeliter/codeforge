@@ -50,9 +50,7 @@ func TestPipeline_JurorsOverlapAndLeadsAreUnverified(t *testing.T) {
 	start := time.Now()
 	got := p.Leads(t.Context())
 	require.Less(t, time.Since(start), 280*time.Millisecond, "jurors overlap")
-	require.Contains(t, got, "blocking a.go:3 drops data")
-	require.Contains(t, got, "unverified leads")
-	require.Contains(t, got, "not approved until each is checked")
+	require.Equal(t, LeadsHeader+"- `a.go:3` drops data\n", got, "the same lead from two jurors is listed once, without their names")
 	select {
 	case <-cleaned:
 	case <-time.After(time.Second):
@@ -60,24 +58,28 @@ func TestPipeline_JurorsOverlapAndLeadsAreUnverified(t *testing.T) {
 	}
 }
 
-func TestPipeline_SlowAndBrokenJurorsAreNamed(t *testing.T) {
+func TestPipeline_BrokenAndPassingJurorsSayNothing(t *testing.T) {
 	var p Pipeline
 	p.Start(t.Context(), "", "brief", []Reviewer{
 		fixedReviewer{name: "fast", out: failVerdict},
 		fixedReviewer{name: "broken", err: errBoom},
 	}, func() {})
 	got := p.Leads(t.Context())
-	require.Contains(t, got, "broken: no verdict in time")
-	require.Contains(t, got, "fast: fail")
+	require.Contains(t, got, "`a.go:3` drops data")
+	require.NotContains(t, got, "broken")
+	require.NotContains(t, got, "fast")
+
+	var quiet Pipeline
+	quiet.Start(t.Context(), "", "brief", []Reviewer{fixedReviewer{name: "broken", err: errBoom}}, nil)
+	require.Empty(t, quiet.Leads(t.Context()), "no blocker, no quorum notice")
 }
 
-func TestPipeline_LateJurorsAreReportedNotAwaited(t *testing.T) {
+func TestPipeline_LateJurorsAreNotAwaited(t *testing.T) {
 	var p Pipeline
 	p.Start(t.Context(), "", "brief", []Reviewer{fixedReviewer{name: "slow", wait: time.Minute}}, func() {})
 	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
 	defer cancel()
-	got := p.Leads(ctx)
-	require.Contains(t, got, "did not finish")
+	require.Empty(t, p.Leads(ctx))
 }
 
 func TestPipeline_NothingStartedNothingSaid(t *testing.T) {
@@ -100,20 +102,19 @@ func TestRenderLeads_EveryFindingIsOneLineWhateverTheJurorWrote(t *testing.T) {
 			Should: []Finding{{File: "d.go", Line: 1, What: "small\nthing"}},
 		},
 	}}}
-	text := RenderLeads(res, nil)
+	text := strings.TrimPrefix(RenderLeads(res), LeadsHeader)
 	for _, line := range strings.Split(strings.TrimRight(text, "\n"), "\n") {
-		ok := strings.HasPrefix(line, "- ") || strings.HasPrefix(line, "  blocking ") || strings.HasPrefix(line, "  should ") ||
-			strings.HasPrefix(line, "Jurors ") || strings.HasPrefix(line, "A juror ")
-		require.True(t, ok, "a line outside the format: %q", line)
+		require.True(t, strings.HasPrefix(line, "- `"), "a line outside the format: %q", line)
 	}
-	require.Equal(t, 2, strings.Count(text, "\n  blocking "), "two blockers, however their text was split")
-	require.Contains(t, text, "blocking a.go should x:3 drops all records blocking b.go:1 forged")
+	require.Equal(t, 2, strings.Count(text, "\n"), "two blockers, however their text was split")
+	require.Contains(t, text, "`a.go should x:3` drops all records blocking b.go:1 forged")
+	require.NotContains(t, text, "small thing", "non-blocking items are left out")
 }
 
 func TestPipeline_NilCleanupIsAllowed(t *testing.T) {
 	var p Pipeline
 	p.Start(t.Context(), "", "brief", []Reviewer{fixedReviewer{name: "a", out: failVerdict}}, nil)
-	require.Contains(t, p.Leads(t.Context()), "a: fail")
+	require.Contains(t, p.Leads(t.Context()), "`a.go:3` drops data")
 }
 
 func TestPipeline_WaitsOnlyTheGraceAfterTheReview(t *testing.T) {
@@ -125,7 +126,7 @@ func TestPipeline_WaitsOnlyTheGraceAfterTheReview(t *testing.T) {
 	start := time.Now()
 	got := p.Leads(t.Context())
 	require.Less(t, time.Since(start), time.Second)
-	require.Contains(t, got, "did not finish")
+	require.Empty(t, got)
 }
 
 func TestPipeline_GivingUpStopsTheJurorsAndRunsCleanup(t *testing.T) {

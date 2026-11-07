@@ -119,11 +119,8 @@ func (p *Pipeline) Stop() {
 // stopWait bounds how long stop waits for the jurors to exit after cancelling them.
 const stopWait = 3 * time.Second
 
-// JurorsLate is what Leads says when the jurors were not done in the time left. It carries no findings, so a posted
-// review leaves it out.
-const JurorsLate = "Jurors: did not finish within the time left after the review; their findings are not included.\n"
-
-// Leads renders what the jurors found, or says they did not finish. It is empty when no jurors were started.
+// Leads renders the blocking leads the jurors found. It is empty when no jurors were started, when they did not finish
+// in the time left, or when none of them reported a blocker: the reader gets findings, not the jury's bookkeeping.
 func (p *Pipeline) Leads(ctx context.Context) string {
 	p.mu.Lock()
 	started := p.done != nil
@@ -141,11 +138,9 @@ func (p *Pipeline) Leads(ctx context.Context) string {
 	}
 	res, ok := p.Wait(ctx)
 	if !ok {
-		return JurorsLate
+		return ""
 	}
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return RenderLeads(res, p.err)
+	return RenderLeads(res)
 }
 
 // oneLine puts a juror's text on one line, so every finding is one line that starts with its label and a finding that
@@ -154,32 +149,28 @@ func oneLine(text string) string {
 	return strings.Join(strings.Fields(text), " ")
 }
 
-// RenderLeads lists what the jurors reported. Every blocking item is a lead for the author, not a confirmed defect.
-func RenderLeads(res JuryResult, err error) string {
-	if len(res.Votes) == 0 {
-		return ""
-	}
+// LeadsHeader opens the list of unconfirmed blocking leads.
+const LeadsHeader = "**Unconfirmed blocking leads.** A second model flagged these and the review above did not confirm them. Check each before merging:\n"
+
+// RenderLeads lists the blocking items the jurors reported, once each, as leads for the author, not confirmed defects.
+// Jurors without a verdict, non-blocking items and who said what are left out.
+func RenderLeads(res JuryResult) string {
 	var s strings.Builder
-	blocking := 0
+	seen := map[string]bool{}
 	for _, v := range res.Votes {
-		if v.Err != nil || v.Verdict.Verdict == "" {
-			fmt.Fprintf(&s, "- %s: no verdict in time\n", oneLine(v.Reviewer))
+		if v.Err != nil {
 			continue
 		}
-		fmt.Fprintf(&s, "- %s: %s. %s\n", oneLine(v.Reviewer), oneLine(v.Verdict.Verdict), oneLine(v.Verdict.Summary))
 		for _, f := range v.Verdict.Blocking {
-			fmt.Fprintf(&s, "  blocking %s:%d %s\n", oneLine(f.File), f.Line, oneLine(f.What))
-			blocking++
-		}
-		for _, f := range v.Verdict.Should {
-			fmt.Fprintf(&s, "  should %s:%d %s\n", oneLine(f.File), f.Line, oneLine(f.What))
+			line := fmt.Sprintf("- `%s:%d` %s\n", oneLine(f.File), f.Line, oneLine(f.What))
+			if !seen[line] {
+				seen[line] = true
+				s.WriteString(line)
+			}
 		}
 	}
-	head := "Jurors reviewed the change in parallel with the reviewer above and did not see its review. Their findings are unverified leads: check each before acting.\n"
-	if blocking > 0 {
-		head += "A juror reported blocking leads, so the change is not approved until each is checked.\n"
-	} else if err != nil {
-		head += "The jurors did not reach a quorum.\n"
+	if s.Len() == 0 {
+		return ""
 	}
-	return head + s.String()
+	return LeadsHeader + s.String()
 }

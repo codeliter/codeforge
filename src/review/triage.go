@@ -53,7 +53,7 @@ func (t Tier) Limits(left time.Duration) []string {
 // LimitNote is the standing time rule of every review session, the interactive one that follows included.
 func LimitNote() string {
 	return fmt.Sprintf("The review run must be complete within %d seconds of wall clock at the most. That is a ceiling, not a target: answer as soon as you can support every finding. A slower run is killed with nothing saved; the interactive session that follows is not timed. "+
-		"Work from the diff and files already in the brief, read more only for a finding that depends on it. Give the verdict first, then every blocking issue as soon as you find it; foresight, suggestions and nits come last and are dropped when time runs out.",
+		"Work from the diff and files already in the brief, read more only for a finding that depends on it. Write every blocking issue first, as soon as you find it; foresight, suggestions and nits come last and are dropped when time runs out.",
 		int(AgentLimit/time.Second))
 }
 
@@ -65,7 +65,7 @@ func WithBudget(prompt string, t Tier, left time.Duration) string {
 // TimeNote tells a reviewer how long it has, so it can plan its steps and answer before the clock ends.
 func TimeNote(left time.Duration) string {
 	return fmt.Sprintf("Time limit: %d seconds of wall clock is a ceiling, not a target. Stop and give the review the moment you can support every finding; finishing early is better, and a run that exceeds the ceiling is killed with nothing saved. "+
-		"Work from the diff and files already in the brief, read more only for a finding that depends on it. Give the verdict first, then every blocking issue as soon as you find it; foresight, suggestions and nits come last and are dropped when time runs out.",
+		"Work from the diff and files already in the brief, read more only for a finding that depends on it. Write every blocking issue first, as soon as you find it; foresight, suggestions and nits come last and are dropped when time runs out.",
 		int(left/time.Second))
 }
 

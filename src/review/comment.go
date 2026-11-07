@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -18,6 +19,7 @@ import (
 type PostRequest struct {
 	mu           sync.Mutex
 	repo, number string
+	diff         string
 	enabled      bool
 	preapproved  bool
 }
@@ -42,6 +44,13 @@ func (c *PostRequest) Target(repo, number string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.repo, c.number, c.enabled = repo, number, true
+}
+
+// SetDiff records the pull request's diff, so findings on its lines can be posted on those lines.
+func (c *PostRequest) SetDiff(diff string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.diff = diff
 }
 
 // Preapprove records that the user asked to post without being asked again (--comment=yes).
@@ -70,9 +79,12 @@ func (c *PostRequest) Enabled() bool {
 
 // CommentNote tells the reviewer how its answer will be used, so it writes the comment itself in the runner's voice.
 // The persona is a style, never a claim to be someone: the footer says the comment came from codeforge.
-const CommentNote = "This review will be posted as one comment on the PR from my GitHub account, by codeforge after you finish; you post nothing. " +
-	"Write your whole answer as that comment, addressed to the author, in my voice as codeforge-persona describes it (codeforge-voice where it is silent). " +
-	"Verdict first, then each finding as a Conventional Comment with path:line. No preamble, no mention of these instructions, no text about being an AI."
+const CommentNote = "This review will be posted on the PR from my GitHub account as a GitHub review, by codeforge after you finish; you post nothing. " +
+	"Each finding whose path:line is on the diff becomes an inline comment on that line, and the rest of your answer becomes the review's summary. " +
+	"Write your whole answer addressed to the author, in my voice as codeforge-persona describes it (codeforge-voice where it is silent). " +
+	"No verdict line. Open with one or two sentences on the change, then one `### path` heading per file with its findings under it, " +
+	"each a Conventional Comment that starts `label: path:line — ` on its own line, then the points that belong to no single line. " +
+	"No preamble, no mention of these instructions, no text about being an AI."
 
 // maxCommentBytes keeps the comment under GitHub's limit of 65,536 characters with room for the footer.
 const maxCommentBytes = 60_000
@@ -100,62 +112,12 @@ func EngineOutput(raw []byte) (string, error) {
 	return res.Output, nil
 }
 
-// How a comment is divided. The review keeps at least minReviewShare of it; the second opinion takes the rest, and a
-// juror's summary is shortened before any blocker is. A blocker is never shortened.
-const (
-	minReviewShare = 20_000
-	maxSummaryLine = 300
-	secondHeader   = "\n\n---\n**Second opinion, unverified:**\n"
-)
+// minReviewShare is how much of a comment the review keeps when the leads also need room.
+const minReviewShare = 20_000
 
-// ErrNoRoom is returned when the jurors' blocking findings alone do not fit in one comment. Cutting them would publish a
-// review that says Approve without the blockers a juror found, so nothing is posted.
-var ErrNoRoom = errors.New("review: the second opinion's blocking findings do not fit in one comment")
-
-// fitSecondOpinion shortens the second opinion to limit bytes without losing or cutting a blocker: should-fix lines go
-// first, then the jurors' summaries are shortened, then the jurors who found nothing blocking are dropped. It reports
-// false when the blockers alone still do not fit.
-func fitSecondOpinion(opinion string, limit int) (string, bool) {
-	if len(opinion) <= limit {
-		return opinion, true
-	}
-	var kept []string
-	for _, l := range strings.Split(strings.TrimRight(opinion, "\n"), "\n") {
-		if !strings.HasPrefix(l, "  should") {
-			kept = append(kept, l)
-		}
-	}
-	fits := func() bool { return len(strings.Join(kept, "\n")) <= limit }
-	for _, step := range []func(string) string{
-		func(l string) string { return l },
-		func(l string) string {
-			if strings.HasPrefix(l, "  blocking") {
-				return l
-			}
-			return text.Shorten(l, maxSummaryLine)
-		},
-	} {
-		for i, l := range kept {
-			kept[i] = step(l)
-		}
-		if fits() {
-			return strings.Join(kept, "\n"), true
-		}
-	}
-	// Last, the jurors who found nothing blocking: keep the opening lines (which say the change is not approved while a
-	// blocker stands), the blocking lines and the juror line above each. A blocker is kept whole or the post is refused.
-	var only []string
-	for i, l := range kept {
-		opening := !strings.HasPrefix(l, "- ") && !strings.HasPrefix(l, "  ")
-		if opening || strings.HasPrefix(l, "  blocking") || (i+1 < len(kept) && strings.HasPrefix(kept[i+1], "  blocking")) {
-			only = append(only, l)
-		}
-	}
-	if joined := strings.Join(only, "\n"); len(joined) <= limit {
-		return joined, true
-	}
-	return "", false
-}
+// ErrNoRoom is returned when the unconfirmed blocking leads alone do not fit in one comment. Cutting them would publish
+// a review without the blockers a second model found, so nothing is posted.
+var ErrNoRoom = errors.New("review: the unconfirmed blocking leads do not fit in one comment")
 
 // cutAtLine cuts text to at most limit bytes at a line break (or, with none, at a character boundary).
 func cutAtLine(body string, limit int) string {
@@ -171,45 +133,108 @@ func cutAtLine(body string, limit int) string {
 	return strings.TrimSpace(head) + "\n\n_The rest was cut: GitHub limits a comment's length._"
 }
 
-// CommentBody is the text to post: the review, then the second opinion if there is one, and a footer that says where it
-// came from. When the whole is too long for GitHub the review is cut, never a blocker the jurors found; if the blockers
-// alone cannot fit it returns ErrNoRoom.
-func CommentBody(review, secondOpinion string) (string, error) {
+// leadsRule separates the review from the unconfirmed leads under it.
+const leadsRule = "\n\n---\n"
+
+// CommentBody is the text to post: the review, then the unconfirmed blocking leads if there are any, and a footer that
+// says where it came from. When the whole is too long for GitHub the review is cut, never a lead; if the leads alone
+// cannot fit it returns ErrNoRoom.
+func CommentBody(review, leads string) (string, error) {
 	body := strings.TrimSpace(review)
-	second := strings.TrimSpace(secondOpinion)
-	if second != "" {
-		limit := maxCommentBytes - min(len(body), minReviewShare) - len(secondHeader)
-		fitted, ok := fitSecondOpinion(second, limit)
-		if !ok {
+	extra := strings.TrimSpace(leads)
+	if extra != "" {
+		if len(extra)+len(leadsRule) > maxCommentBytes-min(len(body), minReviewShare) {
 			return "", ErrNoRoom
 		}
-		second = secondHeader + fitted
+		if body == "" {
+			return extra + commentFooter, nil
+		}
+		extra = leadsRule + extra
 	}
-	return cutAtLine(body, maxCommentBytes-len(second)) + second + commentFooter, nil
+	return cutAtLine(body, maxCommentBytes-len(extra)) + extra + commentFooter, nil
 }
 
-// Post adds the review, and the second opinion if any, to the pull request as a comment and returns what gh printed, the
-// comment's address.
-func (c *PostRequest) Post(ctx context.Context, r Runner, review, secondOpinion string) (string, error) {
+// Posted is what a posted review left on the pull request.
+type Posted struct {
+	URL string
+	// Inline counts the findings posted on their lines.
+	Inline int
+	// Fallback is why GitHub refused the inline comments, when the review went up as one comment instead.
+	Fallback error
+}
+
+// Post puts the review on the pull request. Findings on lines of the diff become the inline comments of one GitHub
+// review (event COMMENT, never an approval), with the rest of the review and the leads as its summary. With no such
+// finding, or when GitHub refuses the inline comments, the whole review is posted as one comment.
+func (c *PostRequest) Post(ctx context.Context, r Runner, review, leads string) (Posted, error) {
 	c.mu.Lock()
-	repo, number := c.repo, c.number
+	repo, number, diff := c.repo, c.number, c.diff
 	c.mu.Unlock()
 	if number == "" {
-		return "", ErrNoPR
+		return Posted{}, ErrNoPR
 	}
+	review = StripVerdict(review)
+	whole, err := CommentBody(review, leads)
+	if err != nil {
+		return Posted{}, err
+	}
+	summary, inline := SplitFindings(review, diff)
+	if len(inline) == 0 {
+		url, err := postComment(ctx, r, repo, number, whole)
+		return Posted{URL: url}, err
+	}
+	body, err := CommentBody(summary, leads)
+	if err != nil {
+		return Posted{}, err
+	}
+	url, rerr := postReview(ctx, r, repo, number, body, inline)
+	if rerr == nil {
+		return Posted{URL: url, Inline: len(inline)}, nil
+	}
+	url, err = postComment(ctx, r, repo, number, whole)
+	return Posted{URL: url, Fallback: rerr}, err
+}
+
+func postComment(ctx context.Context, r Runner, repo, number, body string) (string, error) {
 	args := []string{"pr", "comment", number}
 	if repo != "" {
 		args = append(args, "--repo", repo)
-	}
-	body, err := CommentBody(review, secondOpinion)
-	if err != nil {
-		return "", err
 	}
 	// --body=... keeps a review that begins with a dash from being read as a flag.
 	args = append(args, "--body="+body)
 	out, err := r.Run(ctx, "gh", args...)
 	if err != nil {
 		return "", fmt.Errorf("posting the review on PR %s: %w", number, err)
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// postReview creates one GitHub review with an inline comment per finding. Every value is its own argument and text
+// goes through --raw-field, so nothing in the review is read as a flag, a file or a placeholder.
+func postReview(ctx context.Context, r Runner, repo, number, body string, inline []InlineComment) (string, error) {
+	if repo == "" {
+		repo = "{owner}/{repo}" // gh fills these in from the checkout
+	}
+	args := []string{
+		"api", "--method", "POST", "repos/" + repo + "/pulls/" + number + "/reviews",
+		"--raw-field=event=COMMENT", "--raw-field=body=" + body,
+	}
+	for _, ic := range inline {
+		args = append(args,
+			"--raw-field=comments[][path]="+ic.Path,
+			"--field=comments[][line]="+strconv.Itoa(ic.Line),
+			"--raw-field=comments[][side]=RIGHT",
+			"--raw-field=comments[][body]="+ic.Body)
+	}
+	out, err := r.Run(ctx, "gh", args...)
+	if err != nil {
+		return "", fmt.Errorf("posting the inline review on PR %s: %w", number, err)
+	}
+	var res struct {
+		HTMLURL string `json:"html_url"`
+	}
+	if json.Unmarshal(out, &res) == nil && res.HTMLURL != "" {
+		return res.HTMLURL, nil
 	}
 	return strings.TrimSpace(string(out)), nil
 }

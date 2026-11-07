@@ -34,12 +34,13 @@ func TestPostRequest_PostRunsGhWithTheTargetAndFooter(t *testing.T) {
 	c.Target("acme/widgets", "42")
 	require.True(t, c.Enabled())
 	run := &recordingRunner{out: "https://github.com/acme/widgets/pull/42#issuecomment-1\n"}
-	url, err := c.Post(t.Context(), run, "  Request changes.\n\n- issue: a.go:3 drops data  ", "")
+	got, err := c.Post(t.Context(), run, "  Verdict: Request changes.\n\nData loss on retry.\n\n- issue: a.go:3 drops data  ", "")
 	require.NoError(t, err)
-	require.Equal(t, "https://github.com/acme/widgets/pull/42#issuecomment-1", url)
+	require.Equal(t, "https://github.com/acme/widgets/pull/42#issuecomment-1", got.URL)
+	require.Zero(t, got.Inline, "no diff, so nothing goes inline")
 	require.Equal(t, "gh", run.name)
 	require.Equal(t, []string{"pr", "comment", "42", "--repo", "acme/widgets"}, run.args[:5])
-	require.True(t, strings.HasPrefix(run.args[5], "--body=Request changes."), "the body is one --body= argument")
+	require.True(t, strings.HasPrefix(run.args[5], "--body=Data loss on retry."), "the body is one --body= argument, without the verdict label")
 	require.True(t, strings.HasSuffix(run.args[5], "Reviewed with codeforge.</sub>"))
 }
 
@@ -80,28 +81,26 @@ func TestCommentBody_CutsALongReviewAtALine(t *testing.T) {
 	require.Equal(t, "Approve."+commentFooter, short)
 }
 
-func TestCommentBody_KeepsTheSecondOpinionWhenTheReviewIsLong(t *testing.T) {
-	review := "Approve.\n" + strings.Repeat("a long line of the review\n", 4000)
-	second := "- juror: fail. bad\n  blocking a.go:3 drops data\n"
-	body, err := CommentBody(review, second)
+func TestCommentBody_KeepsTheLeadsWhenTheReviewIsLong(t *testing.T) {
+	review := "Looks fine.\n" + strings.Repeat("a long line of the review\n", 4000)
+	leads := LeadsHeader + "- `a.go:3` drops data\n"
+	body, err := CommentBody(review, leads)
 	require.NoError(t, err)
 	require.LessOrEqual(t, len(body), 65_000)
-	require.Contains(t, body, "blocking a.go:3 drops data", "the juror's blocker survives the cut")
-	require.Contains(t, body, "Second opinion, unverified")
+	require.Contains(t, body, "`a.go:3` drops data", "the lead survives the cut")
 	require.Contains(t, body, "The rest was cut")
 	require.True(t, strings.HasSuffix(body, commentFooter))
-	require.Less(t, strings.Index(body, "Approve."), strings.Index(body, "Second opinion"), "the review comes first")
+	require.Less(t, strings.Index(body, "Looks fine."), strings.Index(body, "Unconfirmed"), "the review comes first")
 
-	// Noise in the second opinion is shortened and dropped, never allowed to push the whole over GitHub's limit.
-	huge, err := CommentBody(review, strings.Repeat("- juror: pass. fine\n  should a.go:1 a small thing\n", 3000))
+	only, err := CommentBody("", leads)
 	require.NoError(t, err)
-	require.LessOrEqual(t, len(huge), 65_000)
+	require.True(t, strings.HasPrefix(only, "**Unconfirmed"), "no rule above the leads when the summary is empty")
 }
 
 func TestCommentBody_RefusesToPostWhenTheBlockersDoNotFit(t *testing.T) {
 	var blockers strings.Builder
 	for i := range 100 {
-		fmt.Fprintf(&blockers, "- j%d: fail. bad\n  blocking f%d.go:%d %s\n", i, i, i, strings.Repeat("w", 700))
+		fmt.Fprintf(&blockers, "- `f%d.go:%d` %s\n", i, i, strings.Repeat("w", 700))
 	}
 	_, err := CommentBody("Approve.", blockers.String())
 	require.ErrorIs(t, err, ErrNoRoom, "cutting a juror's blocker would publish an Approve without it")
@@ -117,11 +116,11 @@ func TestCommentBody_RefusesToPostWhenTheBlockersDoNotFit(t *testing.T) {
 func TestCommentBody_AShortReviewLeavesRoomForManyBlockers(t *testing.T) {
 	var blockers strings.Builder
 	for i := range 30 {
-		fmt.Fprintf(&blockers, "- j%d: fail. bad\n  blocking f%d.go:%d %s\n", i, i, i, strings.Repeat("w", 700))
+		fmt.Fprintf(&blockers, "- `f%d.go:%d` %s\n", i, i, strings.Repeat("w", 700))
 	}
 	body, err := CommentBody("Approve.", blockers.String())
 	require.NoError(t, err)
-	require.Contains(t, body, "blocking f29.go:29", "thirty 700-byte blockers fit when the review is short")
+	require.Contains(t, body, "`f29.go:29`", "thirty 700-byte blockers fit when the review is short")
 	require.LessOrEqual(t, len(body), 65_000)
 }
 
@@ -149,41 +148,107 @@ func TestCommentNote_NamesThePersonaAndWhoPosts(t *testing.T) {
 	require.Contains(t, CommentNote, "you post nothing")
 }
 
-func TestFitSecondOpinion_NeverLosesABlocker(t *testing.T) {
-	// A first juror with a 15,000-byte summary, then another juror's blocker, after should-fix noise.
-	long := "- first: fail. " + strings.Repeat("s", 15_000) + "\n  should x.go:1 " + strings.Repeat("n", 3000) + "\n"
-	blocker := "- second: fail. bad\n  blocking a.go:3 drops data\n"
-	const limit = 16_000
-	fit, ok := fitSecondOpinion(long+blocker, limit)
-	require.True(t, ok)
-	require.LessOrEqual(t, len(fit), limit)
-	require.Contains(t, fit, "blocking a.go:3 drops data", "the blocker after a long summary survives")
-	require.NotContains(t, fit, "should x.go:1", "should-fix lines go first")
+const inlineDiff = `diff --git a/search/serper/main.go b/search/serper/main.go
+--- a/search/serper/main.go
++++ b/search/serper/main.go
+@@ -70,3 +70,4 @@ func main() {
+ 	ctx := context.Background()
+-	// old
++	// gprclogging.PayloadReceived,
++	client := kit.InstrumentHTTPClient(nil, nil)
+ 	run(ctx)
+diff --git a/common/go/telemetry/telemetry.go b/common/go/telemetry/telemetry.go
+new file mode 100644
+--- /dev/null
++++ b/common/go/telemetry/telemetry.go
+@@ -0,0 +1,2 @@
++package telemetry
++func Init() {}
+`
 
-	// Summaries and long lines are shortened before any blocker is lost.
-	var many strings.Builder
-	for i := range 12 {
-		fmt.Fprintf(&many, "- j%d: fail. %s\n  blocking f%d.go:%d %s\n", i, strings.Repeat("s", 900), i, i, strings.Repeat("w", 600))
-	}
-	fit, ok = fitSecondOpinion(many.String(), limit)
-	require.True(t, ok)
-	require.LessOrEqual(t, len(fit), limit)
-	for _, want := range []string{"blocking f0.go:0", "blocking f11.go:11"} {
-		require.Contains(t, fit, want, "shortening the summaries was enough to keep every blocker")
-	}
+const inlineReview = `Verdict: Comment. Correlation-only tracing behind one seam.
 
-	// Blockers alone beyond the limit cannot be kept, and nothing is cut silently.
-	var crowd strings.Builder
-	for i := range 100 {
-		fmt.Fprintf(&crowd, "  blocking f%d.go:%d %s\n", i, i, strings.Repeat("w", 700))
-	}
-	_, ok = fitSecondOpinion(crowd.String(), limit)
-	require.False(t, ok)
+### search/serper/main.go
 
-	short := "- a: pass. ok\n"
-	same, ok := fitSecondOpinion(short, limit)
-	require.True(t, ok)
-	require.Equal(t, short, same, "nothing is changed when it fits")
+suggestion: search/serper/main.go:72 — Remove the commented-out code.
+nitpick (non-blocking): search/serper/main.go:300 — Off the diff, so it stays in the summary.
+
+### common/go/telemetry/telemetry.go
+
+- **suggestion:** ` + "`common/go/telemetry/telemetry.go:2`" + ` — Init has no tests. Add focused tests for:
+  - Init(ctx, nil)
+  - the error path
+
+### Across files
+
+suggestion: go.mod — split the unrelated bumps.`
+
+func TestDiffLines_OnlyTheNewSideOfEachHunk(t *testing.T) {
+	got := diffLines(inlineDiff)
+	require.Equal(t, map[int]bool{70: true, 71: true, 72: true, 73: true}, got["search/serper/main.go"])
+	require.Equal(t, map[int]bool{1: true, 2: true}, got["common/go/telemetry/telemetry.go"])
+}
+
+func TestSplitFindings_PutsEachFindingOnItsLine(t *testing.T) {
+	summary, inline := SplitFindings(StripVerdict(inlineReview), inlineDiff)
+	require.Equal(t, []InlineComment{
+		{Path: "search/serper/main.go", Line: 72, Body: "suggestion: Remove the commented-out code."},
+		{Path: "common/go/telemetry/telemetry.go", Line: 2, Body: "suggestion: Init has no tests. Add focused tests for:\n- Init(ctx, nil)\n- the error path"},
+	}, inline)
+	require.True(t, strings.HasPrefix(summary, "Correlation-only tracing"), "no verdict label: %q", summary)
+	require.Contains(t, summary, "### search/serper/main.go\n\nnitpick (non-blocking): search/serper/main.go:300", "a finding off the diff keeps its file heading")
+	require.NotContains(t, summary, "### common/go/telemetry/telemetry.go", "a heading left empty is dropped")
+	require.Contains(t, summary, "### Across files\n\nsuggestion: go.mod")
+}
+
+func TestStripVerdict(t *testing.T) {
+	for _, in := range []string{"Verdict: Comment. Fine.", "**Verdict:** Comment. Fine.", "1. **Verdict:** Request changes — Fine.", "Verdict: Approve\n\nFine."} {
+		require.Equal(t, "Fine.", StripVerdict(in), in)
+	}
+	require.Equal(t, "The verdict is pending.", StripVerdict("The verdict is pending."))
+}
+
+func TestPostRequest_PostsInlineCommentsAsOneReview(t *testing.T) {
+	var c PostRequest
+	c.Target("acme/w", "42")
+	c.SetDiff(inlineDiff)
+	run := &recordingRunner{out: `{"html_url":"https://github.com/acme/w/pull/42#pullrequestreview-1"}`}
+	got, err := c.Post(t.Context(), run, inlineReview, LeadsHeader+"- `a.go:3` drops data\n")
+	require.NoError(t, err)
+	require.Equal(t, Posted{URL: "https://github.com/acme/w/pull/42#pullrequestreview-1", Inline: 2}, got)
+	require.Equal(t, []string{"api", "--method", "POST", "repos/acme/w/pulls/42/reviews", "--raw-field=event=COMMENT"}, run.args[:5])
+	require.True(t, strings.HasPrefix(run.args[5], "--raw-field=body=Correlation-only"))
+	require.Contains(t, run.args[5], "Unconfirmed blocking leads")
+	require.Equal(t, []string{
+		"--raw-field=comments[][path]=search/serper/main.go",
+		"--field=comments[][line]=72",
+		"--raw-field=comments[][side]=RIGHT",
+		"--raw-field=comments[][body]=suggestion: Remove the commented-out code.",
+	}, run.args[6:10])
+	require.Len(t, run.args, 14)
+}
+
+type failFirstRunner struct{ calls [][]string }
+
+func (r *failFirstRunner) Run(_ context.Context, _ string, args ...string) ([]byte, error) {
+	r.calls = append(r.calls, args)
+	if len(r.calls) == 1 {
+		return nil, errors.New("HTTP 422: Line could not be resolved")
+	}
+	return []byte("https://github.com/o/r/pull/7#issuecomment-2\n"), nil
+}
+
+func TestPostRequest_FallsBackToOneCommentWhenGitHubRefusesTheLines(t *testing.T) {
+	var c PostRequest
+	c.Target("", "7")
+	c.SetDiff(inlineDiff)
+	run := &failFirstRunner{}
+	got, err := c.Post(t.Context(), run, inlineReview, "")
+	require.NoError(t, err)
+	require.ErrorContains(t, got.Fallback, "422")
+	require.Equal(t, "repos/{owner}/{repo}/pulls/7/reviews", run.calls[0][3])
+	require.Equal(t, []string{"pr", "comment", "7"}, run.calls[1][:3])
+	require.Contains(t, run.calls[1][3], "search/serper/main.go:72", "the fallback keeps every finding")
 }
 
 func TestShorten(t *testing.T) {

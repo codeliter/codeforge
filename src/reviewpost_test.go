@@ -184,8 +184,9 @@ func TestRunReviewEngine_PostsTheSecondOpinionWithTheReview(t *testing.T) {
 	posted, err := os.ReadFile(f.ghArgs)
 	require.NoError(t, err)
 	require.Contains(t, string(posted), "Approve.")
-	require.Contains(t, string(posted), "Second opinion, unverified")
-	require.Contains(t, string(posted), "a.go:3 drops data", "a juror's blocker must not be missing from a review that says Approve")
+	require.Contains(t, string(posted), "Unconfirmed blocking leads")
+	require.Contains(t, string(posted), "a.go:3` drops data", "a juror's blocker must not be missing from a review that says Approve")
+	require.NotContains(t, string(posted), "juror", "who raised a lead is not posted")
 	require.Empty(t, pipe.Leads(t.Context()), "the leads are shown once")
 }
 

@@ -57,18 +57,15 @@ func runReviewEngine(ctx context.Context, argv, env []string, limit time.Time) e
 		fmt.Fprint(os.Stdout, out.String())
 		return fmt.Errorf("not posting the review: %w", err)
 	}
-	// A juror that found a blocker must not be missing from what goes up while the review says Approve.
-	second := ""
+	// A blocker a juror found must not be missing from what goes up; everything else the jury says stays out.
+	leads := ""
 	if pipe := review.PipelineOf(ctx); pipe != nil {
-		second = pipe.Leads(ctx)
+		leads = pipe.Leads(ctx)
 	}
-	if second == review.JurorsLate {
-		fmt.Fprint(os.Stderr, "codeforge: "+second)
-		second = "" // nothing was found, so there is nothing to post
-	}
+	text = review.StripVerdict(text)
 	fmt.Fprintln(os.Stdout, text)
-	if second != "" {
-		fmt.Fprintln(os.Stdout, "\n--- Second opinion, unverified (posted with the review) ---\n"+second)
+	if leads != "" {
+		fmt.Fprintln(os.Stdout, "\n"+leads)
 	}
 
 	// The review has ended; waiting for the user's answer is not part of its clock, so only the posting is bounded.
@@ -82,11 +79,18 @@ func runReviewEngine(ctx context.Context, argv, env []string, limit time.Time) e
 	}
 	pctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), postLimit)
 	defer cancel()
-	url, err := post.Post(pctx, review.ExecRunner{}, text, second)
+	posted, err := post.Post(pctx, review.ExecRunner{}, text, leads)
 	if err != nil {
 		return fmt.Errorf("the review above was not posted: %w", err)
 	}
-	fmt.Fprintf(os.Stderr, "codeforge: posted the review on the PR %s\n", url)
+	switch {
+	case posted.Fallback != nil:
+		fmt.Fprintf(os.Stderr, "codeforge: GitHub refused the inline comments (%v); posted the review as one comment %s\n", posted.Fallback, posted.URL)
+	case posted.Inline > 0:
+		fmt.Fprintf(os.Stderr, "codeforge: posted the review on the PR with %d inline comments %s\n", posted.Inline, posted.URL)
+	default:
+		fmt.Fprintf(os.Stderr, "codeforge: posted the review on the PR %s\n", posted.URL)
+	}
 	return nil
 }
 

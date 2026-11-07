@@ -238,6 +238,7 @@ func reviewArgs(ctx context.Context, bin string, rc config.ReviewConfig, judges 
 	}
 	prompt := panelBrief(ctx, rc, jurors, tier, b.HeadRef == "", func(t review.Tier, jury []string) string { return review.Prompt(b, t, jury) + packed })
 	if comment && post != nil {
+		post.SetDiff(b.Diff)
 		prompt += "\n\n" + review.CommentNote
 	}
 	rest, note := bound(rest, tier)

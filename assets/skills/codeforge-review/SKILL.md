@@ -45,15 +45,19 @@ Each finding: `path:line`, a label, and the reason with evidence (the caller, th
 List every blocking issue you find, without a cap; keep at most eight suggestions, dropping the weakest. Never invent a file or line: every `path:line` must exist, or the finding is discarded.
 
 ## 6. Jury
-The brief states the triage tier. A simple change (`docs`, `small`; the brief says to skip the jury) is reviewed by you alone. A complicated or high-risk change (`standard`, `risky`) goes to the jury: dispatch one read-only subagent per named model, in parallel, with the same brief, and ask each for every blocking risk with `path:line`, plus its top suggestions. If a complicated or high-risk brief names no models, use one model from a different family than yours. Re-check every finding they return against the code; keep what holds, drop what you can disprove, and say which model raised each kept finding. Approve only when no kept jury finding is blocking.
+The brief states the triage tier. A simple change (`docs`, `small`; the brief says to skip the jury) is reviewed by you alone. A complicated or high-risk change (`standard`, `risky`) goes to the jury: dispatch one read-only subagent per named model, in parallel, with the same brief, and ask each for every blocking risk with `path:line`, plus its top suggestions. If a complicated or high-risk brief names no models, use one model from a different family than yours. Re-check every finding they return against the code; keep what holds, drop what you can disprove, and write each kept finding as your own at its `path:line`. Approve only when no kept jury finding is blocking.
 
 ## 6a. Short on time
-When the brief gives a time limit, spend it in the order of section 3: design and functionality first, then concurrency and security, then tests. Write each blocking issue as soon as you have it, and the verdict first. Foresight, suggestions, nits and praise come last and are dropped when time runs out. A cut-off review that has the blockers is useful; one that has only a polished opening is not.
+When the brief gives a time limit, spend it in the order of section 3: design and functionality first, then concurrency and security, then tests. Write each blocking issue as soon as you have it, under its file. Foresight, suggestions, nits and praise come last and are dropped when time runs out. A cut-off review that has the blockers is useful; one that has only a polished opening is not.
 
 ## 7. Output
-1. **Verdict:** Approve, Comment or Request changes, with the main reason, in two or three sentences.
-2. **Findings:** grouped by file, as Conventional Comments.
-3. **Foresight:** the one or two things most likely to hurt after merge.
+Written as the review the author reads, so every finding can sit on its own line of the diff.
+1. **Summary:** one or two sentences on what the change does and the main thing to act on. No verdict line ("Verdict: Comment" and the like): the findings and their labels already say whether anything blocks.
+2. **Per file:** one `### path` heading per changed file that has findings, in diff order. Under it, each finding on its own line as `label: path:line — text`, continuation lines indented under it. Never merge findings for different files under one heading. For local work, which is read in the terminal rather than on a PR, put the surrounding lines of code under each finding: a fenced block with the language, two lines either side, each prefixed with its line number, copied from the working tree as it is now.
+3. **Across files:** findings that belong to no single line (scope, the PR description, dependency bumps spread over several files), under `### Across files`.
+4. **Foresight:** the one or two things most likely to hurt after merge.
+
+Never mention the jury, its models, quorum or which juror said what. Report a kept jury finding as your own, at its `path:line`.
 
 ## 8. Stop
-Draft only. Never post, approve or request changes without an explicit go. When told to post, post one comment with `gh pr comment <number> --body '<the agreed text>'`, in the user's voice (codeforge-persona), with the text on the command line. The session is read-only, so the user is asked to approve that exact call in their terminal; do not try to work around a refusal, and do not use `gh pr review`, `gh api` or a body file, which are refused. If the user declines, say so and stop.
+Draft only. Never post, approve or request changes without an explicit go. A posted review is never an approval. When posting goes through `codeforge review <PR> --comment`, codeforge posts it as one GitHub review: each finding whose `path:line` is on the diff becomes an inline comment on that line, the rest is the summary. When told to post from this session instead, post one comment with `gh pr comment <number> --body '<the agreed text>'`, in the user's voice (codeforge-persona), with the text on the command line. The session is read-only, so the user is asked to approve that exact call in their terminal; do not try to work around a refusal, and do not use `gh pr review`, `gh api` or a body file, which are refused. If the user declines, say so and stop.
