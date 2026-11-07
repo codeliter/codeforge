@@ -345,6 +345,22 @@ the least checking. Only `docs` uses `review.light_model`, because the reviewer 
 a review's cost. Small code changes keep the normal reviewer: the light model let through a documented-contract
 violation there.
 
+The TUI theme is scoped to Codeforge launches by writing `theme.name` into the project's `.empryo/config.json` while the
+TUI is open ([themescope.go](src/themescope.go)): Empryo reads a project value over the global one, and offers no flag or
+environment variable for a single launch. A ledger in `~/.codeforge/theme-ledger/` (never in the checkout, which is untrusted
+input) records the project's real path, the original bytes and permissions, the hash of what was written and the open
+Codeforge TUIs, under a lock, so the last TUI to close restores the file exactly, a file changed meanwhile loses only the
+key Codeforge set, a restore that fails keeps the ledger, and a killed Codeforge is undone by the next launch, even one
+started with `CODEFORGE_THEME=off`. In a git repository the theme is applied only where git already ignores
+`.empryo/config.json` (checked with `git check-ignore`), so `git add -A` cannot stage it; Codeforge never edits ignore
+rules, and where `.empryo` is not ignored the theme is simply not applied. Nothing is written when the project is the home
+directory, when `.empryo` or `config.json` is a link, when the project already sets a theme, or when the config is not
+plain JSON; other settings keep their exact text. In a repository the temporary copies an atomic write leaves beside the
+config (`.codeforge-<digits>`) must be ignored too. Known limits: Empryo's own settings writer is not coordinated with, so
+a setting saved in the instant between Codeforge reading and replacing the file can be lost; and the checks that `.empryo`
+and `config.json` are not links are made by path just before each write, so another process of the same user that swaps
+`.empryo` for a link in that instant is not stopped.
+
 `review.sensitive_paths` lets a repository's owners name paths that always get the `risky` tier, whatever the judges
 say: `auth/` (a directory of that name at any depth), `src/guard/*.go` (a path) or `*.sql` (a file name). A project
 file adds to the global list and never removes from it, so it can only add scrutiny. A change of 100 KB or more of

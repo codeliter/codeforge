@@ -7,10 +7,14 @@ import (
 	"path/filepath"
 )
 
+// tempPrefix starts the name of the temporary file atomicWriteFile writes beside its destination; os.CreateTemp follows
+// it with a run of decimal digits.
+const tempPrefix = ".codeforge-"
+
 // atomicWriteFile assumes the caller has checked the destination and created its
 // directory. Readers see either the previous complete file or the new one.
 func atomicWriteFile(path string, data []byte, mode os.FileMode) error {
-	f, err := os.CreateTemp(filepath.Dir(path), ".codeforge-*")
+	f, err := os.CreateTemp(filepath.Dir(path), tempPrefix+"*")
 	if err != nil {
 		return fmt.Errorf("creating temporary file for %s: %w", path, err)
 	}

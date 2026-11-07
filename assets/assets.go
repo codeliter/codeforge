@@ -2,9 +2,9 @@ package assets
 
 import "embed"
 
-// Profile is synced into ~/.empryo on every launch.
+// Profile is synced into ~/.empryo on every launch: profiles, skills and the Codeforge themes.
 //
-//go:embed agents skills
+//go:embed agents skills themes
 var Profile embed.FS
 
 //go:embed personas

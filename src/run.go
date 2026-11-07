@@ -405,6 +405,11 @@ func launchWith(ctx context.Context, home, bin, mode string, args []string, afte
 		}
 		restore := showModeTitle(os.Stdout, mode)
 		defer restore()
+		if interactive() {
+			// The Codeforge theme belongs to the TUI codeforge starts: on while it is open, off again when it closes.
+			undoTheme := scopeTheme(ctx, home, workspaceOf(argv))
+			defer undoTheme()
+		}
 		return runInteractive(ctx, argv, env)
 	}
 	if err := syscall.Exec(argv[0], argv, env); err != nil {

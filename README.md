@@ -241,6 +241,23 @@ The `codeforge-reviewer` helper returns findings and can ask the parent conversa
 For another person's PR, it can draft a comment. The parent must show you the exact PR and comment and ask your approval before posting.
 The reviewer itself cannot edit or post; a review request is not permission to publish. Review sessions are enforced with a tool guard and a read-only sandbox; other modes only protect codeforge's own settings and trust.
 
+## Codeforge Steel theme
+
+Codeforge installs two Empryo themes into `~/.empryo/themes/`: **Codeforge Steel** (dark) and **Codeforge Steel Light**,
+cool blue-grey with silver edges. The TUI that Codeforge starts uses the one that matches your terminal's light or dark
+setting, and plain `empryo` keeps your own theme.
+
+Empryo has no per-launch theme option, so Codeforge sets `theme.name` in the project's `.empryo/config.json` while its
+TUI is open and puts the file back exactly as it was when the TUI closes. A killed Codeforge is cleaned up on the next
+launch in that project. Codeforge never replaces a theme you set in that project, and does nothing if your global theme
+is already a Steel theme. In a git repository it only does this where git already ignores `.empryo/config.json` (add
+`.empryo/` to `.gitignore`), so a temporary setting can never be committed. An Empryo session you open in the same project
+while a Codeforge TUI is open will show the Steel theme too. Set `CODEFORGE_THEME=off` to keep your own theme in
+Codeforge as well.
+
+The theme files are managed by Codeforge and rewritten on each launch; to change the colours, copy one to a new name in
+the same folder and edit the copy.
+
 ## It learns how to check your work
 
 Codeforge notices which test, lint and build commands pass in your project and tells the agent to use them next time.
