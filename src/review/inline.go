@@ -113,6 +113,31 @@ func SplitFindings(review, diff string) (string, []InlineComment) {
 	return tidy(kept), inline
 }
 
+// Labeled is a Conventional Comment that names its place, as parsed from one line of a review.
+type Labeled struct {
+	Label string // "suggestion", "issue (blocking)", ...
+	Path  string
+	Line  int
+	Text  string // what follows the place on that line
+}
+
+// ParseLabeled reads a finding from the first line of one ("suggestion: a.go:12 — text", with the same list markers,
+// bold and backticks SplitFindings accepts).
+func ParseLabeled(line string) (Labeled, bool) {
+	m := findingStart.FindStringSubmatch(line)
+	if m == nil {
+		return Labeled{}, false
+	}
+	n, err := strconv.Atoi(m[3])
+	if err != nil {
+		return Labeled{}, false
+	}
+	return Labeled{Label: strings.TrimSpace(m[1]), Path: strings.TrimPrefix(m[2], "./"), Line: n, Text: strings.TrimSpace(m[4])}, true
+}
+
+// LabeledEnd returns the index just past the finding whose first line is src[i]; see findingEnd.
+func LabeledEnd(src []string, i int) int { return findingEnd(src, i) }
+
 // findingEnd returns the index just past the finding that starts at i: it runs until the next finding, a heading, or a
 // blank line that is not followed by an indented continuation.
 func findingEnd(src []string, i int) int {

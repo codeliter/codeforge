@@ -65,7 +65,7 @@ func TestCutColumns_CountsCharacters(t *testing.T) {
 func TestWrapFinding_StaysWithinTheWidth(t *testing.T) {
 	st := codeStyle{color: true, pal: paletteFor("dark")}
 	what := strings.Repeat("word ", 30)
-	got := wrapFinding(st, 40, span{"a/b.go:12", st.pal.accent}, span{what, ""}, span{"(breaks: once)", st.pal.dim})
+	got := wrapFinding(st, 40, span{text: "a/b.go:12", code: st.pal.accent}, span{text: what}, span{text: "(breaks: once)", code: st.pal.dim})
 	lines := strings.Split(strings.TrimSuffix(got, "\n"), "\n")
 	require.Greater(t, len(lines), 3, "a long finding wraps")
 	plain := strings.NewReplacer(st.pal.accent, "", st.pal.dim, "", ansiReset, "").Replace(got)
@@ -78,7 +78,7 @@ func TestWrapFinding_StaysWithinTheWidth(t *testing.T) {
 	require.True(t, strings.HasPrefix(plain, "- a/b.go:12 word"))
 	require.True(t, strings.HasSuffix(plain, "(breaks: once)\n"))
 
-	one := wrapFinding(codeStyle{}, 0, span{"a.go:1", ""}, span{what, ""})
+	one := wrapFinding(codeStyle{}, 0, span{text: "a.go:1"}, span{text: what})
 	require.Equal(t, 1, strings.Count(one, "\n"), "piped output keeps a finding on one line")
 }
 

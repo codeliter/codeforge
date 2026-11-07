@@ -96,6 +96,19 @@ func TestLoad_OtherRepoSkipsFetch(t *testing.T) {
 	}
 }
 
+func TestLoad_URLOfThisCheckoutFetchesTheHead(t *testing.T) {
+	for _, origin := range []string{"https://github.com/Acme/Infra.git\n", "git@github.com:acme/infra.git", "https://github.com/acme/infra"} {
+		r := &fakeRunner{out: map[string]string{"gh pr view 42": prJSON, "git remote get-url origin": origin}}
+		b, err := Load(t.Context(), r, "acme/infra", "42")
+		require.NoError(t, err)
+		require.Equal(t, "refs/codeforge/pr-42", b.HeadRef, origin)
+	}
+	r := &fakeRunner{out: map[string]string{"gh pr view 42": prJSON, "git remote get-url origin": "https://github.com/acme/infra-tools.git"}}
+	b, err := Load(t.Context(), r, "acme/infra", "42")
+	require.NoError(t, err)
+	require.Empty(t, b.HeadRef, "a different repository is never fetched")
+}
+
 func TestLoad_FetchFailureIsNotFatal(t *testing.T) {
 	r := &fakeRunner{out: map[string]string{"gh pr view 42": prJSON}, fail: map[string]bool{"git fetch": true}}
 

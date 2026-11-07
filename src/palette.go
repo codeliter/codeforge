@@ -20,7 +20,10 @@ type palette struct {
 	accent string // bold brand: commands, file paths, the finding's line
 	dim    string // muted text: titles, gutters, notes
 	bold   string
-	code   *chroma.Style
+	inline string // `inline code` in a review
+	// Conventional Comment labels: blocking issues, suggestions, questions, praise.
+	issue, suggestion, question, praise string
+	code                                *chroma.Style
 }
 
 func (palette) paint(code, s string) string { return code + s + ansiReset }
@@ -85,10 +88,16 @@ func buildPalette(c map[string]string) palette {
 		}
 		return ""
 	}
+	bold := "\x1b[1m"
 	p := palette{
-		accent: "\x1b[1m" + fg(pick("brand")),
-		dim:    fg(pick("textMuted")),
-		bold:   "\x1b[1m",
+		accent:     bold + fg(pick("brand")),
+		dim:        fg(pick("textMuted")),
+		bold:       bold,
+		inline:     fg(pick("brandSecondary", "brand")),
+		issue:      bold + fg(pick("error")),
+		suggestion: bold + fg(pick("info", "brand")),
+		question:   bold + fg(pick("warning")),
+		praise:     bold + fg(pick("success")),
 	}
 	if p.dim == "" {
 		p.dim = "\x1b[2m"

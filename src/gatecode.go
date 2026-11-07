@@ -75,7 +75,15 @@ func codeAround(repo, file string, line int, st codeStyle) string {
 	if err != nil {
 		return ""
 	}
-	all := strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
+	return codeSnippet(string(data), file, line, st)
+}
+
+// codeSnippet renders the lines of content, the text of file, around line, as codeAround describes.
+func codeSnippet(content, file string, line int, st codeStyle) string {
+	if line < 1 {
+		return ""
+	}
+	all := strings.Split(strings.TrimSuffix(content, "\n"), "\n")
 	if line > len(all) {
 		return ""
 	}
@@ -122,23 +130,32 @@ func cutColumns(s string, width int) string {
 }
 
 // span is a run of text in one colour (code is a palette escape, "" for none).
-type span struct{ text, code string }
+// glue joins its first word to the previous span's last one, as in "`codeforge respond`;" where no space separates them.
+type span struct {
+	text, code string
+	glue       bool
+}
 
 // wrapFinding lays out "- " and the spans word by word within width, continuing on lines indented under the text, so a
 // long finding never runs past the terminal's edge. A width of 0 keeps it on one line.
 func wrapFinding(st codeStyle, width int, spans ...span) string {
-	const lead, hang = "- ", "  "
+	return wrapSpans(st, width, "- ", "  ", spans...)
+}
+
+// wrapSpans lays out lead and the spans word by word within width, continuing on lines that start with hang. A width of
+// 0 keeps everything on one line.
+func wrapSpans(st codeStyle, width int, lead, hang string, spans ...span) string {
 	var b strings.Builder
 	b.WriteString(lead)
-	col, first := len(lead), true
+	col, first := utf8.RuneCountInString(lead), true
 	for _, sp := range spans {
-		for _, word := range strings.Fields(sp.text) {
+		for i, word := range strings.Fields(sp.text) {
 			n := utf8.RuneCountInString(word)
 			switch {
-			case first:
+			case first, i == 0 && sp.glue:
 			case width > 0 && col+1+n > width:
 				b.WriteString("\n" + hang)
-				col = len(hang)
+				col = utf8.RuneCountInString(hang)
 			default:
 				b.WriteString(" ")
 				col++
@@ -179,10 +196,22 @@ func trimSharedIndent(lines []string) []string {
 // highlight colours lines as the language of file in style, falling back to the plain lines without a style or
 // whenever the lexer cannot keep them one for one.
 func highlight(file string, lines []string, style *chroma.Style) []string {
+	return highlightWith(lexers.Match(file), lines, style)
+}
+
+// highlightLang is highlight for a fenced block whose info string names lang ("go", "yaml", ...), or a file name.
+func highlightLang(lang string, lines []string, style *chroma.Style) []string {
+	lexer := lexers.Get(lang)
+	if lexer == nil && lang != "" {
+		lexer = lexers.Match("x." + lang)
+	}
+	return highlightWith(lexer, lines, style)
+}
+
+func highlightWith(lexer chroma.Lexer, lines []string, style *chroma.Style) []string {
 	if style == nil {
 		return lines
 	}
-	lexer := lexers.Match(file)
 	if lexer == nil {
 		lexer = lexers.Fallback
 	}

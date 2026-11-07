@@ -193,6 +193,7 @@ func reviewArgs(ctx context.Context, bin string, rc config.ReviewConfig, judges 
 		if note := review.SizeNote(len(l.Diff)); note != "" {
 			fmt.Fprintln(os.Stderr, note)
 		}
+		review.DisplayOf(ctx).Local()
 		prompt := panelBrief(ctx, rc, jurors, tier, false, func(t review.Tier, jury []string) string { return review.PromptLocal(l, t, jury) })
 		bounded, note := bound(rest, tier)
 		return append(bounded, prompt+"\n\n"+note), nil
@@ -222,6 +223,7 @@ func reviewArgs(ctx context.Context, bin string, rc config.ReviewConfig, judges 
 	if err != nil {
 		return nil, fmt.Errorf("loading PR %s: %w", number, err)
 	}
+	review.DisplayOf(ctx).PR(b.HeadRef)
 	cctx, ccancel := context.WithTimeout(ctx, review.LoadLimit)
 	defer ccancel()
 	tier, _ := review.Classify(cctx, judges, b.Diff, b.Files())

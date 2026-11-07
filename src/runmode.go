@@ -172,7 +172,7 @@ func launchMode(ctx context.Context, home, bin string, cfg config.Config, picked
 func startReviewClock(ctx context.Context) (work, engine context.Context, cancel context.CancelFunc) {
 	end := time.Now().Add(review.HardLimit)
 	pipe, post := &review.Pipeline{}, &review.PostRequest{}
-	engine = review.WithPost(review.WithPipeline(review.WithDeadline(ctx, end), pipe), post)
+	engine = review.WithDisplay(review.WithPost(review.WithPipeline(review.WithDeadline(ctx, end), pipe), post), &review.Display{})
 	work, cancel = context.WithDeadline(engine, end)
 	return work, engine, cancel
 }

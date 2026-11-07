@@ -35,17 +35,23 @@ var (
 	confirmTTY           = func() bool { return term.IsTerminal(int(os.Stdin.Fd())) }
 )
 
-// runReviewEngine runs the review's engine like runEngine. When the user asked for the review to be posted on the PR
-// (--comment), it keeps the run's JSON result instead of passing it through, prints the review text and the second
-// opinion, asks the user to confirm, and only then posts it with gh. The model stays read-only and posts nothing; a
-// failed run is never posted. Posting without a person to ask needs --comment=yes.
+// runReviewEngine runs the review's engine like runEngine. When the review is printed on a terminal, or the user asked
+// for it to be posted on the PR (--comment), it keeps the run's JSON result instead of passing it through and prints
+// the review itself: on a terminal in the Codeforge Steel style with the code around each finding. When posting, it
+// then asks the user to confirm and only then posts it with gh. The model stays read-only and posts nothing; a failed
+// run is never posted. Posting without a person to ask needs --comment=yes. Output for a script (--json, or standard
+// output that is not a terminal) passes through untouched.
 func runReviewEngine(ctx context.Context, argv, env []string, limit time.Time) error {
 	post := review.PostOf(ctx)
-	if !post.Enabled() {
+	styled := !hasFlag(argv, "--json") && stdoutStyled()
+	if !post.Enabled() && !styled {
 		return runEngine(ctx, argv, env, limit)
 	}
 	if !hasFlag(argv, "--json") {
 		argv = append(slices.Clone(argv), "--json")
+	}
+	if styled {
+		fmt.Fprintln(os.Stderr, "codeforge: reviewing; the review appears here when the model is done.")
 	}
 	var out bytes.Buffer
 	if err := runEngineTo(ctx, argv, env, limit, &out); err != nil {
@@ -55,15 +61,26 @@ func runReviewEngine(ctx context.Context, argv, env []string, limit time.Time) e
 	text, err := review.EngineOutput(out.Bytes())
 	if err != nil {
 		fmt.Fprint(os.Stdout, out.String())
+		if !post.Enabled() {
+			return err
+		}
 		return fmt.Errorf("not posting the review: %w", err)
+	}
+	text = review.StripVerdict(text)
+	if styled {
+		st := codeStyleFor(ctx, os.Stdout)
+		fmt.Fprint(os.Stdout, renderReview(text, st, reviewCode(ctx, st))+runFooter(out.Bytes(), st))
+	} else {
+		fmt.Fprintln(os.Stdout, text)
+	}
+	if !post.Enabled() {
+		return nil // the jurors' leads follow from finishLeads
 	}
 	// A blocker a juror found must not be missing from what goes up; everything else the jury says stays out.
 	leads := ""
 	if pipe := review.PipelineOf(ctx); pipe != nil {
 		leads = pipe.Leads(ctx)
 	}
-	text = review.StripVerdict(text)
-	fmt.Fprintln(os.Stdout, text)
 	if leads != "" {
 		fmt.Fprintln(os.Stdout, "\n"+leads)
 	}

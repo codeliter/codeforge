@@ -114,13 +114,28 @@ func Load(ctx context.Context, r Runner, repo, number string) (Brief, error) {
 
 	b.Tickets = uniqueTickets(b.PR.Title + "\n" + b.PR.Body + "\n" + b.PR.HeadRefName)
 
-	if repo == "" {
+	// A PR named by URL is often one of this checkout's own: then its head is fetched as for a bare number, so the
+	// reviewer reads files locally and the review can show the code around each finding.
+	if repo == "" || isOrigin(ctx, r, repo) {
 		ref := "refs/codeforge/pr-" + number
 		if _, err := r.Run(ctx, "git", "fetch", "--quiet", "origin", "pull/"+number+"/head:"+ref); err == nil {
 			b.HeadRef = ref
 		}
 	}
 	return b, nil
+}
+
+// originRepo matches owner/name at the end of a GitHub remote URL: https://github.com/o/r(.git) or git@github.com:o/r(.git).
+var originRepo = regexp.MustCompile(`github\.com[:/]([\w.-]+/[\w.-]+?)(?:\.git)?/?$`)
+
+// isOrigin reports whether owner/name repo is the GitHub repository this checkout's origin points at.
+func isOrigin(ctx context.Context, r Runner, repo string) bool {
+	out, err := r.Run(ctx, "git", "remote", "get-url", "origin")
+	if err != nil {
+		return false
+	}
+	m := originRepo.FindStringSubmatch(strings.TrimSpace(string(out)))
+	return m != nil && strings.EqualFold(m[1], repo)
 }
 
 func uniqueTickets(s string) []string {

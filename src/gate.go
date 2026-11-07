@@ -260,9 +260,9 @@ func reportFindings(w io.Writer, repo string, res review.JuryResult, st codeStyl
 			} else if withCode {
 				fmt.Fprintln(w)
 			}
-			spans := []span{{f.File + ":" + strconv.Itoa(f.Line), st.pal.accent}, {f.What, ""}}
+			spans := []span{{text: f.File + ":" + strconv.Itoa(f.Line), code: st.pal.accent}, {text: f.What}}
 			if f.Invariant != "" {
-				spans = append(spans, span{"(breaks: " + f.Invariant + ")", st.pal.dim})
+				spans = append(spans, span{text: "(breaks: " + f.Invariant + ")", code: st.pal.dim})
 			}
 			fmt.Fprint(w, wrapFinding(st, width, spans...))
 			if withCode {
