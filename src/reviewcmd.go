@@ -118,8 +118,15 @@ func clampFlag(args []string, name string, limit int) []string {
 func reviewArgs(ctx context.Context, bin string, rc ReviewConfig, judges []review.Judge, jurors jurorFactory, args []string) ([]string, error) {
 	var ref, repo string
 	var rest []string
+	comment, preapproved := false, false
 	for i := 0; i < len(args); i++ {
 		switch {
+		case args[i] == "--comment" || args[i] == "--comment=yes":
+			// Codeforge's own flag: post the finished review on the PR once the user confirms it (--comment=yes: without
+			// asking). Empryo never sees it.
+			comment, preapproved = true, args[i] == "--comment=yes"
+		case strings.HasPrefix(args[i], "--comment="):
+			return nil, fmt.Errorf("%w: %s", errCommentValue, args[i])
 		case args[i] == "--repo" && i+1 < len(args):
 			repo = args[i+1]
 			i++
@@ -133,6 +140,12 @@ func reviewArgs(ctx context.Context, bin string, rc ReviewConfig, judges []revie
 		}
 	}
 
+	if comment && ref == "" && repo == "" {
+		return nil, errCommentNeedsPR
+	}
+	if comment && hasFlag(rest, "--json") {
+		return nil, errCommentJSON
+	}
 	if err := checkEffort(rest); err != nil {
 		return nil, err
 	}
@@ -174,6 +187,10 @@ func reviewArgs(ctx context.Context, bin string, rc ReviewConfig, judges []revie
 		cctx, ccancel := context.WithTimeout(ctx, review.LoadLimit)
 		defer ccancel()
 		tier, _ := review.Classify(cctx, judges, l.Diff, l.Files)
+		tier, _ = review.RaiseForPaths(tier, "", l.Files, rc.SensitivePaths)
+		if note := review.SizeNote(len(l.Diff)); note != "" {
+			fmt.Fprintln(os.Stderr, note)
+		}
 		prompt := panelBrief(ctx, rc, jurors, tier, false, func(t review.Tier, jury []string) string { return review.PromptLocal(l, t, jury) })
 		bounded, note := bound(rest, tier)
 		return append(bounded, prompt+"\n\n"+note), nil
@@ -186,6 +203,16 @@ func reviewArgs(ctx context.Context, bin string, rc ReviewConfig, judges []revie
 	if repo == "" {
 		repo = repoFromURL(ref)
 	}
+	post := review.PostOf(ctx)
+	if comment && post == nil {
+		return nil, errCommentUnavailable
+	}
+	if comment {
+		post.Target(repo, number)
+		if preapproved {
+			post.Preapprove()
+		}
+	}
 
 	lctx, cancel := context.WithTimeout(ctx, review.LoadLimit)
 	defer cancel()
@@ -196,6 +223,10 @@ func reviewArgs(ctx context.Context, bin string, rc ReviewConfig, judges []revie
 	cctx, ccancel := context.WithTimeout(ctx, review.LoadLimit)
 	defer ccancel()
 	tier, _ := review.Classify(cctx, judges, b.Diff, b.Files())
+	tier, _ = review.RaiseForPaths(tier, "", b.Files(), rc.SensitivePaths)
+	if note := review.SizeNote(len(b.Diff)); note != "" {
+		fmt.Fprintln(os.Stderr, note)
+	}
 	// The changed files come with the brief, so the jurors and the reviewer read instead of fetching and still reach a verdict.
 	packed := ""
 	if b.HeadRef != "" {
@@ -204,6 +235,9 @@ func reviewArgs(ctx context.Context, bin string, rc ReviewConfig, judges []revie
 		packed = review.PackRef(pctx, review.ExecRunner{}, b.HeadRef, b.Files(), tier)
 	}
 	prompt := panelBrief(ctx, rc, jurors, tier, b.HeadRef == "", func(t review.Tier, jury []string) string { return review.Prompt(b, t, jury) + packed })
+	if comment && post != nil {
+		prompt += "\n\n" + review.CommentNote
+	}
 	rest, note := bound(rest, tier)
 	return append(rest, prompt+"\n\n"+note), nil
 }

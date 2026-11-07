@@ -11,6 +11,7 @@ func cloneConfig(cfg Config) Config {
 	cfg.Providers = cfg.Providers.clone()
 	cfg.Judges = slices.Clone(cfg.Judges)
 	cfg.Review.SecondOpinion = slices.Clone(cfg.Review.SecondOpinion)
+	cfg.Review.SensitivePaths = slices.Clone(cfg.Review.SensitivePaths)
 	cfg.Routing = maps.Clone(cfg.Routing)
 	return cfg
 }

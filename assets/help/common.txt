@@ -7,7 +7,7 @@ Modes:
   ticket [--ticket ID] ["description"]  Take a ticket to a verified change and draft PR; reviewed before the TUI opens
   chat ["question"]                  Questions, explanations and small edits
   work ["task"]                      Conversational tasks through implementation and verification; no ticket or PR flow
-  review [PR number or URL]          Read-only review of a PR, or of your branch when no PR is given
+  review [PR|URL] [--comment]        Read-only review of a PR (--comment posts it after you confirm), or of your branch
   respond [PR] [--watch]             Address new review comments on your PR: judge, fix, push back, draft replies
   (none)                             Pick a mode. A PR link or "#42" (quote it: shells treat # as a comment) starts review,
                                      --ticket starts ticket, a question goes to chat

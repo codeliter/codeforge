@@ -30,6 +30,11 @@ review:
   # cost, so this is a big lever on gate spend. Code changes always use review.model. Set it to review.model's
   # value to turn it off.
   light_model: deepseek-v4.1-flash
+  # Paths that always get the risky tier, whatever the judges say. "auth/" is any directory of that name,
+  # "src/guard/*.go" a path, "*.sql" a file name. A project file adds to this list and never removes from it.
+  sensitive_paths:
+    - auth/
+    - "*.sql"
 init: Sonnet 5.5
 
 # Explicit provider/model values are advanced overrides; they keep native fallback.

@@ -56,4 +56,4 @@ When the brief gives a time limit, spend it in the order of section 3: design an
 3. **Foresight:** the one or two things most likely to hurt after merge.
 
 ## 8. Stop
-Draft only. Never post, approve or request changes without an explicit go. When told to post, use `gh pr review` with the agreed verdict and inline comments via `gh api`.
+Draft only. Never post, approve or request changes without an explicit go. When told to post, post one comment with `gh pr comment <number> --body '<the agreed text>'`, in the user's voice (codeforge-persona), with the text on the command line. The session is read-only, so the user is asked to approve that exact call in their terminal; do not try to work around a refusal, and do not use `gh pr review`, `gh api` or a body file, which are refused. If the user declines, say so and stop.

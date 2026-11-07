@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/codeliter/codeforge/src/effort"
+	"github.com/codeliter/codeforge/src/review"
 )
 
 var (
@@ -17,6 +18,7 @@ var (
 	errLightIsCoder            = errors.New("review.light_model must differ from model, the model that writes the code")
 	errSecondOpinionIsCoder    = errors.New("review.second_opinion must not include model, the model that writes the code")
 	errDuplicateModels         = errors.New("model IDs must be unique within each role")
+	errSensitivePath           = errors.New("review.sensitive_paths holds an unusable pattern")
 )
 
 type Config struct {
@@ -35,6 +37,9 @@ type ReviewConfig struct {
 	SecondOpinion []string `json:"second_opinion,omitempty" yaml:"second_opinion,omitempty"` //nolint:tagliatelle // Preserve the established configuration keys.
 	// Light reviews docs-only changes; code changes always use Model. Empty means the normal reviewer.
 	Light string `json:"light_model,omitempty" yaml:"light_model,omitempty"` //nolint:tagliatelle // Preserve the established configuration keys.
+	// SensitivePaths are paths the repository's owners always want reviewed at the risky tier, whatever the judges say:
+	// "auth/" (any directory of that name), "src/guard/*.go" (a path) or "*.sql" (a file name). They only add scrutiny.
+	SensitivePaths []string `json:"sensitive_paths,omitempty" yaml:"sensitive_paths,omitempty"` //nolint:tagliatelle // Preserve the established configuration keys.
 }
 
 const (
@@ -132,6 +137,11 @@ func validate(cfg Config) error {
 	}
 	if cfg.Model != "" && cfg.Review.Light == cfg.Model {
 		return fmt.Errorf("%w (%s)", errLightIsCoder, cfg.Model)
+	}
+	for _, p := range cfg.Review.SensitivePaths {
+		if why := review.ValidSensitivePattern(p); why != "" {
+			return fmt.Errorf("%w: %q %s", errSensitivePath, p, why)
+		}
 	}
 	for _, m := range cfg.Review.SecondOpinion {
 		if m == cfg.Review.Model {

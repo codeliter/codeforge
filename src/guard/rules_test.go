@@ -24,7 +24,7 @@ func TestCheck_ReadOnly(t *testing.T) {
 		`python3 -c 'open("README.md","w").write("x")'`, "node -e 'require(\"fs\").rmSync(\"a\")'",
 		"sed -n 'w victim.txt' source.txt", "awk '{print > \"x\"}' a",
 		"./deploy.sh", "unknowncmd --flag", "find . -delete", "gofmt -w .", "go build -o bin/x .",
-		"echo hi 2 >out.txt", "gh pr comment 1 -b x", "make install", "go test ./...",
+		"echo hi 2 >out.txt", "gh pr comment 1", "make install", "go test ./...",
 	}
 	for _, cmd := range blocked {
 		require.Equal(t, []string{RuleReadOnly}, rules(Check(cmd, true)), cmd)

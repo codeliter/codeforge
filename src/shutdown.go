@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -35,6 +36,11 @@ const deadlineExit = 2
 // runEngine is runInteractive with an optional hard deadline. A run with one gets its own process group, so the whole
 // tree dies at the deadline; it is then no longer in the terminal's foreground group, so interrupts are forwarded.
 func runEngine(ctx context.Context, argv, env []string, limit time.Time) error {
+	return runEngineTo(ctx, argv, env, limit, os.Stdout)
+}
+
+// runEngineTo is runEngine with the engine's standard output sent to stdout, so a caller can keep what the run printed.
+func runEngineTo(ctx context.Context, argv, env []string, limit time.Time, stdout io.Writer) error {
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("launch cancelled: %w", err)
 	}
@@ -46,7 +52,7 @@ func runEngine(ctx context.Context, argv, env []string, limit time.Time) error {
 	// Cancellation from main's signal context must not kill Empryo before it saves.
 	cmd := exec.CommandContext(context.WithoutCancel(ctx), argv[0], argv[1:]...)
 	cmd.Env = env
-	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, stdout, os.Stderr
 	var expired <-chan time.Time
 	if !limit.IsZero() {
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}

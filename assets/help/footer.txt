@@ -1,6 +1,6 @@
 
 Git is never blocked outside review mode. Pushing, opening PRs and merges follow your explicit requests; no mandatory gate.
-Review sessions are read-only: the guard blocks writes, pushes, PR comments and merges there. Outside review mode the guard only stops the agent from writing learning evidence.
+Review sessions are read-only: the guard blocks writes, pushes and merges there, and a PR comment only goes up if you approve that exact command in the TUI (codeforge review N --comment asks you to confirm the finished review). Outside review mode the guard only stops the agent from writing learning evidence.
 
 Config: ~/.codeforge/config.yaml + project .codeforge/config.yaml (legacy global JSON still readable)
 Docs: https://github.com/codeliter/codeforge

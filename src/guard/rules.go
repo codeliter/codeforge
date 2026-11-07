@@ -15,6 +15,9 @@ const (
 	RuleLearning = "learning-evidence"
 	RuleOpaque   = "opaque"
 	RuleScript   = "script"
+	// RuleComment marks a PR comment with its text on the command line: the one write a review session may offer to
+	// the user to approve, since they see the exact comment before it goes up.
+	RuleComment = "pr-comment"
 )
 
 const minGitTokens = 2
@@ -26,6 +29,9 @@ type Finding struct {
 
 type Result struct {
 	Blocked []Finding
+
+	// commands counts the commands the line runs, so a PR comment is offered for approval only when it is the only one.
+	commands int
 
 	cwd string
 }
@@ -70,6 +76,10 @@ func checkIn(command string, readOnly bool, cwd string) Result {
 
 		_, opaque := unwrap(raw)
 		words := commandWords(seg)
+		if strings.TrimSpace(seg) != "" {
+			// A segment with no command in it, such as PATH=x, still changes what the next command does.
+			r.commands++
+		}
 		if len(words) == 0 {
 			continue
 		}
@@ -167,6 +177,16 @@ func checkIn(command string, readOnly bool, cwd string) Result {
 		r.Blocked = append(r.Blocked, classify(words)...)
 	}
 
+	// A PR comment is offered for approval only as written. A variable or command substitution anywhere in the command
+	// line would be replaced by the shell with text the user was never shown (the split into segments above hides a
+	// substitution from the segment that holds the body), so the comment is refused instead of offered.
+	if expandsInShell(command) {
+		for i, f := range r.Blocked {
+			if f.Rule == RuleComment {
+				r.Blocked[i] = Finding{RuleReadOnly, "gh pr comment with a variable or command substitution would post text you cannot see"}
+			}
+		}
+	}
 	return r
 }
 
@@ -604,6 +624,8 @@ func notReadOnly(w, raw []string, fileWrite bool) (Finding, bool) {
 		return Finding{RuleReadOnly, name + " is not on the read-only allowlist"}, true
 	case fileWrite:
 		return Finding{RuleReadOnly, "redirects output into a file"}, true
+	case name == "gh" && len(raw) > 0 && raw[0] == "gh" && prComment(w):
+		return Finding{RuleComment, "posts a comment on a pull request"}, true
 	case name == "find" && hasAny(w, "-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprintf", "-fls", "-fprint0"):
 		return Finding{RuleReadOnly, "find can delete files or run commands"}, true
 	case name == "git" && (len(w) < minGitTokens || !readOnlyGit[w[1]]):
@@ -621,6 +643,46 @@ func notReadOnly(w, raw []string, fileWrite bool) (Finding, bool) {
 		return Finding{RuleReadOnly, why}, true
 	}
 	return Finding{}, false
+}
+
+// prComment reports `gh pr comment` in the one form review mode offers for approval: the text on the command line
+// (-b or --body, once), at most one PR, and nothing else but --repo. The user is shown the whole call, so every option
+// must be one that changes what is posted in a way the call itself shows. Anything else fails closed: a body from a file,
+// an editor or stdin, a browser, an attachment (which uploads a file the user is not shown), and editing, deleting or
+// reusing an earlier comment. Option values are consumed, so a body that reads like a flag stays a body.
+func prComment(w []string) bool {
+	if len(w) < 3 || w[1] != "pr" || w[2] != "comment" {
+		return false
+	}
+	bodies, targets := 0, 0
+	args := w[3:]
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		long := strings.HasPrefix(a, "--")
+		switch {
+		case a == "-b" || a == "--body":
+			if i+1 >= len(args) {
+				return false
+			}
+			i++
+			bodies++
+		case strings.HasPrefix(a, "--body="):
+			bodies++
+		case !long && strings.HasPrefix(a, "-b") && len(a) > len("-b"):
+			bodies++
+		case a == "-R" || a == "--repo":
+			if i+1 >= len(args) {
+				return false
+			}
+			i++
+		case strings.HasPrefix(a, "--repo="), !long && strings.HasPrefix(a, "-R") && len(a) > len("-R"):
+		case strings.HasPrefix(a, "-"):
+			return false
+		default:
+			targets++
+		}
+	}
+	return bodies == 1 && targets <= 1
 }
 
 func ghWrites(w []string) bool {
@@ -1018,4 +1080,5 @@ func scriptCallsGuarded(path, cwd string) (Finding, bool) {
 // merge folds a nested command's result into r.
 func (r *Result) merge(sub Result) {
 	r.Blocked = append(r.Blocked, sub.Blocked...)
+	r.commands += sub.commands
 }

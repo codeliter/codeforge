@@ -222,8 +222,19 @@ Codeforge acknowledges a new job right away. It prepares the context, then waits
 The job runs in your terminal. When it finishes, a chat screen opens for follow-up questions.
 A slow or broken provider can still delay the model's reply.
 
-A standalone review is read-only and posts nothing. Its sandbox currently needs macOS.
+A standalone review is read-only and posts nothing unless you ask. Its sandbox currently needs macOS.
 Use `codeforge review` with no PR number to review your local changes.
+
+Add `--comment` to a PR review (`codeforge review 123 --comment`) to post the finished review as one comment on that
+PR, from your GitHub account. The reviewer writes it in your voice, as your persona describes it, and Codeforge adds a
+footer saying it was reviewed with Codeforge. The model itself cannot post: Codeforge prints the review and any second
+opinion, asks `[y/N]`, and only then posts it. It never posts a failed or empty review, and with no terminal to ask on it
+posts nothing unless you wrote `--comment=yes`. It works for PRs on GitHub, not for local changes.
+
+Inside the review session you can also ask the reviewer to post a comment. The session is read-only, so the one
+thing it may attempt is `gh pr comment <PR> --body '…'`, and Empryo shows you that exact command in the TUI and runs it
+only if you approve. A comment whose text sits in a file, an editor or stdin, a review verdict (`gh pr review`), an API
+write and a merge are all still refused.
 
 You can also ask for a review in your existing work or chat screen. No second terminal is needed.
 The `codeforge-reviewer` helper returns findings and can ask the parent conversation to delegate agreed fixes to `codeforge-work`.

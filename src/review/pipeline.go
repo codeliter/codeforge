@@ -19,6 +19,7 @@ type Pipeline struct {
 	done    chan struct{}
 	cancel  context.CancelFunc
 	stopped bool
+	taken   bool
 	res     JuryResult
 	err     error
 }
@@ -118,6 +119,10 @@ func (p *Pipeline) Stop() {
 // stopWait bounds how long stop waits for the jurors to exit after cancelling them.
 const stopWait = 3 * time.Second
 
+// JurorsLate is what Leads says when the jurors were not done in the time left. It carries no findings, so a posted
+// review leaves it out.
+const JurorsLate = "Jurors: did not finish within the time left after the review; their findings are not included.\n"
+
 // Leads renders what the jurors found, or says they did not finish. It is empty when no jurors were started.
 func (p *Pipeline) Leads(ctx context.Context) string {
 	p.mu.Lock()
@@ -126,13 +131,27 @@ func (p *Pipeline) Leads(ctx context.Context) string {
 	if !started {
 		return ""
 	}
+	// The leads are shown once: whoever asks first (a posted comment or the terminal) has them.
+	p.mu.Lock()
+	taken := p.taken
+	p.taken = true
+	p.mu.Unlock()
+	if taken {
+		return ""
+	}
 	res, ok := p.Wait(ctx)
 	if !ok {
-		return "Jurors: did not finish within the time left after the review; their findings are not included.\n"
+		return JurorsLate
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return RenderLeads(res, p.err)
+}
+
+// oneLine puts a juror's text on one line, so every finding is one line that starts with its label and a finding that
+// spans lines cannot be mistaken for, or cut apart from, the ones around it.
+func oneLine(text string) string {
+	return strings.Join(strings.Fields(text), " ")
 }
 
 // RenderLeads lists what the jurors reported. Every blocking item is a lead for the author, not a confirmed defect.
@@ -144,16 +163,16 @@ func RenderLeads(res JuryResult, err error) string {
 	blocking := 0
 	for _, v := range res.Votes {
 		if v.Err != nil || v.Verdict.Verdict == "" {
-			fmt.Fprintf(&s, "- %s: no verdict in time\n", v.Reviewer)
+			fmt.Fprintf(&s, "- %s: no verdict in time\n", oneLine(v.Reviewer))
 			continue
 		}
-		fmt.Fprintf(&s, "- %s: %s. %s\n", v.Reviewer, v.Verdict.Verdict, v.Verdict.Summary)
+		fmt.Fprintf(&s, "- %s: %s. %s\n", oneLine(v.Reviewer), oneLine(v.Verdict.Verdict), oneLine(v.Verdict.Summary))
 		for _, f := range v.Verdict.Blocking {
-			fmt.Fprintf(&s, "  blocking %s:%d %s\n", f.File, f.Line, f.What)
+			fmt.Fprintf(&s, "  blocking %s:%d %s\n", oneLine(f.File), f.Line, oneLine(f.What))
 			blocking++
 		}
 		for _, f := range v.Verdict.Should {
-			fmt.Fprintf(&s, "  should %s:%d %s\n", f.File, f.Line, f.What)
+			fmt.Fprintf(&s, "  should %s:%d %s\n", oneLine(f.File), f.Line, oneLine(f.What))
 		}
 	}
 	head := "Jurors reviewed the change in parallel with the reviewer above and did not see its review. Their findings are unverified leads: check each before acting.\n"

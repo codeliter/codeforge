@@ -137,7 +137,10 @@ user-only setup/repair commands. Repair does not disable these protections.
 
 Review mode adds two distinct layers:
 
-1. The tool guard blocks write operations, pushes, PR comments, merges and writable commands.
+1. The tool guard blocks write operations, pushes, merges, review verdicts and writable commands. The one exception is
+   `gh pr comment <PR> --body '…'` with its text on the command line: the hook answers `ask`, Empryo shows the user the
+   exact call in the TUI, and it runs only if they approve. A body from a file, editor or stdin, an edit or delete of an
+   earlier comment, and any other command in the same call stay refused.
 2. On macOS, `sandbox-exec` refuses filesystem writes within the repository, except its `.empryo`
    runtime state. Both the initial headless turn and resumed TUI keep this sandbox.
 
@@ -342,6 +345,14 @@ the least checking. Only `docs` uses `review.light_model`, because the reviewer 
 a review's cost. Small code changes keep the normal reviewer: the light model let through a documented-contract
 violation there.
 
+`review.sensitive_paths` lets a repository's owners name paths that always get the `risky` tier, whatever the judges
+say: `auth/` (a directory of that name at any depth), `src/guard/*.go` (a path) or `*.sql` (a file name). A project
+file adds to the global list and never removes from it, so it can only add scrutiny. A change of 100 KB or more of
+diff prints a one-line suggestion to split it; the review still runs. Both follow the account of Anthropic's code review
+in [14], which sets review effort by what a change touches and keeps changes small. The same account is why
+`TestEvalHistory` measures recall on changes that a later fix commit repaired, rather than only on injected bugs: it
+judges a review regime by what it lets through.
+
 After the reviewers answer, the gate runs the repository's own tests, whatever the reviewers voted: when a changed Go
 package fails `go test`, the gate blocks on that failure and caches no verdict. This is deterministic, costs no model
 call, and exists because a reviewer that found a defect could file it as a non-blocking finding while still returning
@@ -407,7 +418,7 @@ can replace each other's helper definitions. Different projects are isolated, an
 ## 7. Citations
 
 These references are retained from the earlier technical README and the adaptive-effort design paper.
-Research papers [1–7, 13] are distinguished from engineering guides, standards, and a book/research programme [8–12].
+Research papers [1–7, 13] are distinguished from engineering guides, standards, a book/research programme and an essay [8–12, 14].
 They explain influences on the design, not claims that Codeforge reproduces each paper's method or results.
 
 1. Snell, Lee, Xu, Kumar. *Scaling LLM Test-Time Compute Optimally can be More Effective than Scaling Model Parameters.* arXiv:2408.03314, 2024. <https://arxiv.org/abs/2408.03314>
@@ -423,3 +434,4 @@ They explain influences on the design, not claims that Codeforge reproduces each
 11. MITRE. *Common Weakness Enumeration (CWE).* <https://cwe.mitre.org>
 12. Forsgren, Humble, Kim. *Accelerate: The Science of Lean Software and DevOps.* IT Revolution, 2018; DORA research programme. <https://dora.dev>
 13. Austin et al. *Resolving Code Review Comments with Machine Learning.* ICSE-SEIP 2024. <https://research.google/pubs/resolving-code-review-comments-with-machine-learning/>
+14. Stanley. *Anthropic's Code Review as a Case Study in Evolving Work Governance.* Substack, 24 Oct 2026. <https://jasonstanley.substack.com/p/anthropics-code-review-as-a-case>

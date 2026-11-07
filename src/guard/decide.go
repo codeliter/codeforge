@@ -1,12 +1,22 @@
 package guard
 
 import (
+	"slices"
 	"strings"
 )
 
 type Decision struct {
-	Allow  bool
+	Allow bool
+	// Ask hands the call to the user, who sees it and approves or refuses it in their own session. Only a PR comment
+	// with its text on the command line is offered this way; every other write in review mode stays refused.
+	Ask    bool
 	Reason string
+}
+
+// onlyComments reports whether every finding is a PR comment, so anything else in the same command (a second command,
+// a file write) still refuses the whole call.
+func onlyComments(found []Finding) bool {
+	return len(found) > 0 && !slices.ContainsFunc(found, func(f Finding) bool { return f.Rule != RuleComment })
 }
 
 // DecideOutsideReview is the only check outside review mode: git, gh, scripts and settings are not gated, but the
@@ -31,12 +41,18 @@ func DecideOutsideReview(in Input) Decision {
 	return Decision{Reason: "codeforge blocked this: " + strings.Join(kept, " ")}
 }
 
-// Decide applies the rules to one tool call. Nothing here is approvable: review mode stays read-only and
-// codeforge's own settings stay with the user. Opening a PR, merging and commenting need no approval.
+// Decide applies the rules to one tool call. Review mode stays read-only and codeforge's own settings stay with the
+// user; the one thing offered for approval is a PR comment whose text is on the command line, so the user sees exactly
+// what would be posted. Opening a PR and merging are refused in review mode.
 func Decide(in Input, readOnly bool) Decision {
 	res := CheckTool(in, readOnly)
 	if len(res.Blocked) == 0 {
 		return Decision{Allow: true}
+	}
+	// Only a shell call that is nothing but the comment: a second command in the same line, even a harmless-looking one,
+	// would go up for approval together with it, and a script or wrapper hides what runs.
+	if slices.Contains(shellTools, in.Tool) && res.commands == 1 && onlyComments(res.Blocked) {
+		return Decision{Ask: true, Reason: "codeforge asks you first: review mode is read-only, and this " + res.Blocked[0].Reason + ". Approve it only if you want exactly this comment posted."}
 	}
 
 	reasons := make([]string, 0, len(res.Blocked))

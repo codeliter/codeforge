@@ -309,6 +309,9 @@ func Run(ctx context.Context, args []string) error {
 			fmt.Fprintln(os.Stderr, "codeforge:", reason)
 		}
 	}
+	if resumed && (hasFlag(rest, "--comment") || hasFlag(rest, "--comment=yes")) {
+		return errCommentResume
+	}
 	if !resumed {
 		acknowledgeTask(os.Stderr, cmd, rest)
 	}
@@ -317,10 +320,10 @@ func Run(ctx context.Context, args []string) error {
 	// the jurors and the engine.
 	if cmd == modeReview && !resumed && !review.HasDeadline(ctx) {
 		end := time.Now().Add(review.HardLimit)
-		pipe := &review.Pipeline{}
-		base = review.WithPipeline(review.WithDeadline(base, end), pipe)
+		pipe, post := &review.Pipeline{}, &review.PostRequest{}
+		base = review.WithPost(review.WithPipeline(review.WithDeadline(base, end), pipe), post)
 		var cancel context.CancelFunc
-		ctx, cancel = context.WithDeadline(review.WithPipeline(review.WithDeadline(ctx, end), pipe), end)
+		ctx, cancel = context.WithDeadline(review.WithPost(review.WithPipeline(review.WithDeadline(ctx, end), pipe), post), end)
 		defer cancel()
 	}
 	mode, args, err := modeArgs(ctx, bin, cfg, cmd, rest)
@@ -367,7 +370,7 @@ func launchWith(ctx context.Context, home, bin, mode string, args []string, afte
 	}
 	// A review has a hard limit that only a supervising parent can enforce, so it is never handed over with exec.
 	if mode == modeReview && review.HasDeadline(ctx) && hasFlag(args, "--headless") {
-		err := runEngine(ctx, argv, env, review.AgentEnd(ctx))
+		err := runReviewEngine(ctx, argv, append(env, noAskEnv+"=1"), review.AgentEnd(ctx))
 		finishLeads(ctx, err)
 		return err
 	}
@@ -385,7 +388,8 @@ func launchWith(ctx context.Context, home, bin, mode string, args []string, afte
 			if mode == modeReview && review.HasDeadline(ctx) {
 				limit = review.AgentEnd(ctx)
 			}
-			err := runEngine(ctx, initial, env, limit)
+			// This run is headless, so nobody can approve a call it asks about; the TUI that follows can.
+			err := runReviewEngine(ctx, initial, append(slices.Clone(env), noAskEnv+"=1"), limit)
 			finishLeads(ctx, err)
 			if err != nil {
 				return err

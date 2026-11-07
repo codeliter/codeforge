@@ -89,8 +89,12 @@ func runGate(ctx context.Context, home, bin string, cfg Config, w io.Writer) err
 			classes.Put(classKey, tier, why, time.Now())
 		}
 	}
+	tier, why = review.RaiseForPaths(tier, why, local.Files, cfg.Review.SensitivePaths)
 	if why != "" {
 		fmt.Fprintf(w, "codeforge gate: %s tier: %s\n", tier.Name, why)
+	}
+	if advice := review.SizeNote(len(local.Diff)); advice != "" {
+		fmt.Fprintln(w, advice)
 	}
 	timed := tier.Timed()
 	models := slices.Concat([]string{reviewerFor(tier, cfg.Review)}, review.JuryFor(tier, cfg.Review.SecondOpinion))

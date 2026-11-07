@@ -44,6 +44,8 @@ type largeCase struct {
 	name       string
 	base, head string
 	mutations  []mutation
+	// defects are bugs already in the change, found by mining history; mutations are the ones injected into it.
+	defects []Defect
 }
 
 func mut(file string, line int, from, to, name string, keywords ...string) mutation {
@@ -58,7 +60,7 @@ var largeCases = []largeCase{
 		mut("src/guard/lock.go", 55, "if !errors.Is(err, syscall.EWOULDBLOCK) && !errors.Is(err, syscall.EINTR) {", "if !errors.Is(err, syscall.EWOULDBLOCK) || !errors.Is(err, syscall.EINTR) {", "held lock fails instead of waiting", "EWOULDBLOCK", "||", "never waits", "held"),
 		mut("src/review/panel.go", 50, "if v.Err != nil || v.Verdict.Verdict == \"\" {", "if v.Err != nil && v.Verdict.Verdict == \"\" {", "failed juror counted as a verdict", "&&", "v.Err", "error vote"),
 		mut("src/reviewcmd.go", 147, "left := min(review.AgentLimit, time.Until(review.WorkDeadline(ctx))) - review.KillGrace", "left := max(review.AgentLimit, time.Until(review.WorkDeadline(ctx))) - review.KillGrace", "reviewer time exceeds the deadline", "max(", "exceed", "longer than"),
-	}},
+	}, nil},
 	{"provider-chains", "f726928~1", "80631c1", []mutation{
 		mut("src/model_levels.go", 59, "if i < len(a) {", "if i <= len(a) {", "version compare reads past the end", "len(a)", "out of range", "panic", "<="),
 		mut("src/model_levels.go", 98, "if (da <= 0) != (db <= 0) {", "if (da < 0) != (db <= 0) {", "equal version sorted as newer", "da < 0", "equal", "inconsistent"),
@@ -66,14 +68,14 @@ var largeCases = []largeCase{
 		mut("src/model_levels.go", 120, "if c := compareVersions(sb.version, sa.version); c != 0 {", "if c := compareVersions(sa.version, sb.version); c != 0 {", "oldest stand-in chosen first", "newest", "order", "reversed", "swapped"),
 		mut("src/models_delta.go", 23, "return providerID(a.Primary) == providerID(b.Primary) && slices.Equal(a.Backups(), b.Backups())", "return providerID(a.Primary) == providerID(b.Primary) || slices.Equal(a.Backups(), b.Backups())", "policy change goes unnoticed", "||", "same primary", "backups", "unnoticed"),
 		mut("src/guard/rules.go", 266, "return len(args) == 0 || len(args) == 1 && (args[0] == \"show\" || args[0] == \"list\")", "return len(args) == 0 || len(args) >= 1 && (args[0] == \"show\" || args[0] == \"list\")", "read-only provider listing accepts extra arguments", ">= 1", "extra arguments", "read-only", "len(args)"),
-	}},
+	}, nil},
 	{"learn-habits", "540dd93~1", "c58165d", []mutation{
 		mut("src/learn_habits.go", 248, "hasExit && (exit == 0) != ok {", "hasExit && (exit == 0) == ok {", "agreeing signals marked incomplete", "== ok", "disagree", "inverted", "incomplete"),
 		mut("src/learn_habits.go", 358, "o.RevertedAt != nil || o.Status == store.StatusIncomplete {", "o.RevertedAt == nil || o.Status == store.StatusIncomplete {", "only reverted outcomes count", "RevertedAt", "reverted", "== nil", "skips"),
 		mut("src/learn_habits.go", 135, "\"..\") || filepath.IsAbs(p) {", "\"..\") && filepath.IsAbs(p) {", "parent path or absolute path allowed", "&&", "..", "absolute", "traversal"),
 		mut("src/learn_habits.go", 382, "h.Passed >= minHabitPasses", "h.Passed > minHabitPasses", "habit needs one pass more than the minimum", "minHabitPasses", "one more pass", "minimum"),
 		mut("src/learn_habits.go", 388, "out = out[:maxHabits]", "out = out[:maxHabits-1]", "one habit too few kept", "maxHabits", "one fewer", "-1", "cap"),
-	}},
+	}, nil},
 }
 
 // buildLargeRepo makes the case's repository; it reports false when the case's commits are not in this clone, so one
@@ -95,7 +97,10 @@ func buildLargeRepo(t *testing.T, c largeCase) (string, []Defect, bool) {
 	gitIn(t, dir, "remote", "remove", "origin")
 	gitIn(t, dir, "checkout", "-q", "-B", "main", c.base)
 	gitIn(t, dir, "checkout", "-q", "-B", "feature", c.head)
-	gitIn(t, dir, "reset", "-q", "--soft", "main")
+	if len(c.mutations) > 0 {
+		// One commit holding the whole change plus the injected bugs, so the history shows no original to compare with.
+		gitIn(t, dir, "reset", "-q", "--soft", "main")
+	}
 	var defects []Defect
 	for _, m := range c.mutations {
 		p := dir + "/" + m.file
@@ -106,8 +111,25 @@ func buildLargeRepo(t *testing.T, c largeCase) (string, []Defect, bool) {
 		defects = append(defects, m.defect)
 	}
 	gitIn(t, dir, "add", "-A")
-	gitIn(t, dir, "commit", "-q", "-m", "change")
-	return dir, defects, true
+	if len(c.mutations) > 0 {
+		gitIn(t, dir, "commit", "-q", "-m", "change")
+	}
+	isolateRepo(t, dir)
+	return dir, append(defects, c.defects...), true
+}
+
+// isolateRepo removes everything a reviewer could use to look ahead: tags, the clone's remote, old reflog entries and
+// the objects only they kept alive. A reviewer that can run git log must not be able to read the commit that fixes the
+// bug it is looking for.
+func isolateRepo(t *testing.T, dir string) {
+	t.Helper()
+	tags, err := exec.CommandContext(t.Context(), "git", "-C", dir, "tag", "-l").Output()
+	require.NoError(t, err)
+	if names := strings.Fields(string(tags)); len(names) > 0 {
+		gitIn(t, dir, append([]string{"tag", "-d"}, names...)...)
+	}
+	gitIn(t, dir, "reflog", "expire", "--expire=now", "--all")
+	gitIn(t, dir, "gc", "-q", "--prune=now")
 }
 
 // retrying repeats a run the engine failed outright when there is time left, like the gate's jury does; many reviewers
@@ -139,6 +161,17 @@ type runResult struct {
 }
 
 func TestEvalLargeDiff(t *testing.T) {
+	cases := largeCases
+	if only := os.Getenv("CODEFORGE_EVAL_CASES"); only != "" {
+		cases = slices.DeleteFunc(slices.Clone(cases), func(c largeCase) bool { return !slices.Contains(strings.Split(only, ","), c.name) })
+	}
+	evalCases(t, cases, true)
+}
+
+// evalCases runs the lone reviewer and the reviewer with a jury on every case, and reports recall per case and in all.
+// With gate set it also fails when the jury setup loses verdicts or recall to the lone reviewer.
+func evalCases(t *testing.T, cases []largeCase, gate bool) {
+	t.Helper()
 	model := os.Getenv("CODEFORGE_EVAL_MODEL")
 	if model == "" {
 		t.Skip("set CODEFORGE_EVAL_MODEL=provider/model")
@@ -152,10 +185,6 @@ func TestEvalLargeDiff(t *testing.T) {
 	risky := TierRisky
 	risky.Jury = false
 	timedTier := risky.Timed()
-	cases := largeCases
-	if only := os.Getenv("CODEFORGE_EVAL_CASES"); only != "" {
-		cases = slices.DeleteFunc(slices.Clone(cases), func(c largeCase) bool { return !slices.Contains(strings.Split(only, ","), c.name) })
-	}
 
 	type total struct {
 		found, chances, verdicts, runs, spurious int
@@ -295,6 +324,9 @@ func TestEvalLargeDiff(t *testing.T) {
 
 	// The gate applies when both setups ran: parallel is what codeforge review does, alone is the baseline it must not lose to.
 	treated, base := totals["parallel"], totals["alone"]
+	if !gate {
+		return
+	}
 	if treated == nil || base == nil {
 		t.Log("a filtered run compares nothing: run both setups to apply the gate")
 		return

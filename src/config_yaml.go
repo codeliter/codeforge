@@ -10,6 +10,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"unicode"
 
@@ -120,6 +121,12 @@ func mergeConfig(base, local Config) Config {
 	}
 	if local.Review.SecondOpinion != nil {
 		base.Review.SecondOpinion = local.Review.SecondOpinion
+	}
+	// A project adds sensitive paths to the global ones and never removes any: they can only add scrutiny.
+	for _, p := range local.Review.SensitivePaths {
+		if !slices.Contains(base.Review.SensitivePaths, p) {
+			base.Review.SensitivePaths = append(slices.Clone(base.Review.SensitivePaths), p)
+		}
 	}
 	base.Routing = maps.Clone(base.Routing)
 	if local.Routing != nil && base.Routing == nil {

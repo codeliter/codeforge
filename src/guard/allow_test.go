@@ -46,9 +46,10 @@ func TestCheck_MergeCommentAndInfraNeedNoApproval(t *testing.T) {
 	} {
 		require.Empty(t, rules(Check(cmd, false)), cmd)
 	}
-	for _, cmd := range []string{"gh pr merge 1", "gh pr comment 1 -b x", "gh api repos/{owner}/{repo}/issues/1/comments -f body=x", "terraform apply", "kubectl delete pod x"} {
+	for _, cmd := range []string{"gh pr merge 1", "gh pr comment 1", "gh api repos/{owner}/{repo}/issues/1/comments -f body=x", "terraform apply", "kubectl delete pod x"} {
 		require.Equal(t, []string{RuleReadOnly}, rules(Check(cmd, true)), "review mode stays read-only: "+cmd)
 	}
+	require.Equal(t, []string{RuleComment}, rules(Check("gh pr comment 1 -b x", true)), "a comment with its text is offered for approval, not allowed")
 }
 
 func TestCheck_OpeningPRsNeedsNoGate(t *testing.T) {
