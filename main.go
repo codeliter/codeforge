@@ -21,7 +21,9 @@ func engineExitCode(err error) (int, bool) {
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	if len(os.Args) > 1 {
+	// The internal hook commands read stdin and may write state; with -h or --help they print usage instead, like every
+	// other command, so help is safe to run anywhere.
+	if len(os.Args) > 1 && !src.WantsHelp(os.Args[1:]) {
 		var code int
 		switch os.Args[1] {
 		case "hook":

@@ -276,7 +276,9 @@ func saveProviderPolicy(home, root, scope string, policy *config.ProviderPolicy)
 }
 
 func showProviders(ctx context.Context, home, bin, root string, w io.Writer) error {
-	cfg, err := config.Load(home, root, modelTrustApprover())
+	// A printing command never asks to trust a project file: review mode allows it, so it must not write the trust
+	// ledger. A project config that is not yet trusted is skipped here; `codeforge trust --models` approves it.
+	cfg, err := config.Load(home, root, nil)
 	if err != nil {
 		return err
 	}

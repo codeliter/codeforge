@@ -1,6 +1,7 @@
 package guard
 
 import (
+	"slices"
 	"strings"
 )
 
@@ -167,6 +168,12 @@ func checkIn(command string, readOnly bool, cwd string) Result {
 			continue
 		}
 
+		// A substitution elsewhere in the line is split into a segment of its own, so this segment cannot see that it changes
+		// the arguments (`codeforge models $(echo --) --help` reaches codeforge as `models -- --help`). The marker makes the
+		// rules treat the call as one with expanded arguments: never help, never read-only.
+		if words[0] == "codeforge" && substitutes(command) {
+			words = append(slices.Clone(words), "$")
+		}
 		if f, writes := notReadOnly(words, raw, false); writes && readOnly {
 			r.Blocked = append(r.Blocked, f)
 			continue
@@ -193,6 +200,9 @@ func classify(w []string) []Finding {
 		// These give a program a pseudo-terminal the agent controls, which could answer codeforge trust's prompt.
 		return []Finding{{RuleSelf, w[0] + " can drive a terminal prompt such as codeforge trust; run it yourself if you need it"}}
 	case "codeforge":
+		if HelpRequested(w[1:]) && !expandsArgs(w[1:]) {
+			return nil // help prints usage and changes nothing, on every command
+		}
 		if len(w) > 1 && (hasAny(w[1:2], "trust", "init", "repair", "reinit") || w[1] == "models" && !printsModels(w[2:]) || (w[1] == "provider" || w[1] == "providers") && !printsProviders(w[2:])) {
 			return []Finding{{RuleSelf, "only you can change codeforge settings"}}
 		}

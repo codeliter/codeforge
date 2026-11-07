@@ -13,6 +13,7 @@ import (
 
 func withVersion(t *testing.T, v string) {
 	t.Helper()
+	t.Setenv("CODEFORGE_GUARD", "") // a review session running the tests must not switch repair off
 	old := Version
 	Version = v
 	t.Cleanup(func() { Version = old })
@@ -32,6 +33,37 @@ func TestAutoRepairVersion(t *testing.T) {
 	t.Setenv(launchMarker, "1")
 	withVersion(t, "0.5.4")
 	require.Empty(t, autoRepairVersion(home), "agent shells inside a session never rewrite the guard")
+
+	t.Setenv(launchMarker, "")
+	t.Setenv("CODEFORGE_GUARD", "review")
+	require.Empty(t, autoRepairVersion(home), "a review session never repairs, even without the launch marker")
+}
+
+// TestPrintingCommandsDoNotRepairInAReleaseBuild runs the forms review mode allows through Run in a release build whose
+// repair is due and whose launch markers are cleared (an inline CODEFORGE_GUARD= CODEFORGE_LAUNCH= does that): they must
+// leave the stamp, the managed files and the trust ledger alone.
+func TestPrintingCommandsDoNotRepairInAReleaseBuild(t *testing.T) {
+	for _, args := range [][]string{
+		{"models"}, {"models", "recommend"}, {"provider"}, {"provider", "show"}, {"provider", "list"},
+		{"providers"}, {"providers", "show"}, {"providers", "list"},
+	} {
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+		t.Setenv(launchMarker, "")
+		t.Setenv("CODEFORGE_GUARD", "")
+		t.Chdir(t.TempDir())
+		withVersion(t, "0.5.3")
+		require.NoError(t, writeFile(config.Dir(home), repairStampFile, []byte("0.5.2\n"), privateFile))
+		require.NotEmpty(t, autoRepairVersion(home), "a repair is due, so only the command can be what skips it")
+
+		t.Setenv("PATH", t.TempDir()) // no Empryo anywhere, so the command stops there and nothing else can write
+		require.ErrorIs(t, Run(t.Context(), args), errEmpryoNotFound)
+		stamp, err := os.ReadFile(filepath.Join(config.Dir(home), repairStampFile))
+		require.NoError(t, err)
+		require.Equal(t, "0.5.2\n", string(stamp), "%v: the repair stamp did not move", args)
+		require.NoDirExists(t, filepath.Join(home, ".empryo"), "%v: no managed hooks, profiles or skills were installed", args)
+		require.NoFileExists(t, filepath.Join(config.Dir(home), "trusted-personas.json"), "%v: no trust ledger", args)
+	}
 }
 
 func TestAutoRepairRebuildsOnceAndKeepsUserData(t *testing.T) {

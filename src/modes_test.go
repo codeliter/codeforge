@@ -2,12 +2,14 @@
 package src
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/codeliter/codeforge/src/config"
+	"github.com/codeliter/codeforge/src/guard"
 
 	"github.com/stretchr/testify/require"
 )
@@ -17,6 +19,42 @@ func TestValidMode(t *testing.T) {
 		require.NoError(t, config.ValidMode(m), m)
 	}
 	require.ErrorIs(t, config.ValidMode("pair"), errUnknownMode)
+}
+
+func TestWantsHelpAgreesWithTheGuard(t *testing.T) {
+	for _, args := range [][]string{
+		nil, {"-h"}, {"--help"}, {"models", "--help"}, {"learn", "correct", "x", "-h"}, {"chat", "--", "--help"},
+		{"chat", "fix the --help text"}, {"init", "--repo"}, {"--", "-h"}, {"help"},
+		{"gh-shim", "pr", "view", "1", "-h"}, {"gh-shim", "--help"}, {"gh-shim", "-h"}, {"gh-shim", "pr", "--help"},
+	} {
+		if len(args) > 0 && args[0] == "gh-shim" {
+			require.False(t, WantsHelp(args), "%v: gh-shim forwards its arguments to gh", args)
+			continue
+		}
+		require.Equal(t, WantsHelp(args), guard.HelpRequested(args), "%v", args)
+	}
+	for _, cmd := range RegisteredCommands() {
+		require.NotEmpty(t, cmd)
+	}
+	require.Contains(t, RegisteredCommands(), "observe")
+	require.Contains(t, RegisteredCommands(), "chat")
+}
+
+// TestGuardAllowsHelpOnEveryRegisteredCommand keeps the guard in step with the dispatcher: a command added to Run is
+// covered here without anyone remembering to list it in the guard's tests.
+func TestGuardAllowsHelpOnEveryRegisteredCommand(t *testing.T) {
+	dir := t.TempDir()
+	for _, cmd := range RegisteredCommands() {
+		if cmd == "gh-shim" {
+			continue // it forwards its arguments to gh and never answers help itself
+		}
+		for _, flag := range []string{"--help", "-h"} {
+			raw, err := json.Marshal(map[string]string{"command": "codeforge " + cmd + " " + flag})
+			require.NoError(t, err)
+			d := guard.Decide(guard.Input{Tool: "Bash", Cwd: dir, Args: raw}, true)
+			require.True(t, d.Allow, "codeforge %s %s must be allowed in review mode", cmd, flag)
+		}
+	}
 }
 
 func TestUnknownCommand(t *testing.T) {

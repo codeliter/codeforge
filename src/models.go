@@ -203,7 +203,9 @@ func runModels(ctx context.Context, home, bin string, args []string) error {
 			if err != nil {
 				return err
 			}
-			cfg, err = config.Load(home, root, modelTrustApprover())
+			// A printing command never asks to trust a project file: review mode allows it, so it must not write the
+			// trust ledger. An untrusted project config is skipped here; `codeforge trust --models` approves it.
+			cfg, err = config.Load(home, root, nil)
 			if err != nil {
 				return err
 			}

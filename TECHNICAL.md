@@ -148,7 +148,17 @@ user-only setup/repair commands. Repair does not disable these protections.
 
 Review mode adds two distinct layers:
 
-1. The tool guard blocks write operations, pushes, merges, review verdicts and writable commands. The one exception is
+1. The tool guard blocks write operations, pushes, merges, review verdicts and writable commands. `codeforge` itself is
+   matched by subcommand, not by name: `-h`/`--help` on any command, `version`, `doctor`, `models` and `provider` in their
+   printing forms are allowed; every other subcommand, and any unknown one, is refused. Help is safe because `main` and
+   `Run` answer a standalone `-h`/`--help` (before any `--`) with usage text before reading config or touching state, using
+   the same rule as `guard.HelpRequested` (a test keeps them identical). `gh-shim` is the one exception: it forwards its
+   arguments to gh, so it never answers help. A call the guard allows because it only prints (`models`, `provider show`)
+   also skips the automatic repair and never offers to trust a project config, so it writes nothing. The guard judges the
+   command before the shell expands it, so a call whose arguments could expand (`$`, backtick, glob, brace, a leading
+   `~`, or a substitution anywhere in the line) is never treated as help or read-only; this also refuses harmless quoted
+   text such as `codeforge chat 'why?' -h` in review mode, because arguments are compared after the tokenizer has removed
+   quotes. Run `codeforge --help` plain instead. The one exception is
    `gh pr comment <PR> --body '…'` with its text on the command line: the hook answers `ask`, Empryo shows the user the
    exact call in the TUI, and it runs only if they approve. A body from a file, editor or stdin, an edit or delete of an
    earlier comment, and any other command in the same call stay refused.

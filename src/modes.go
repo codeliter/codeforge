@@ -52,6 +52,17 @@ func showModeTitle(w io.Writer, mode string) func() {
 var commands = []string{"start", "respond", "init", "setup", "gate", "trust", "doctor", "repair", "reinit", "models",
 	"provider", "providers", "learn", "allow", "version", "help"}
 
+// internalCommands are dispatched by main before Run: the hooks Empryo and git call, which read stdin.
+var internalCommands = []string{"hook", "pre-push", "gh-shim", "session-end", "observe"}
+
+// RegisteredCommands lists every word the binary dispatches on: the modes, the commands, and the internal hook commands.
+// Each of them answers -h and --help with usage and changes nothing.
+func RegisteredCommands() []string {
+	all := slices.Concat(modes, commands, internalCommands)
+	slices.Sort(all)
+	return slices.Compact(all)
+}
+
 // commandWord is what a mistyped mode or command looks like: one lowercase word, as opposed to a task in prose.
 var commandWord = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 

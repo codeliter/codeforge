@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+
+	"github.com/codeliter/codeforge/src/guard"
 )
 
 // Hook is the guard Empryo runs before every tool call; it skips setup and returns the hook exit code.
@@ -45,8 +47,14 @@ func first(args []string) string {
 // and version need nothing, learn and doctor need only the home directory, setup, models and provider need Empryo, and
 // everything else needs the managed profiles and hooks installed first.
 func Run(ctx context.Context, args []string) error {
+	// Help comes before everything else, for every command: it reads no config and writes no state, so it is safe in
+	// review mode too. A subcommand's help is the full reference, which lists that command; plain help is the short one.
 	if len(args) > 0 && isHelp(args[0]) {
 		printHelp(os.Stdout, wantsAllHelp(args[1:]))
+		return nil
+	}
+	if WantsHelp(args) {
+		printHelp(os.Stdout, true)
 		return nil
 	}
 	if first(args) == "version" || first(args) == "--version" {
@@ -89,7 +97,8 @@ func Run(ctx context.Context, args []string) error {
 	}
 	// After an upgrade, refresh managed hooks and profiles once, before any mode or command runs.
 	// Repair runs in every mode, review included, and before a review's clock starts, so it never costs review time.
-	if !repair.enabled {
+	// A call that only prints (models, provider show, ...) is allowed in review mode, so it writes nothing: no repair.
+	if !repair.enabled && !guard.ReadOnlyCodeforge(args) {
 		wd, err := os.Getwd()
 		if err != nil {
 			return fmt.Errorf("finding workspace: %w", err)

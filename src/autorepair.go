@@ -16,7 +16,9 @@ const repairStampFile = "repaired-version"
 // Development builds never repair on their own. Agent shells inside a Codeforge session never repair either:
 // only the user's own launch may rewrite the hooks that guard that session.
 func autoRepairVersion(home string) string {
-	if Version == "" || Version == "dev" || os.Getenv(launchMarker) == "1" {
+	// A review session is read-only, so a codeforge run from its shell never rewrites the hooks that guard it, whether or
+	// not the launch marker came through.
+	if Version == "" || Version == "dev" || os.Getenv(launchMarker) == "1" || os.Getenv("CODEFORGE_GUARD") == "review" {
 		return ""
 	}
 	// A missing or unreadable stamp repairs again: a needless repair is cheap, a skipped one leaves stale hooks.

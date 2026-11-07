@@ -5,6 +5,62 @@ import (
 	"strings"
 )
 
+// HelpRequested reports a standalone -h or --help before any "--". It must stay identical to src.WantsHelp, which Run
+// uses to answer such a call with usage text before it touches config or state.
+func HelpRequested(args []string) bool {
+	if len(args) > 0 && args[0] == "gh-shim" {
+		return false // everything after gh-shim is gh's own argument list
+	}
+	for _, a := range args {
+		switch a {
+		case "--":
+			return false
+		case "-h", "--help":
+			return true
+		}
+	}
+	return false
+}
+
+// expandsArgs reports an argument the shell would expand (a variable, a command substitution, a glob, a brace or a tilde; a
+// glob can match a file named "--", and ~- and ~+ expand to $OLDPWD and $PWD). The guard sees the text before expansion, so `s=--; codeforge models $s --help` looks like
+// help but reaches codeforge as `models -- --help`. Such a call is never treated as help or as read-only.
+func expandsArgs(args []string) bool {
+	return slices.ContainsFunc(args, func(a string) bool { return strings.ContainsAny(a, "$\x60*?[{") || strings.HasPrefix(a, "~") })
+}
+
+// ReadOnlyCodeforge reports whether `codeforge <args>` only prints (see printsOnlyCodeforge). Run uses it to skip the
+// automatic repair for such a call, so what review mode lets through really writes nothing.
+func ReadOnlyCodeforge(args []string) bool {
+	return printsOnlyCodeforge(append([]string{"codeforge"}, args...))
+}
+
+// printsOnlyCodeforge matches the codeforge calls review mode may run: help on any command, the version, the doctor report
+// and the forms of models and provider that only print. Everything else can change state, and so can anything unknown.
+func printsOnlyCodeforge(w []string) bool {
+	args := w[1:]
+	if expandsArgs(args) {
+		return false // the shell will replace part of the call with text the guard cannot read
+	}
+	if HelpRequested(args) {
+		return true
+	}
+	if len(args) == 0 {
+		return false // a bare codeforge opens the mode picker
+	}
+	switch args[0] {
+	case "help", "version", "--version":
+		return true
+	case "doctor":
+		return len(args) == 1
+	case "models":
+		return printsModels(args[1:])
+	case "provider", "providers":
+		return printsProviders(args[1:])
+	}
+	return false
+}
+
 // printsModels matches the forms of `codeforge models` that only print the roles: none, or recommend.
 func printsModels(args []string) bool {
 	return len(args) == 0 || args[0] == "recommend"
@@ -90,6 +146,14 @@ var readOnlySubcommands = map[string][]string{
 func notReadOnly(w, raw []string, fileWrite bool) (Finding, bool) {
 	name := w[0]
 	switch {
+	case name == "codeforge":
+		if fileWrite {
+			return Finding{RuleReadOnly, "redirects output into a file"}, true
+		}
+		if !printsOnlyCodeforge(w) {
+			return Finding{RuleReadOnly, "codeforge " + arg(w, 1) + " can change state; only help, version, doctor and the printing forms of models and provider are read-only"}, true
+		}
+		return Finding{}, false
 	case !readOnlyCommands[name]:
 		return Finding{RuleReadOnly, name + " is not on the read-only allowlist"}, true
 	case fileWrite:
