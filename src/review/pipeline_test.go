@@ -77,8 +77,6 @@ func TestPipeline_LateJurorsAreReportedNotAwaited(t *testing.T) {
 	defer cancel()
 	got := p.Leads(ctx)
 	require.Contains(t, got, "did not finish")
-	_, ok := p.Wait(ctx)
-	require.False(t, ok)
 }
 
 func TestPipeline_NothingStartedNothingSaid(t *testing.T) {
@@ -92,4 +90,42 @@ func TestPipeline_NilCleanupIsAllowed(t *testing.T) {
 	var p Pipeline
 	p.Start(t.Context(), "", "brief", []Reviewer{fixedReviewer{name: "a", out: failVerdict}}, nil)
 	require.Contains(t, p.Leads(t.Context()), "a: fail")
+}
+
+func TestPipeline_WaitsOnlyTheGraceAfterTheReview(t *testing.T) {
+	old := JurorGrace
+	JurorGrace = 100 * time.Millisecond
+	t.Cleanup(func() { JurorGrace = old })
+	var p Pipeline
+	p.Start(t.Context(), "", "brief", []Reviewer{fixedReviewer{name: "slow", wait: time.Minute}}, nil)
+	start := time.Now()
+	got := p.Leads(t.Context())
+	require.Less(t, time.Since(start), time.Second)
+	require.Contains(t, got, "did not finish")
+}
+
+func TestPipeline_GivingUpStopsTheJurorsAndRunsCleanup(t *testing.T) {
+	var p Pipeline
+	cleaned := make(chan struct{})
+	p.Start(t.Context(), "", "brief", []Reviewer{fixedReviewer{name: "slow", wait: time.Minute}}, func() { close(cleaned) })
+	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
+	defer cancel()
+	_, ok := p.Wait(ctx)
+	require.False(t, ok)
+	select {
+	case <-cleaned:
+	default:
+		t.Fatal("the jurors were left running after Wait gave up")
+	}
+	_, again := p.Wait(t.Context())
+	require.False(t, again, "a stopped jury is not a result")
+}
+
+func TestPipeline_StopWithoutStartIsHarmless(t *testing.T) {
+	var p Pipeline
+	p.Stop()
+	started := Pipeline{}
+	started.Start(t.Context(), "", "brief", []Reviewer{fixedReviewer{name: "slow", wait: time.Minute}}, nil)
+	started.Stop()
+	started.Stop()
 }

@@ -368,9 +368,7 @@ func launchWith(ctx context.Context, home, bin, mode string, args []string, afte
 	// A review has a hard limit that only a supervising parent can enforce, so it is never handed over with exec.
 	if mode == modeReview && review.HasDeadline(ctx) && hasFlag(args, "--headless") {
 		err := runEngine(ctx, argv, env, review.AgentEnd(ctx))
-		if err == nil {
-			printLeads(ctx)
-		}
+		finishLeads(ctx, err)
 		return err
 	}
 	if !hasFlag(args, "--headless") {
@@ -387,10 +385,11 @@ func launchWith(ctx context.Context, home, bin, mode string, args []string, afte
 			if mode == modeReview && review.HasDeadline(ctx) {
 				limit = review.AgentEnd(ctx)
 			}
-			if err := runEngine(ctx, initial, env, limit); err != nil {
+			err := runEngine(ctx, initial, env, limit)
+			finishLeads(ctx, err)
+			if err != nil {
 				return err
 			}
-			printLeads(ctx)
 			id := flagValue(argv, "--session-id")
 			if after != nil {
 				after(ctx, id)
@@ -512,8 +511,20 @@ func modeArgs(ctx context.Context, bin string, cfg Config, cmd string, args []st
 	return modeTicket, args, err
 }
 
-// printLeads prints what the second-opinion jurors found, after the review they ran alongside. It waits for them only
-// until the review's own time limit.
+// finishLeads ends the jurors started beside a review: after a successful run it prints what they found, after a failed
+// one it only stops them, so the engine's own error comes back at once and nothing is left running.
+func finishLeads(ctx context.Context, runErr error) {
+	if runErr == nil {
+		printLeads(ctx)
+		return
+	}
+	if pipe := review.PipelineOf(ctx); pipe != nil {
+		pipe.Stop()
+	}
+}
+
+// printLeads prints what the second-opinion jurors found, after the review they ran alongside. It waits for them at
+// most review.JurorGrace, then stops them.
 func printLeads(ctx context.Context) {
 	if pipe := review.PipelineOf(ctx); pipe != nil {
 		if leads := pipe.Leads(ctx); leads != "" {

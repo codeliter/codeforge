@@ -18,6 +18,9 @@ var (
 	// KillGrace is how long before a hard kill an agent is told to stop on its own, so a slow one still saves its
 	// session and returns the text it has instead of being killed mid-sentence.
 	KillGrace = 5 * time.Second
+	// JurorGrace is how long the jurors get after the main reviewer has finished. Beyond it their leads are dropped: a
+	// measured juror adds nothing to a strong reviewer, so it must not hold up a review that is otherwise done.
+	JurorGrace = 30 * time.Second
 	// MinRun is the least time worth launching a reviewer for: Empryo's start-up alone takes several seconds.
 	MinRun = 20 * time.Second
 )

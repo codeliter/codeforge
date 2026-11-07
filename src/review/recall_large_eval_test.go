@@ -24,7 +24,7 @@ import (
 //
 //	CODEFORGE_EVAL_MODEL=provider/model go test -tags eval ./src/review -run TestEvalLargeDiff -v -timeout 60m
 //
-// Optional: CODEFORGE_EVAL_SETUPS (comma list of setup names), CODEFORGE_EVAL_BIN, CODEFORGE_EVAL_RUNS (default 6 runs per setup, run in parallel).
+// Optional: CODEFORGE_EVAL_SETUPS (comma list of setup names), CODEFORGE_EVAL_DUMP=1 (log every blocking finding), CODEFORGE_EVAL_BIN, CODEFORGE_EVAL_RUNS (default 6 runs per setup, run in parallel).
 // Spurious blockers are not all false positives here: the real diff has defects of its own that nobody labelled, so
 // spurious is reported, never gated. Gated when both setups ran: every parallel run returns a verdict, and parallel recall stays
 // at recallFloor of the lone reviewer's.
@@ -173,6 +173,11 @@ func TestEvalLargeDiff(t *testing.T) {
 				if v, perr := ParseVerdict(text); perr == nil {
 					r.verdict, r.blocking = true, len(v.Blocking)
 					r.score = ScoreBlocking(defects, v.Blocking)
+					if os.Getenv("CODEFORGE_EVAL_DUMP") != "" {
+						for _, b := range v.Blocking {
+							t.Logf("%s finding %s:%d %s", s.name, b.File, b.Line, b.What)
+						}
+					}
 				} else if r.err == nil {
 					r.err = perr
 				}
