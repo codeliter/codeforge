@@ -6,11 +6,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"regexp"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/codeliter/codeforge/src/forms"
 	"github.com/codeliter/codeforge/src/review"
@@ -645,9 +648,19 @@ func voiceLeads(ctx context.Context, leads string, turn func(context.Context, st
 	if len(want) == 0 || len(want) != nonEmptyLines(body) {
 		return leads // a lead in a shape that cannot be checked after a rewrite is posted as it was written
 	}
+	// Whatever the turn gives, no lead is posted longer than its plain form: what breaks and the fix, without the
+	// walkthrough.
+	var compact []string
+	for _, l := range reviewLines(body) {
+		if l = strings.TrimSpace(l); l != "" {
+			compact = append(compact, compactLead(l))
+		}
+	}
+	fallback := review.LeadsHeader + strings.Join(compact, "\n") + "\n"
 	reply, err := turn(ctx, leadsPrompt(body))
 	if err != nil {
-		return leads
+		fmt.Fprintln(os.Stderr, "codeforge: the leads could not be put in your words ("+err.Error()+"); posting them shortened.")
+		return fallback
 	}
 	var lines []string
 	for _, l := range reviewLines(reply) {
@@ -656,16 +669,80 @@ func voiceLeads(ctx context.Context, leads string, turn func(context.Context, st
 		}
 	}
 	if !slices.Equal(leadPlaces(strings.Join(lines, "\n")), want) {
-		return leads
+		return fallback
 	}
-	// A rewrite that says next to nothing, or rambles past the limit, has lost the lead: the original stands.
-	for _, l := range lines {
-		if n := len(strings.Fields(l)) - leadPrefixWords; n < minLeadWords || n > maxLeadWords+maxLeadWords/2 {
-			return leads
+	// A rewrite that says next to nothing has lost the lead, and one no shorter than the plain form gains nothing: the
+	// plain form stands for it.
+	for i, l := range lines {
+		if n := len(strings.Fields(l)) - leadPrefixWords; n < minLeadWords || len(strings.Fields(l)) >= len(strings.Fields(compact[i])) && n > maxLeadWords {
+			lines[i] = compact[i]
 		}
 	}
 	return review.LeadsHeader + strings.Join(lines, "\n") + "\n"
 }
+
+// compactLead is a lead line cut to what a reader needs: its place, the sentence that says what breaks, and the
+// sentence that says the fix. Examples and walkthroughs between them go; a lead with nothing to cut stays as written.
+func compactLead(line string) string {
+	m := leadLine.FindStringSubmatch(line)
+	if m == nil || len(strings.Fields(line)) <= maxLeadWords {
+		return line
+	}
+	prefix := "- `" + m[1] + "` "
+	sentences := splitSentences(strings.TrimPrefix(line, prefix))
+	if len(sentences) == 1 {
+		return line // one sentence: nothing between what breaks and the fix to cut
+	}
+	// The fix is the sentence that says so, or else the last one: a reviewer ends a lead with what to do.
+	fix := sentences[len(sentences)-1]
+	for _, s := range sentences[1:] {
+		if fixLead.MatchString(s) {
+			fix = s
+			break
+		}
+	}
+	kept := []string{sentences[0], fixLead.ReplaceAllString(fix, "")}
+	for i, s := range kept {
+		s = strings.TrimSpace(s)
+		if !strings.HasSuffix(s, ".") {
+			s += "."
+		}
+		r, w := utf8.DecodeRuneInString(s)
+		kept[i] = string(unicode.ToUpper(r)) + s[w:]
+	}
+	return prefix + strings.Join(kept, " ")
+}
+
+// splitSentences splits prose into its sentences at each sentenceBreak, keeping every character but the space between.
+// A dot after an abbreviation or a single letter ("e.g.", "vs.", "A.") ends no sentence.
+func splitSentences(text string) []string {
+	var out []string
+	start := 0
+	for _, m := range sentenceBreak.FindAllStringIndex(text, -1) {
+		words := strings.Fields(text[start : m[0]+1])
+		if len(words) == 0 {
+			continue
+		}
+		last := strings.ToLower(strings.Trim(words[len(words)-1], "(`"))
+		if abbreviations[last] || len([]rune(strings.TrimSuffix(last, "."))) <= 1 {
+			continue
+		}
+		out = append(out, text[start:m[0]+1])
+		start = m[1] - 1 // the letter or backtick that opens the next sentence
+	}
+	return append(out, text[start:])
+}
+
+// abbreviations end with a dot that ends no sentence.
+var abbreviations = map[string]bool{"e.g.": true, "i.e.": true, "vs.": true, "etc.": true, "fig.": true, "cf.": true, "approx.": true, "no.": true}
+
+var (
+	// sentenceBreak splits prose at a full stop that ends a sentence: one followed by a space and a capital or a
+	// backtick, so a dot inside code or a number stays.
+	sentenceBreak = regexp.MustCompile(`\.\s+(?:[A-Za-z\x60])`)
+	// fixLead opens the sentence that says the fix.
+	fixLead = regexp.MustCompile(`(?i)^\s*(fix|to fix|the fix)\s*(is)?\s*:\s*`)
+)
 
 // nonEmptyLines counts the lines of text that hold anything.
 func nonEmptyLines(text string) int {

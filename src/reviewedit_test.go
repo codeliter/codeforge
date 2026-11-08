@@ -559,3 +559,33 @@ func TestReviewTurn_RetriesPlainerOnlyWhenTheCommandLineWasWrong(t *testing.T) {
 		})
 	}
 }
+
+func TestCompactLead(t *testing.T) {
+	long := "- `a.go:533` `winnerBonus` sets `rivalTop` from active players only, so a player who left can outrank the winner. " +
+		"Example 1, duel: the rival walks 3 tokens home (300) and leaves. The host has 0 and wins by default, so the bonus adds 200. " +
+		"The recap then lists the rival first at 300, while `winner_participant_id` names the host. Example 2, party: A reaches 610 and leaves. " +
+		"Fix: in `standings()`, sort `finished_participant_ids` first, or take `rivalTop` over every dealt seat."
+	require.Equal(t, "- `a.go:533` `winnerBonus` sets `rivalTop` from active players only, so a player who left can outrank the winner. "+
+		"In `standings()`, sort `finished_participant_ids` first, or take `rivalTop` over every dealt seat.", compactLead(long))
+	short := "- `a.go:3` the retry drops the body. Buffer it."
+	require.Equal(t, short, compactLead(short), "a short lead stays as written")
+}
+
+func TestVoiceLeads_AFailedTurnStillShortensTheLeads(t *testing.T) {
+	long := review.LeadsHeader + "- `a.go:3` It breaks. " + strings.Repeat("More detail here. ", 20) + "Fix: buffer the body.\n"
+	got := voiceLeads(t.Context(), long, func(context.Context, string) (string, error) { return "", errors.New("down") }) //nolint:err113 // a stand-in failure
+	require.Equal(t, review.LeadsHeader+"- `a.go:3` It breaks. Buffer the body.\n", got)
+}
+
+func TestCompactLead_TheFixIsKeptHoweverItIsWritten(t *testing.T) {
+	walk := strings.Repeat("The walkthrough goes on here. ", 12)
+	tests := []struct{ in, want string }{
+		{in: "- `a.go:3` The retry drops the body. " + walk + "Buffer the body in `retry` before the first attempt.", want: "- `a.go:3` The retry drops the body. Buffer the body in `retry` before the first attempt."},
+		{in: "- `a.go:3` The retry drops the body. " + walk + "fix: buffer it. Then more.", want: "- `a.go:3` The retry drops the body. Buffer it."},
+		{in: "- `a.go:3` “Retry” drops the body. " + walk + "fix: “buffer” it.", want: "- `a.go:3` “Retry” drops the body. “buffer” it."},
+		{in: "- `a.go:3` Calls like e.g. `Close()` leak the fd. " + walk + "Defer it.", want: "- `a.go:3` Calls like e.g. `Close()` leak the fd. Defer it."},
+	}
+	for _, tt := range tests {
+		t.Run(tt.want, func(t *testing.T) { require.Equal(t, tt.want, compactLead(tt.in)) })
+	}
+}
