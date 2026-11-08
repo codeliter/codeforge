@@ -5,6 +5,7 @@
 package forms
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,7 +14,10 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
+	"sync"
+	"time"
 )
 
 // Kind is what a field asks for.
@@ -174,6 +178,12 @@ const KeySend = "s"
 // Show runs an accordion and returns the Action key the user pressed to close it, or "" for q, with the Changes when
 // that key is KeySend.
 func Show(name string, a Accordion) (string, []Change, error) {
+	if a.Edits || slices.ContainsFunc(a.Items, func(s Section) bool { return len(s.Notes) > 0 }) {
+		// An older helper knows no notes and no edits: it would show empty rows and no way to send. Say so instead.
+		if bin, err := Helper(); err == nil && helperProtocol(bin) < Protocol {
+			return "", nil, fmt.Errorf("%s: %w", name, ErrOldHelper)
+		}
+	}
 	answers, err := Run(Form{Name: name, Accordion: &a})
 	if err != nil {
 		return "", nil, err
@@ -185,6 +195,49 @@ func Show(name string, a Accordion) (string, []Change, error) {
 		}
 	}
 	return answers.String(AccordionKey), changes, nil
+}
+
+// Protocol is the version of what codeforge sends codeforge-forms. 2 added an Accordion's Notes, Edits and Changes;
+// the helper answers ProtocolFlag with its own, and one that cannot is 1.
+const Protocol = 2
+
+// ProtocolFlag asks the helper for its Protocol.
+const ProtocolFlag = "--protocol"
+
+// ErrOldHelper is returned when the helper is older than a form needs.
+var ErrOldHelper = errors.New("codeforge-forms is older than codeforge and cannot show this view. Reinstall codeforge, or run `make install` in the codeforge checkout")
+
+// protocolLimit bounds asking the helper for its protocol, which only prints a number.
+const protocolLimit = 5 * time.Second
+
+var protocols sync.Map // helper path, size and time -> its protocol
+
+// helperProtocol is the Protocol of the helper at bin; 1 when it cannot say. The answer is kept for that build of the
+// helper, by its path, size and modification time, so each build is asked once (a broken one costs protocolLimit once,
+// not on every view) and a helper replaced at the same path is asked again. A helper from before the flag treats it as
+// any other launch: with no form on descriptor 3 it fails at once.
+func helperProtocol(bin string) int {
+	key := bin
+	if info, err := os.Stat(bin); err == nil {
+		key = fmt.Sprintf("%s\x00%d\x00%d", bin, info.Size(), info.ModTime().UnixNano())
+	}
+	if p, ok := protocols.Load(key); ok {
+		if n, ok := p.(int); ok {
+			return n
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), protocolLimit)
+	defer cancel()
+	p := 1
+	if out, err := exec.CommandContext(ctx, bin, ProtocolFlag).Output(); err == nil {
+		// The number is the last line, so a wrapper that prints something first still answers.
+		lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+		if n, err := strconv.Atoi(strings.TrimSpace(lines[len(lines)-1])); err == nil {
+			p = n
+		}
+	}
+	protocols.Store(key, p)
+	return p
 }
 
 // Answer is what the user gave for one field.

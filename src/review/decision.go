@@ -34,6 +34,9 @@ func (d Decision) Label() string {
 
 var decisionLine = regexp.MustCompile(`(?i)^\s*\**\s*decision\s*:?\s*\**\s*(approve|comment|request changes)\s*\.?\s*\**\s*$`)
 
+// IsDecisionLine reports whether line is a Decision line as ParseDecision reads one.
+func IsDecisionLine(line string) bool { return decisionLine.MatchString(line) }
+
 // ParseDecision takes the review's closing `Decision: Approve|Comment|Request changes` line off its text. A review with
 // no such line is a Comment. A blocking issue in the review always makes it Request changes, whatever the line says, so
 // a review can never approve past its own blocker.

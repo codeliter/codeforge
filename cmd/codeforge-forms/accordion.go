@@ -159,8 +159,9 @@ func (m *accordion) mouse(msg tea.MouseMsg) {
 	}
 }
 
-// visible is how many lines of the view fit above the footer.
-func (m *accordion) visible() int { return max(1, m.height-len(m.footer())-1) }
+// visible is how many lines of the view fit above the footer. It counts the footer's lines without laying the view
+// out, so a key press lays it out once, not once per question about the screen.
+func (m *accordion) visible() int { return max(1, m.height-m.footerHeight()-1) }
 
 // scroll moves the view by n lines without moving the cursor, so reading down a long section never snaps back to it.
 func (m *accordion) scroll(n int) {
@@ -668,9 +669,9 @@ func cmpOr(a, b string) string {
 // footer is the help under the view. Without Edits it is one line of keys. With Edits it is one short line: what the
 // user can do on the row under the cursor, the changes waiting to be sent, and p for the ways to finish, which take
 // the line's place until one is picked. A notice goes on a line of its own above it.
-func (m *accordion) footer() []string {
+func (m *accordion) footer(lay layout) []string {
 	if !m.a.Edits {
-		return []string{m.plainHelp()}
+		return []string{m.plainHelp(lay)}
 	}
 	if m.typing {
 		enter := "add"
@@ -709,7 +710,7 @@ func (m *accordion) footer() []string {
 	if len(m.a.Keys) > 0 {
 		parts = append(parts, m.keyHelp("p", "post"))
 	}
-	parts = append(parts, m.keyHelp("q", "quit"), m.scrollPosition())
+	parts = append(parts, m.keyHelp("q", "quit"), m.scrollPosition(lay))
 	return append(lines, m.joinHelp(parts...))
 }
 
@@ -737,8 +738,7 @@ func (m *accordion) pickLines() []string {
 }
 
 // scrollPosition is how far down the view is, when it is longer than the screen.
-func (m *accordion) scrollPosition() string {
-	lay := m.layout()
+func (m *accordion) scrollPosition(lay layout) string {
 	visible := max(1, m.height-m.footerHeight()-1)
 	if len(lay.lines) <= visible {
 		return ""
@@ -767,8 +767,7 @@ func (m *accordion) footerHeight() int {
 }
 
 // plainHelp is the one-line help of an accordion without Edits.
-func (m *accordion) plainHelp() string {
-	lay := m.layout()
+func (m *accordion) plainHelp(lay layout) string {
 	visible := max(1, m.height-m.footerHeight()-1)
 	var keys []string
 	if len(lay.lines) > visible {
@@ -785,7 +784,7 @@ func (m *accordion) plainHelp() string {
 
 func (m *accordion) View() string {
 	lay := m.layout()
-	footer := m.footer()
+	footer := m.footer(lay)
 	visible := max(1, m.height-len(footer)-1)
 	end := min(len(lay.lines), m.offset+visible)
 	shown := append([]string(nil), lay.lines[min(m.offset, end):end]...)

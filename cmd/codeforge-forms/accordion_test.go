@@ -303,6 +303,27 @@ func TestAccordion_EnterOnAFindingClosesItsFileOnTheFilesRow(t *testing.T) {
 	require.Equal(t, 1, m.cursor, "a closed file's findings are skipped")
 }
 
+func TestAccordion_TheFooterHeightMatchesTheFooter(t *testing.T) {
+	steps := []struct {
+		name string
+		act  func(m *accordion)
+	}{
+		{name: "on a finding", act: func(*accordion) {}},
+		{name: "with a notice", act: func(m *accordion) { m.key("s") }},
+		{name: "typing", act: func(m *accordion) { m.key("?") }},
+		{name: "a change marked", act: func(m *accordion) { m.Update(tea.KeyMsg{Type: tea.KeyEsc}); m.key("x") }},
+		{name: "picking with unsent changes", act: func(m *accordion) { m.key("p") }},
+		{name: "back from picking", act: func(m *accordion) { m.key("esc") }},
+		{name: "an unsent notice", act: func(m *accordion) { m.key("q") }},
+		{name: "after undo", act: func(m *accordion) { m.key("u") }},
+	}
+	m := editAccordion()
+	for _, st := range steps {
+		st.act(m)
+		require.Len(t, m.footer(m.layout()), m.footerHeight(), st.name)
+	}
+}
+
 func TestAccordion_NoActionKeysWithoutKeys(t *testing.T) {
 	m := newAccordion(forms.Accordion{Items: []forms.Section{{Title: "a"}}})
 	require.NotContains(t, view(m), "post")

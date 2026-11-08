@@ -20,6 +20,10 @@ const (
 )
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == forms.ProtocolFlag {
+		fmt.Println(forms.Protocol) // what this helper understands, so codeforge never sends it a form it cannot show
+		return
+	}
 	spec := os.NewFile(specFD, "form")
 	out := os.NewFile(answersFD, "answers")
 	if spec == nil || out == nil {

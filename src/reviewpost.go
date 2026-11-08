@@ -166,14 +166,15 @@ func runShownReview(ctx context.Context, argv, env []string, limit time.Time, st
 				return review.StripPreamble(review.StripVerdict(revised))
 			})
 			if err != nil {
-				fmt.Fprintln(os.Stderr, "codeforge: "+err.Error()+"; the review is as it was.")
-				round = reviewRound{Answers: []string{"Your changes were not applied: " + err.Error()}}
-			} else {
-				round, text = next, next.Text
-				decision, display = review.ParseDecision(text)
-				if fu.Active() && decision == review.DecisionApprove && fu.Unsettled(answers) {
-					decision = review.DecisionRequestChanges
-				}
+				// Only the questions needed the reviewer: the user's own rewrites and deletions stand. They change findings
+				// only, never the Decision line, so the decision below is read as before.
+				fmt.Fprintln(os.Stderr, "codeforge: "+err.Error()+"; your questions were not answered, your rewrites and deletions are kept.")
+				next.Answers = append(next.Answers, "Your questions were not answered: "+err.Error()+". Your rewrites and deletions are kept; ask again with ? or /.")
+			}
+			round, text = next, next.Text
+			decision, display = review.ParseDecision(text)
+			if fu.Active() && decision == review.DecisionApprove && fu.Unsettled(answers) {
+				decision = review.DecisionRequestChanges
 			}
 			key, changes, shown = showReview(ctx, display, decision, leads, out.Bytes(), ask, threads, round)
 		}

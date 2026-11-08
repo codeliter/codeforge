@@ -149,7 +149,19 @@ func roundIntro(st codeStyle, text string, round reviewRound) string {
 type question struct {
 	About string // `a.go:12` (the finding's first line), a file, or "the whole review"
 	Place string // the finding's path:line, "" when the question is not about a finding
-	Text  string
+	// Nth and Raw tell findings at the same place apart: the question is about the Nth (from 1) of them, which reads
+	// Raw, as the review reads after the user's own changes. Nth is 0 when that finding is gone or is no finding any more.
+	Nth  int
+	Raw  string
+	Text string
+}
+
+// label names what the question is about for the user: the finding's place, a file, or the whole review.
+func (q question) label() string {
+	if q.Place != "" {
+		return q.Place
+	}
+	return q.About
 }
 
 // applyEdits applies the user's rewrites and deletions to the review and lists the questions, in the order asked.
@@ -165,25 +177,14 @@ func applyEdits(text string, changes []forms.Change) (out string, questions []qu
 	drop := map[int]bool{}      // first line of a deleted finding
 	for _, c := range changes {
 		s, onFinding := byID[c.Note]
-		switch c.Kind {
-		case forms.ChangeEdit:
-			if onFinding {
-				replace[s.Start] = s.Marker + strings.TrimSpace(c.Text)
-				edited = append(edited, strings.TrimSpace(c.Text))
-			}
-		case forms.ChangeDelete:
-			if onFinding {
-				drop[s.Start] = true
-			}
-		case forms.ChangeAsk:
-			q := question{Text: strings.TrimSpace(c.Text), About: "the whole review"}
-			switch {
-			case onFinding:
-				q.About, q.Place = "`"+s.Place()+"` ("+s.Raw+")", s.Place()
-			case c.Section != "":
-				q.About = c.Section
-			}
-			questions = append(questions, q)
+		switch {
+		case !onFinding:
+		case c.Kind == forms.ChangeEdit:
+			text := rewriteText(c.Text)
+			replace[s.Start] = s.Marker + text
+			edited = append(edited, text)
+		case c.Kind == forms.ChangeDelete:
+			drop[s.Start] = true
 		}
 	}
 	ends := map[int]int{} // first line of a finding -> just past its last
@@ -191,12 +192,20 @@ func applyEdits(text string, changes []forms.Change) (out string, questions []qu
 		ends[s.Start] = s.End
 	}
 	var kept []string
+	at := map[int]int{} // first line of a kept finding -> its line in kept
 	for i := 0; i < len(lines); i++ {
 		if drop[i] {
 			// The whole finding goes, its continuation lines too. Spans never overlap (findingSpans resumes after each
-			// one's end), so this skips only that finding's lines.
+			// one's end), so this skips only that finding's lines; the review's closing Decision line, when written
+			// right under it, is no part of it and stays.
+			if last := ends[i] - 1; isClosingDecision(lines, last) {
+				kept = append(kept, lines[last])
+			}
 			i = ends[i] - 1
 			continue
+		}
+		if _, isFinding := ends[i]; isFinding {
+			at[i] = len(kept)
 		}
 		if r, ok := replace[i]; ok {
 			kept = append(kept, r)
@@ -204,7 +213,60 @@ func applyEdits(text string, changes []forms.Change) (out string, questions []qu
 		}
 		kept = append(kept, lines[i])
 	}
+	// A question's finding is named as the edited review reads: a rewrite may have moved it to another place.
+	keptSpans := findingSpans(kept)
+	for _, c := range changes {
+		if c.Kind != forms.ChangeAsk {
+			continue
+		}
+		q := question{Text: strings.TrimSpace(c.Text), About: "the whole review"}
+		s, onFinding := byID[c.Note]
+		switch {
+		case onFinding:
+			q.About, q.Place = "`"+s.Place()+"` ("+s.Raw+")", s.Place()
+			if k, ok := at[s.Start]; ok {
+				if i := slices.IndexFunc(keptSpans, func(o findingSpan) bool { return o.Start == k }); i >= 0 {
+					now := keptSpans[i]
+					q.Place, q.Raw = now.Place(), now.Raw
+					for _, o := range keptSpans[:i+1] {
+						if o.Place() == now.Place() {
+							q.Nth++
+						}
+					}
+				}
+			}
+		case c.Section != "":
+			q.About = c.Section
+		}
+		questions = append(questions, q)
+	}
 	return collapseBlankLines(strings.Join(kept, "\n")), questions, edited
+}
+
+// isClosingDecision reports whether line i is the review's Decision line: one ParseDecision reads, with nothing but
+// blank lines after it.
+func isClosingDecision(lines []string, i int) bool {
+	if i < 0 || i >= len(lines) || !review.IsDecisionLine(lines[i]) {
+		return false
+	}
+	for _, l := range lines[i+1:] {
+		if strings.TrimSpace(l) != "" {
+			return false
+		}
+	}
+	return true
+}
+
+// rewriteText is a rewrite as it goes into the review: trimmed, and without a list marker the user typed before a
+// finding, since the finding keeps its own. A marker before anything else is the user's text and stays.
+func rewriteText(text string) string {
+	text = strings.TrimSpace(text)
+	if m := mdBullet.FindStringSubmatch(text); m != nil {
+		if _, ok := review.ParseLabeled(strings.TrimSpace(m[3])); ok {
+			return strings.TrimSpace(m[3])
+		}
+	}
+	return text
 }
 
 // collapseBlankLines keeps at most one blank line in a row, so a deleted finding leaves no gap.
@@ -224,56 +286,120 @@ func collapseBlankLines(s string) string {
 //
 // clean, when set, tidies the revised review the way the first reply was tidied (a note to the user, a verdict label,
 // a follow-up round's thread verdicts), so none of it is shown or posted as review text.
+//
+// When the reviewer cannot answer, the error comes with the round as the user's own changes left it: those need no
+// reviewer, so they are kept.
 func reviseReview(ctx context.Context, text string, changes []forms.Change, turn func(context.Context, string) (string, error), clean func(string) string) (reviewRound, error) {
 	edited, questions, rewrites := applyEdits(text, changes)
-	round := reviewRound{Text: edited}
+	round := reviewRound{Text: edited, Marks: map[string]noteMark{}}
 	if len(questions) > 0 {
-		reply, err := turn(ctx, revisionPrompt(edited, questions, len(rewrites) > 0 || hasDeletion(changes)))
+		revised, answers, err := askReviewer(ctx, edited, questions, len(rewrites) > 0 || hasDeletion(changes), turn, clean)
 		if err != nil {
-			return reviewRound{}, err
-		}
-		revised, answers := splitAnswers(reply)
-		if clean != nil {
-			revised = clean(revised)
-		}
-		if strings.TrimSpace(revised) == "" {
-			return reviewRound{}, errNoRevision
+			markRewrites(round, rewrites)
+			return round, err
 		}
 		round.Text = revised
 		round.Marks = compareFindings(edited, revised)
-		byQuestion := map[int]string{}
-		for _, a := range answers {
-			byQuestion[a.Question] = strings.TrimSpace(a.Reply)
-		}
-		spans := findingSpans(reviewLines(revised))
+		spans, before := findingSpans(reviewLines(revised)), findingSpans(reviewLines(edited))
 		for i, q := range questions {
-			reply := byQuestion[i+1]
+			reply := answers[i+1]
 			if reply == "" {
 				reply = "(no answer)"
 			}
-			if at := slices.IndexFunc(spans, func(s findingSpan) bool { return s.Place() == q.Place }); q.Place != "" && at >= 0 {
+			if at := askedFinding(before, spans, q); at >= 0 {
 				m := round.Marks[spans[at].ID]
 				m.Reply = reply
 				round.Marks[spans[at].ID] = m
 				continue
 			}
-			round.Answers = append(round.Answers, fmt.Sprintf("About %s: %s", strings.Trim(q.About, "`"), reply))
+			round.Answers = append(round.Answers, fmt.Sprintf("About %s: %s", q.label(), reply))
 		}
 	}
-	// The user's own rewrites say so, unless the reviewer revised them since.
-	if len(rewrites) > 0 {
-		if round.Marks == nil {
-			round.Marks = map[string]noteMark{}
-		}
-		for _, s := range findingSpans(reviewLines(round.Text)) {
-			if slices.Contains(rewrites, s.Raw) && round.Marks[s.ID].Tag == "" {
-				m := round.Marks[s.ID]
-				m.Tag = markEdited
-				round.Marks[s.ID] = m
+	markRewrites(round, rewrites)
+	return round, nil
+}
+
+// askReviewer runs the reviewer's turn on the questions and returns the revised review, cleaned, and the answers by
+// question number.
+func askReviewer(ctx context.Context, edited string, questions []question, userChanged bool, turn func(context.Context, string) (string, error), clean func(string) string) (string, map[int]string, error) {
+	reply, err := turn(ctx, revisionPrompt(edited, questions, userChanged))
+	if err != nil {
+		return "", nil, err
+	}
+	revised, answers := splitAnswers(reply)
+	if clean != nil {
+		revised = clean(revised)
+	}
+	if strings.TrimSpace(revised) == "" {
+		return "", nil, errNoRevision
+	}
+	byQuestion := map[int]string{}
+	for _, a := range answers {
+		byQuestion[a.Question] = strings.TrimSpace(a.Reply)
+	}
+	return revised, byQuestion, nil
+}
+
+// askedFinding is the index in after (the revised review) of the finding q asks about, or -1 when it cannot be told
+// for sure, so the answer is shown by its place rather than put on another finding. It is the finding at q's place
+// that still reads as asked; failing that, one the reviewer reworded in place, known by its position there while the
+// place has as many findings as before.
+func askedFinding(before, after []findingSpan, q question) int {
+	if q.Nth < 1 {
+		return -1
+	}
+	if i := slices.IndexFunc(after, func(s findingSpan) bool { return s.Place() == q.Place && s.Raw == q.Raw }); i >= 0 {
+		return i
+	}
+	count := func(spans []findingSpan) int {
+		n := 0
+		for _, s := range spans {
+			if s.Place() == q.Place {
+				n++
 			}
 		}
+		return n
 	}
-	return round, nil
+	if count(before) != count(after) {
+		return -1
+	}
+	return nthAt(after, q.Place, q.Nth)
+}
+
+// nthAt is the index of the nth (from 1) finding at place; -1 when there is no such finding, so an answer whose
+// finding is gone is shown by its place rather than put on another finding there.
+func nthAt(spans []findingSpan, place string, nth int) int {
+	if place == "" || nth < 1 {
+		return -1
+	}
+	seen := 0
+	for i, s := range spans {
+		if s.Place() != place {
+			continue
+		}
+		if seen++; seen == nth {
+			return i
+		}
+	}
+	return -1
+}
+
+// markRewrites tags the findings that read as the user rewrote them, unless the reviewer revised them since. Each
+// rewrite tags one finding, the first that reads as it does, so a second finding that reads the same is not tagged
+// too; which of two identical findings carries the tag does not matter.
+func markRewrites(round reviewRound, rewrites []string) {
+	left := slices.Clone(rewrites)
+	for _, s := range findingSpans(reviewLines(round.Text)) {
+		i := slices.Index(left, s.Raw)
+		if i < 0 {
+			continue
+		}
+		left = slices.Delete(left, i, i+1)
+		if m := round.Marks[s.ID]; m.Tag == "" {
+			m.Tag = markEdited
+			round.Marks[s.ID] = m
+		}
+	}
 }
 
 func countQuestions(changes []forms.Change) int {
@@ -286,7 +412,7 @@ func countQuestions(changes []forms.Change) int {
 	return n
 }
 
-var errNoRevision = errors.New("the reviewer sent no review back, so the review is as it was")
+var errNoRevision = errors.New("the reviewer sent no review back")
 
 func hasDeletion(changes []forms.Change) bool {
 	return slices.ContainsFunc(changes, func(c forms.Change) bool { return c.Kind == forms.ChangeDelete })
@@ -398,7 +524,8 @@ func reviewTurn(argv, env []string) func(context.Context, string) (string, error
 		}
 		args := withoutPrompt(dropFlag(dropFlag(argv[1:], "--session-id"), "--session"))
 		turn := append(append([]string{argv[0], "--session", id}, args...), prompt)
-		// The review's own clock has run out by now; the turn gets a limit of its own from when the user sent it.
+		// The review's own clock has run out by now; the turn gets a limit of its own from when the user sent it. Ctrl+C
+		// still stops it: with a limit the engine runs in its own process group and runEngineTo forwards the interrupt.
 		tctx := context.WithoutCancel(ctx)
 		var out, chatter bytes.Buffer
 		err := runEngineTo(withEngineStderr(tctx, &chatter), turn, env, time.Now().Add(revisionLimit), &out)
