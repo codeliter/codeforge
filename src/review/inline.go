@@ -98,16 +98,24 @@ func SplitFindings(review, diff string) (string, []InlineComment) {
 		end := findingEnd(src, i)
 		n, err := strconv.Atoi(m[3])
 		path := strings.TrimPrefix(m[2], "./")
-		if err != nil || !lines[path][n] {
-			kept = append(kept, src[i:end]...)
-			i = end - 1
-			continue
-		}
-		body := []string{strings.TrimSpace(m[1]) + ": " + strings.TrimSpace(m[5])}
+		// The label sorts the finding for codeforge and the user's view; posted, a comment reads as the person wrote it,
+		// with no "suggestion:" in front.
+		body := []string{strings.TrimSpace(m[5])}
 		for _, c := range src[i+1 : end] {
 			body = append(body, strings.TrimRight(c, " \t"))
 		}
-		inline = append(inline, InlineComment{Path: path, Line: n, Body: strings.TrimSpace(dedent(body))})
+		text := strings.TrimSpace(dedent(body))
+		if err != nil || !lines[path][n] {
+			// Off the diff it stays in the body, named by its place the way a person would.
+			place := path + ":" + m[3]
+			if m[4] != "" {
+				place += "-" + m[4]
+			}
+			kept = append(kept, "`"+place+"`: "+text, "")
+			i = end - 1
+			continue
+		}
+		inline = append(inline, InlineComment{Path: path, Line: n, Body: text})
 		i = end - 1
 	}
 	return tidy(kept), inline

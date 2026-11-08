@@ -63,11 +63,12 @@ func TestRunReviewEngine_PostsTheReviewWhenAskedTo(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(posted), "api --method POST repos/acme/w/pulls/42/reviews --input ")
 	require.Contains(t, string(posted), `"event":"REQUEST_CHANGES"`, "the closing decision is the review's type")
-	require.Contains(t, string(posted), "a.go:3 — drops data")
+	require.Contains(t, string(posted), "`a.go:3`: drops data", "off the diff, a finding is named by its place")
+	require.NotContains(t, string(posted), "issue (blocking)", "labels are never posted")
 	require.Contains(t, string(posted), "Fix the drop first.")
 	require.NotContains(t, string(posted), "Decision:", "the decision line is not posted as text")
 	require.NotContains(t, string(posted), "### Final comment", "the final comment is the body, without its heading")
-	require.Contains(t, string(posted), "Reviewed with codeforge.")
+	require.Contains(t, string(posted), "Review assisted by Codeforge")
 }
 
 func TestRunReviewEngine_PostsNothingUnlessAsked(t *testing.T) {

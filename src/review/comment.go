@@ -90,7 +90,7 @@ const CommentNote = "This review will be posted on the PR from my GitHub account
 // maxCommentBytes keeps the comment under GitHub's limit of 65,536 characters with room for the footer.
 const maxCommentBytes = 60_000
 
-const commentFooter = "\n\n---\n<sub>Reviewed with codeforge.</sub>"
+const commentFooter = "\n\n---\n<sub>Review assisted by Codeforge</sub>"
 
 var (
 	// ErrNoReviewText is returned when the review produced nothing to post.
@@ -208,7 +208,9 @@ func (c *PostRequest) Post(ctx context.Context, r Runner, review, leads string, 
 	if decision == "" {
 		decision = suggested
 	}
-	whole, err := CommentBody(withoutHeadings(review), leads)
+	// The fallback comment carries every finding in its body, each named by its place and without its label.
+	all, _ := SplitFindings(review, "")
+	whole, err := CommentBody(withoutHeadings(all), leads)
 	if err != nil {
 		return Posted{}, err
 	}

@@ -43,7 +43,7 @@ func TestPostRequest_PostRunsGhWithTheTargetAndFooter(t *testing.T) {
 	req := decodeReview(t, run.input)
 	require.Equal(t, DecisionRequestChanges, req.Event)
 	require.True(t, strings.HasPrefix(req.Body, "Data loss on retry."), "the final comment is the body: no verdict label, heading or decision line")
-	require.True(t, strings.HasSuffix(req.Body, "Reviewed with codeforge.</sub>"))
+	require.True(t, strings.HasSuffix(req.Body, "Review assisted by Codeforge</sub>"))
 	require.Empty(t, req.Comments)
 }
 
@@ -244,11 +244,12 @@ func TestDiffLines_OnlyTheNewSideOfEachHunk(t *testing.T) {
 func TestSplitFindings_PutsEachFindingOnItsLine(t *testing.T) {
 	summary, inline := SplitFindings(StripVerdict(inlineReview), inlineDiff)
 	require.Equal(t, []InlineComment{
-		{Path: "search/serper/main.go", Line: 72, Body: "suggestion: Remove the commented-out code."},
-		{Path: "common/go/telemetry/telemetry.go", Line: 2, Body: "suggestion: Init has no tests. Add focused tests for:\n- Init(ctx, nil)\n- the error path"},
-	}, inline)
+		{Path: "search/serper/main.go", Line: 72, Body: "Remove the commented-out code."},
+		{Path: "common/go/telemetry/telemetry.go", Line: 2, Body: "Init has no tests. Add focused tests for:\n- Init(ctx, nil)\n- the error path"},
+	}, inline, "a posted comment reads as written, without its label")
 	require.True(t, strings.HasPrefix(summary, "Correlation-only tracing"), "no verdict label: %q", summary)
-	require.Contains(t, summary, "### search/serper/main.go\n\nnitpick (non-blocking): search/serper/main.go:300", "a finding off the diff keeps its file heading")
+	require.Contains(t, summary, "### search/serper/main.go\n\n`search/serper/main.go:300`: Off the diff, so it stays in the summary.",
+		"a finding off the diff keeps its file heading and is named by its place, without its label")
 	require.NotContains(t, summary, "### common/go/telemetry/telemetry.go", "a heading left empty is dropped")
 	require.Contains(t, summary, "### Across files\n\nsuggestion: go.mod")
 }
@@ -281,8 +282,8 @@ func TestPostRequest_PostsInlineCommentsAsOneReview(t *testing.T) {
 	require.True(t, strings.HasPrefix(req.Body, "Correlation-only"))
 	require.Contains(t, req.Body, "Unconfirmed blocking leads")
 	require.Equal(t, []reviewComment{
-		{Path: "search/serper/main.go", Line: 72, Side: "RIGHT", Body: "suggestion: Remove the commented-out code."},
-		{Path: "common/go/telemetry/telemetry.go", Line: 2, Side: "RIGHT", Body: "suggestion: Init has no tests. Add focused tests for:\n- Init(ctx, nil)\n- the error path"},
+		{Path: "search/serper/main.go", Line: 72, Side: "RIGHT", Body: "Remove the commented-out code."},
+		{Path: "common/go/telemetry/telemetry.go", Line: 2, Side: "RIGHT", Body: "Init has no tests. Add focused tests for:\n- Init(ctx, nil)\n- the error path"},
 	}, req.Comments, "every comment keeps its own path, line and body: the 422 came from gh mixing them up")
 }
 

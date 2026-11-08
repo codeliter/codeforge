@@ -39,9 +39,11 @@ Each finding: `path:line`, a label, and the reason with evidence (the caller, th
 - `issue (blocking):` wrong behaviour, data loss, security, unsafe rollout. Only these block.
 - `suggestion:` a real improvement worth doing in this change.
 - `question:` you can't tell the intent. Ask; don't assume it's wrong.
-- `nitpick (non-blocking):` polish the author may ignore, labelled `Nit:`. Style the guide does not require is never blocking. At most three.
+- `nitpick (non-blocking):` polish the author may ignore. Style the guide does not require is never blocking. At most three.
 - `optional:` / `fyi:` a good idea that is not required, or something to think about later, so no comment reads as mandatory by accident.
 - `praise:` one specific thing worth repeating, at most one.
+
+The label is for codeforge and the user's view only: it sorts the findings and suggests the decision, and is never posted. What follows `path:line —` is the comment exactly as it goes on the PR, so write it as the user would, in `codeforge-persona`'s voice: a full sentence or two that stands on its own. Let the wording carry the weight a label would, the way the persona does (a blocker says plainly that it must change before merge, a nit reads as minor, a question asks), and never start it with a label word such as "Suggestion:", "Nit:" or "Praise:" unless the persona's own reviews do.
 
 List every blocking issue you find, without a cap; keep at most eight suggestions, dropping the weakest. Never invent a file or line: every `path:line` must exist, or the finding is discarded.
 
