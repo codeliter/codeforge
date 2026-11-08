@@ -31,11 +31,15 @@ type Verdict struct {
 	Should   []Finding `json:"should"`
 }
 
-// VerdictInstructions asks a headless reviewer for a machine-readable verdict after its prose review.
+// VerdictInstructions asks a headless reviewer for a machine-readable verdict and nothing else. Only the json is read,
+// and a long answer is how a verdict gets cut off mid-object: a run that spent its output on prose and a long should
+// list once returned 8k output tokens and lost its verdict. So the answer is the json alone, blocking issues first and
+// uncapped, should items few and short.
 const VerdictInstructions = `
 
 You are a gate reviewer. Do not dispatch other agents; the gate already runs each reviewer independently.
-Keep the prose short, but list EVERY blocking issue you find: never stop at the first, never cap the count, and report each distinct input or spelling that triggers a bug once it is known. Later rounds only confirm fixes, so what you leave out now is found one round late. End your answer with exactly one fenced json block and nothing after it:
+List EVERY blocking issue you find: never stop at the first, never cap the count, and report each distinct input or spelling that triggers a bug once it is known. Later rounds only confirm fixes, so what you leave out now is found one round late. Give at most 5 should items, the most important, one sentence each.
+Your whole answer is exactly one fenced json block, with no prose before it and nothing after it:
 ` + "```json" + `
 {"verdict":"pass|fail","summary":"<one sentence>","blocking":[{"file":"path","line":1,"what":"what breaks and the fix","invariant":"the documented behaviour or contract it breaks"}],"should":[{"file":"path","line":1,"what":"..."}]}
 ` + "```" + `
@@ -71,7 +75,61 @@ func ParseVerdict(out string) (Verdict, error) {
 			return v2, nil
 		}
 	}
+	if v, ok := truncatedVerdict(out); ok {
+		return v, nil
+	}
 	return Verdict{}, err
+}
+
+// truncatedVerdict rescues an answer cut off inside its final json block, as happens when a model runs out of output
+// tokens while writing the should list. The blocking list comes before should in the object, so when the verdict and a
+// complete blocking list were written before the cut, nothing blocking was lost and the verdict stands; only the
+// should list is short. Anything less complete is no verdict.
+func truncatedVerdict(out string) (Verdict, bool) {
+	const open = "```json"
+	start := strings.LastIndex(out, open)
+	if start < 0 || strings.Contains(out[start+len(open):], "```") {
+		return Verdict{}, false // no final block, or a closed one: not a cut-off answer
+	}
+	dec := json.NewDecoder(strings.NewReader(out[start+len(open):]))
+	if t, err := dec.Token(); err != nil || t != json.Delim('{') {
+		return Verdict{}, false
+	}
+	var v Verdict
+	gotBlocking := false
+	for dec.More() {
+		key, err := dec.Token()
+		if err != nil {
+			break
+		}
+		var target any
+		switch key {
+		case "verdict":
+			target = &v.Verdict
+		case "summary":
+			target = &v.Summary
+		case "blocking":
+			target = &v.Blocking
+		case "should":
+			target = &v.Should
+		default:
+			var skip json.RawMessage
+			target = &skip
+		}
+		if err := dec.Decode(target); err != nil {
+			break
+		}
+		gotBlocking = gotBlocking || key == "blocking"
+	}
+	if !gotBlocking || (v.Verdict != VerdictPass && v.Verdict != VerdictFail) {
+		return Verdict{}, false
+	}
+	v.Verdict = VerdictPass
+	if len(v.Blocking) > 0 {
+		v.Verdict = VerdictFail
+	}
+	v.Summary = strings.TrimSpace(v.Summary + " (The answer was cut off after its blocking list; some should items may be missing.)")
+	return v, true
 }
 
 // escapedFencedBlock extracts the last ` + "```json" + ` block when the answer is itself a json string, and only when

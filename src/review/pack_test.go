@@ -21,6 +21,31 @@ func TestParseVerdict_IgnoresALeakedToolCallClose(t *testing.T) {
 	require.ErrorIs(t, err, ErrNoVerdict, "anything else after the verdict still makes it no verdict")
 }
 
+func TestParseVerdict_RescuesAnAnswerCutOffInItsShouldList(t *testing.T) {
+	// From a real gate run: the output ended mid-string in the should list.
+	cut := "```json\n{\"verdict\":\"fail\",\"summary\":\"two bugs\",\"blocking\":[{\"file\":\"a.go\",\"line\":3,\"what\":\"x\"},{\"file\":\"b.go\",\"line\":9,\"what\":\"y\"}]," +
+		"\"should\":[{\"file\":\"c.go\",\"line\":1,\"what\":\"ok\"},{\"file\":\"src/review/proc.go\",\"line\":17,\"what\":\"Bound replaces any SysProcAttr a Wrap command s"
+	v, err := ParseVerdict(cut)
+	require.NoError(t, err)
+	require.Equal(t, VerdictFail, v.Verdict)
+	require.Len(t, v.Blocking, 2)
+	require.Len(t, v.Should, 0, "a should list that was cut is not half-read")
+	require.Contains(t, v.Summary, "cut off")
+
+	for name, out := range map[string]string{
+		"cut inside blocking":     "```json\n{\"verdict\":\"fail\",\"blocking\":[{\"file\":\"a.go\",\"line\":3,\"what\":\"x\"},{\"file\":\"b.go\",\"li",
+		"cut before blocking":     "```json\n{\"verdict\":\"pass\",\"summary\":\"fi",
+		"no verdict field":        "```json\n{\"blocking\":[],\"should\":[{\"fi",
+		"closed but broken block": "```json\n{\"verdict\":\"pass\",\"blocking\":[]\n```\nprose",
+	} {
+		_, err := ParseVerdict(out)
+		require.ErrorIs(t, err, ErrNoVerdict, name)
+	}
+	clean, err := ParseVerdict("```json\n{\"verdict\":\"pass\",\"summary\":\"fine\",\"blocking\":[],\"should\":[{\"fi")
+	require.NoError(t, err)
+	require.Equal(t, VerdictPass, clean.Verdict, "an empty, complete blocking list is a pass")
+}
+
 func TestPackOrder_CodeBeforeTestsBeforeDocs(t *testing.T) {
 	got := packOrder([]string{"TECHNICAL.md", "src/a_test.go", "docs/x.md", "src/b.go", "web/c.test.ts", "src/a.go"})
 	require.Equal(t, []string{"src/b.go", "src/a.go", "src/a_test.go", "web/c.test.ts", "TECHNICAL.md", "docs/x.md"}, got)
