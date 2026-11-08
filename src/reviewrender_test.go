@@ -126,7 +126,7 @@ func pressing(t *testing.T, key string, err error) *forms.Accordion {
 	t.Helper()
 	shown := &forms.Accordion{}
 	old := showAccordion
-	showAccordion = func(_ string, a forms.Accordion) (string, error) { *shown = a; return key, err }
+	showAccordion = func(_ string, a forms.Accordion) (string, []forms.Change, error) { *shown = a; return key, nil, err }
 	t.Cleanup(func() { showAccordion = old })
 	return shown
 }
@@ -155,20 +155,67 @@ func TestRunReviewEngine_TheUserPicksTheDecisionThatIsPosted(t *testing.T) {
 	require.Len(t, shown.Items, 2)
 	require.Equal(t, "a.go", shown.Items[0].Title)
 	require.Equal(t, "1 suggestion · 1 nitpick", shown.Items[0].Summary)
-	require.Contains(t, shown.Items[0].Body, "- suggestion: a.go:1 use x")
+	require.Contains(t, shown.Items[0].Notes[0].Body, "- suggestion: a.go:1 use x")
+	require.True(t, shown.Edits, "the user can mark changes and ask the reviewer before posting")
 	require.Equal(t, "Final comment", shown.Items[1].Title)
 	require.Equal(t, "suggested: Approve", shown.Items[1].Summary)
 	require.True(t, shown.Items[1].Open, "the final comment is open at the start")
 	require.Contains(t, shown.Items[1].Body, "Adds x as the description says.")
 	require.Equal(t, []forms.Action{
-		{Key: "1", Label: "post as Approve (suggested)"}, {Key: "2", Label: "post as Comment"}, {Key: "3", Label: "post as Request changes"}, {Key: "4", Label: "post as separate comments (deletable)"},
-		{Key: "c", Label: "chat about it"},
+		{Key: "1", Label: "post as Approve (suggested)", Group: "Post as"}, {Key: "2", Label: "post as Comment", Group: "Post as"},
+		{Key: "3", Label: "post as Request changes", Group: "Post as"}, {Key: "4", Label: "post as separate comments (deletable)", Group: "Or"},
+		{Key: "c", Label: "chat about it", Group: "Or"},
 	}, shown.Keys)
 	require.Contains(t, out, "  a.go  1 suggestion · 1 nitpick\n", "a recap stays in the terminal")
 	posted, err := os.ReadFile(f.ghArgs)
 	require.NoError(t, err)
 	require.Contains(t, string(posted), `"event":"REQUEST_CHANGES"`, "the user's pick is posted, not the suggestion")
 	require.Contains(t, string(posted), "Adds x as the description says.")
+}
+
+func TestRunReviewEngine_ChangesAreSentThenTheRevisedReviewIsPosted(t *testing.T) {
+	// The reviewer's second turn, in the same session, answers the question and revises the review.
+	revised := `printf '%s' '{"output":"suggestion: a.go:1 — use x everywhere\n\nAdds x.\n\nDecision: Comment\n\n` +
+		"```codeforge-answers" + `\n{\"answers\":[{\"question\":1,\"reply\":\"Yes, everywhere.\"}]}\n` + "```" + `","steps":1,"cost":0.1,"duration":100}'`
+	f := newPostFixture(t, `case " $* " in *" --session "*) `+revised+` ;; *) `+styledEngine+` ;; esac`, 0)
+	onTerminal(t, true)
+	var views []forms.Accordion
+	answers := []struct {
+		key     string
+		changes []forms.Change
+	}{
+		{forms.KeySend, []forms.Change{{Kind: forms.ChangeDelete, Note: "f1"}, {Kind: forms.ChangeAsk, Note: "f0", Text: "everywhere?"}}},
+		{"2", nil},
+	}
+	old := showAccordion
+	showAccordion = func(_ string, a forms.Accordion) (string, []forms.Change, error) {
+		views = append(views, a)
+		next := answers[0]
+		answers = answers[1:]
+		return next.key, next.changes, nil
+	}
+	t.Cleanup(func() { showAccordion = old })
+	_, stderr, err := captured(t, func() error {
+		_, err := runReviewEngine(postingContext(t), []string{f.engine, "--session-id", "rev-1", "the prompt"}, os.Environ(), time.Now().Add(10*time.Second))
+		return err
+	})
+	require.NoError(t, err)
+	require.Contains(t, stderr, "asking the reviewer 1 question")
+	require.Len(t, views, 2, "the view opens again on the revised review")
+	require.Len(t, views[1].Items[0].Notes, 1)
+	require.Contains(t, views[1].Items[0].Notes[0].Body, "use x everywhere")
+	require.Contains(t, views[1].Items[0].Notes[0].Body, "[revised]")
+	require.Contains(t, views[1].Items[0].Notes[0].Body, "↳ reviewer: Yes, everywhere.")
+	require.Equal(t, "suggested: Comment", views[1].Items[1].Summary, "the suggestion follows the revised review")
+	args, err := os.ReadFile(f.engineArgs)
+	require.NoError(t, err)
+	require.Contains(t, string(args), "--session rev-1")
+	require.Contains(t, string(args), "1. About `a.go:1`")
+	posted, err := os.ReadFile(f.ghArgs)
+	require.NoError(t, err)
+	require.Contains(t, string(posted), "use x everywhere")
+	require.NotContains(t, string(posted), "tidy", "the finding the user deleted is not posted")
+	require.NotContains(t, string(posted), "codeforge-answers")
 }
 
 func TestRunReviewEngine_APartialPlainPostSaysWhatIsOnThePR(t *testing.T) {
@@ -269,7 +316,7 @@ func TestReviewAccordion_GroupsFindingsByFileAndKeepsTheRestAsTheFinalComment(t 
 		"  and a second line\n\n" +
 		"### a heading a model added anyway\n\n" +
 		"Adds the retry the description promises, but also changes the timeout it does not mention.\n\nRequest changes until a.go is fixed.\n"
-	a := reviewAccordion(text, "**Unconfirmed blocking leads.** Check:\n- `x.go:1` drops data\n", codeStyle{wrap: true, width: 80}, nil)
+	a := reviewAccordion(text, "**Unconfirmed blocking leads.** Check:\n- `x.go:1` drops data\n", codeStyle{wrap: true, width: 80}, nil, nil)
 	require.Empty(t, a.Intro)
 	titles := make([]string, len(a.Items))
 	for i, s := range a.Items {
@@ -277,14 +324,18 @@ func TestReviewAccordion_GroupsFindingsByFileAndKeepsTheRestAsTheFinalComment(t 
 	}
 	require.Equal(t, []string{"b.go", "a.go", "Final comment", "Unconfirmed blocking leads"}, titles, "files in the order they first come up")
 	require.Equal(t, "1 suggestion · 1 nitpick", a.Items[0].Summary, "a file's findings are together wherever they were written")
-	require.Contains(t, a.Items[0].Body, "and a second line")
+	require.Len(t, a.Items[0].Notes, 2, "each finding is a note the user can pick")
+	require.Equal(t, forms.Note{ID: "f0", Body: "- suggestion: b.go:4 first in b", Raw: "suggestion: b.go:4 — first in b", Label: "b.go:4"}, a.Items[0].Notes[0])
+	require.Equal(t, "f2", a.Items[0].Notes[1].ID, "ids number the findings in the order written")
+	require.Contains(t, a.Items[0].Notes[1].Body, "and a second line")
 	require.Equal(t, "1 issue", a.Items[1].Summary)
+	require.Equal(t, "f1", a.Items[1].Notes[0].ID)
 	require.Contains(t, a.Items[2].Body, "Adds the retry the description promises")
 	require.NotContains(t, a.Items[2].Body, "heading", "headings are dropped")
 	require.True(t, a.Items[2].Open)
 	require.Contains(t, a.Items[3].Body, "x.go:1 drops data")
 
-	only := reviewAccordion("Just prose.", "", codeStyle{}, nil)
+	only := reviewAccordion("Just prose.", "", codeStyle{}, nil, nil)
 	require.Equal(t, "Final comment", only.Items[0].Title, "a review with no findings is its final comment")
 }
 

@@ -67,7 +67,7 @@ func runShownRespond(ctx context.Context, argv, env []string, limit time.Time, f
 		a.Keys = append(a.Keys, forms.Action{Key: keyPublish, Label: "push fixes and post replies"})
 	}
 	a.Keys = append(a.Keys, forms.Action{Key: keyChat, Label: "continue in chat"})
-	key, err := showAccordion("respond", a)
+	key, _, err := showAccordion("respond", a)
 	if err != nil && !errors.Is(err, forms.ErrAborted) {
 		fmt.Fprintln(os.Stderr, "codeforge: could not open the view:", err)
 		fmt.Fprint(os.Stdout, renderReview(prose, st, nil))

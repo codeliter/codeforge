@@ -149,7 +149,34 @@ func runShownReview(ctx context.Context, argv, env []string, limit time.Time, st
 		if fu.Active() {
 			threads = followUpSections(ctx, fu, answers, codeStyleFor(ctx, os.Stdout))
 		}
-		key, shown := showReview(ctx, display, decision, leads, out.Bytes(), ask, threads)
+		// The user may mark changes and send them, as often as they like: rewrites and deletions apply as written,
+		// questions go to the reviewer, and the view opens again on the review as it now reads.
+		var round reviewRound
+		key, changes, shown := showReview(ctx, display, decision, leads, out.Bytes(), ask, threads, round)
+		for key == forms.KeySend {
+			if n := countQuestions(changes); n > 0 {
+				fmt.Fprintf(os.Stderr, "codeforge: asking the reviewer %s (up to %d minutes); the review opens again with the answers.\n",
+					plural(n, "question"), int(revisionLimit.Minutes()))
+			}
+			next, err := reviseReview(ctx, text, changes, reviewTurn(argv, env), func(revised string) string {
+				// The revised reply is tidied like the first one: thread verdicts and notes to the user are never review text.
+				if fu.Active() {
+					revised, _, _ = fu.ParseFollowUp(revised) //nolint:errcheck // only the review part is kept; the first reply's verdicts stand
+				}
+				return review.StripPreamble(review.StripVerdict(revised))
+			})
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "codeforge: "+err.Error()+"; the review is as it was.")
+				round = reviewRound{Answers: []string{"Your changes were not applied: " + err.Error()}}
+			} else {
+				round, text = next, next.Text
+				decision, display = review.ParseDecision(text)
+				if fu.Active() && decision == review.DecisionApprove && fu.Unsettled(answers) {
+					decision = review.DecisionRequestChanges
+				}
+			}
+			key, changes, shown = showReview(ctx, display, decision, leads, out.Bytes(), ask, threads, round)
+		}
 		*chat = key == keyChat
 		chosen, picked := decisionKeys[key]
 		asked, answer = ask && shown, picked
@@ -277,36 +304,23 @@ var (
 // showReview shows a finished review on the terminal: as an accordion of its files when the forms helper is there,
 // else printed in full. The suggested decision sits on the final comment's row. It offers c to chat about the review
 // and, with ask, 1, 2 and 3 to post it as Approve, Comment or Request changes, and 4 as separate comments; key is
-// the one pressed, "" for q or Ctrl+C. shown reports whether the view ran, so the keys were offered.
-func showReview(ctx context.Context, text string, decision review.Decision, leads string, raw []byte, ask bool, threads []forms.Section) (key string, shown bool) {
+// the one pressed, "" for q or Ctrl+C. In the accordion the user can also mark changes on the findings and send them
+// (forms.KeySend): key is then KeySend and changes holds them. round shows what the last round of changes did. shown
+// reports whether the view ran, so the keys were offered.
+func showReview(ctx context.Context, text string, decision review.Decision, leads string, raw []byte, ask bool, threads []forms.Section, round reviewRound) (key string, changes []forms.Change, shown bool) {
 	st := codeStyleFor(ctx, os.Stdout)
 	code := reviewCode(ctx, st, text)
 	footer := runFooter(raw, st)
 	verdict := st.paint(st.pal.dim, "suggested: ") + st.paint(decisionColor(decision, st), decision.Label())
 	if accordionAvailable() {
-		a := reviewAccordion(text, leads, st, code)
-		// A follow-up round's earlier threads come first: what the author did about them is the point of the round.
-		a.Items = append(slices.Clone(threads), a.Items...)
+		a := reviewView(st, code, text, leads, decision, round, threads, ask)
 		a.Outro = footer
-		for i, item := range a.Items {
-			if strings.Contains(item.Title, finalCommentTitle) {
-				a.Items[i].Summary = verdict
-			}
-		}
-		if ask {
-			for _, k := range decisionOrder {
-				label := "post as " + decisionKeys[k].Label()
-				if decisionKeys[k] == decision {
-					label += " (suggested)"
-				}
-				a.Keys = append(a.Keys, forms.Action{Key: k, Label: label})
-			}
-		}
-		a.Keys = append(a.Keys, forms.Action{Key: keyChat, Label: "chat about it"})
-		key, err := showAccordion("review", a)
+		key, changes, err := showAccordion("review", a)
 		if err == nil || errors.Is(err, forms.ErrAborted) {
-			fmt.Fprint(os.Stdout, accordionRecap(a, st))
-			return key, true
+			if key != forms.KeySend {
+				fmt.Fprint(os.Stdout, accordionRecap(a, st))
+			}
+			return key, changes, true
 		}
 		fmt.Fprintln(os.Stderr, "codeforge: could not open the review view:", err)
 	}
@@ -322,7 +336,41 @@ func showReview(ctx context.Context, text string, decision review.Decision, lead
 		full += "\n" + footer + "\n"
 	}
 	fmt.Fprint(os.Stdout, full)
-	return "", false
+	return "", nil, false
+}
+
+// reviewView is the review as the accordion shows it, with the keys to act on it: what the last round of changes did
+// on top, a follow-up round's earlier threads first, the suggested decision on the final comment's row, and, with ask,
+// the decisions to post it as, apart from the other ways to finish.
+func reviewView(st codeStyle, code codeSource, text, leads string, decision review.Decision, round reviewRound, threads []forms.Section, ask bool) forms.Accordion {
+	a := reviewAccordion(text, leads, st, code, round.Marks)
+	a.Edits = true
+	a.Intro = roundIntro(st, text, round)
+	// A follow-up round's earlier threads come first: what the author did about them is the point of the round.
+	a.Items = append(slices.Clone(threads), a.Items...)
+	verdict := st.paint(st.pal.dim, "suggested: ") + st.paint(decisionColor(decision, st), decision.Label())
+	for i, item := range a.Items {
+		if strings.Contains(item.Title, finalCommentTitle) {
+			a.Items[i].Summary = verdict
+		}
+	}
+	other := ""
+	if ask {
+		other = "Or"
+		for _, k := range decisionOrder {
+			label := "post as " + decisionKeys[k].Label()
+			if decisionKeys[k] == decision {
+				label += " (suggested)"
+			}
+			group := "Post as"
+			if decisionKeys[k] == review.DecisionPlain {
+				group = other // no review at all, so not one of the decisions
+			}
+			a.Keys = append(a.Keys, forms.Action{Key: k, Label: label, Group: group})
+		}
+	}
+	a.Keys = append(a.Keys, forms.Action{Key: keyChat, Label: "chat about it", Group: other})
+	return a
 }
 
 // decisionColor colours a decision like the labels it follows from: Request changes as an issue, Approve as praise.
@@ -339,7 +387,7 @@ func decisionColor(d review.Decision, st codeStyle) string {
 // showAccordion runs the accordion through the forms helper, and accordionAvailable says whether there is one; tests
 // replace both.
 var (
-	showAccordion      = forms.Show
+	showAccordion      = forms.Show // name, accordion -> key pressed, changes sent with it
 	accordionAvailable = func() bool { _, err := forms.Helper(); return err == nil }
 )
 

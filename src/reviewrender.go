@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -379,38 +378,56 @@ func escapePath(p string) string {
 // reviewAccordion splits a review at its headings into the sections of an accordion: the text before the first heading
 // is the intro, each heading a row whose summary counts its findings by label, and extra (the jurors' leads) a last
 // section of its own. Bodies are laid out for the accordion's indent.
-func reviewAccordion(text, extra string, st codeStyle, code codeSource) forms.Accordion {
+//
+// Each finding is a note of its file's section, so the user can pick it in the view; marks are what the view shows on
+// a finding after a round of changes, by finding.
+func reviewAccordion(text, extra string, st codeStyle, code codeSource, marks map[string]noteMark) forms.Accordion {
 	body := st
 	if body.wrap {
 		body.width = max(minCodeWidth, body.width-len(accordionIndent))
 	}
 	var a forms.Accordion
-	lines := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
+	lines := reviewLines(text)
 	// Findings are grouped by the file their path:line names, whatever order the review wrote them in; everything
 	// else is the review's final comment. Headings a model adds anyway are dropped: the rows are the structure.
-	byPath := map[string][]string{}
+	spans := findingSpans(lines)
+	byPath := map[string][]findingSpan{}
 	var order, rest []string
+	next := 0
 	for i := 0; i < len(lines); i++ {
-		l := lines[i]
-		if f, ok := review.ParseLabeled(l); ok {
-			end := review.LabeledEnd(lines, i)
-			if _, seen := byPath[f.Path]; !seen {
-				order = append(order, f.Path)
+		if next < len(spans) && spans[next].Start == i {
+			s := spans[next]
+			if _, seen := byPath[s.F.Path]; !seen {
+				order = append(order, s.F.Path)
 			}
-			byPath[f.Path] = append(byPath[f.Path], append(slices.Clone(lines[i:end]), "")...)
-			i = end - 1
+			byPath[s.F.Path] = append(byPath[s.F.Path], s)
+			i, next = s.End-1, next+1
 			continue
 		}
-		if mdHeading.MatchString(l) {
+		if mdHeading.MatchString(lines[i]) {
 			continue
 		}
-		rest = append(rest, l)
+		rest = append(rest, lines[i])
 	}
 	for _, p := range order {
+		var all []string
+		var notes []forms.Note
+		marked := false
+		for _, s := range byPath[p] {
+			finding := lines[s.Start:s.End]
+			all = append(all, finding...)
+			rendered := strings.Trim(renderReview(strings.Join(finding, "\n"), body, code), "\n")
+			if m, ok := marks[s.ID]; ok {
+				rendered += m.render(body)
+				marked = true
+			}
+			notes = append(notes, forms.Note{ID: s.ID, Body: rendered, Raw: s.Raw, Label: s.Place()})
+		}
 		a.Items = append(a.Items, forms.Section{
 			Title:   st.paint(st.pal.accent, p),
-			Summary: findingCounts(byPath[p]),
-			Body:    strings.Trim(renderReview(strings.Join(byPath[p], "\n"), body, code), "\n"),
+			Summary: findingCounts(all),
+			Notes:   notes,
+			Open:    marked, // what the last round changed is shown, not left behind a closed row
 		})
 	}
 	if prose := strings.TrimSpace(strings.Join(rest, "\n")); prose != "" {
@@ -426,7 +443,7 @@ func reviewAccordion(text, extra string, st codeStyle, code codeSource) forms.Ac
 			Body:  strings.Trim(renderReview(extra, body, nil), "\n"),
 		})
 	}
-	a.Accent, a.Dim = st.pal.accent, st.pal.dim
+	a.Accent, a.Dim, a.Warn = st.pal.accent, st.pal.dim, st.pal.question
 	return a
 }
 

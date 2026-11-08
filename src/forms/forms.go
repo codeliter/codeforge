@@ -104,12 +104,20 @@ type Accordion struct {
 	// Accent and Dim are the escapes for the cursor and the key help, so the view matches the caller's theme.
 	Accent string `json:"accent,omitempty"`
 	Dim    string `json:"dim,omitempty"`
+	// Edits lets the user mark changes before acting: rewrite or delete a Note, or ask about a Note, a section or the
+	// whole text. Nothing is sent until KeySend; the view then closes and answers with the Changes, in the order made.
+	Edits bool `json:"edits,omitempty"`
+	// Warn is the escape for what needs attention, such as unsent changes.
+	Warn string `json:"warn,omitempty"`
 }
 
 // Action is a key an Accordion offers, shown in its key help as "Key Label".
 type Action struct {
 	Key   string `json:"key"`
 	Label string `json:"label"`
+	// Group heads the actions that share it in the list of ways to finish, such as "Post as" or "Or"; the first group
+	// is "Post as" when none is given.
+	Group string `json:"group,omitempty"`
 }
 
 // Section is one row of an Accordion: its title and summary on the row, its body under it while it is open.
@@ -119,18 +127,64 @@ type Section struct {
 	Body    string `json:"body,omitempty"`
 	// Open shows the section open at the start.
 	Open bool `json:"open,omitempty"`
+	// Notes are shown under Body while the section is open. In an Accordion with Edits each one can be picked, then
+	// rewritten, deleted or asked about.
+	Notes []Note `json:"notes,omitempty"`
 }
 
-// AccordionKey is the answer key that holds the Action key the user pressed, empty when they left with q.
-const AccordionKey = "key"
+// Note is one part of a section the user can act on, such as one finding of a review.
+type Note struct {
+	ID   string `json:"id"`
+	Body string `json:"body"`
+	// Raw is the text offered for rewriting; a note without it can be deleted or asked about, not rewritten.
+	Raw string `json:"raw,omitempty"`
+	// Label names the note in the key help and in a question about it, such as its place in the code.
+	Label string `json:"label,omitempty"`
+}
 
-// Show runs an accordion and returns the Action key the user pressed to close it, or "" for q.
-func Show(name string, a Accordion) (string, error) {
+// ChangeKind is what a Change does.
+type ChangeKind string
+
+// The kinds of change.
+const (
+	ChangeEdit   ChangeKind = "edit"
+	ChangeDelete ChangeKind = "delete"
+	ChangeAsk    ChangeKind = "ask"
+)
+
+// Change is one change the user marked in an Accordion with Edits. Note names the note it is about; an ask with no
+// Note is about Section (its plain title), or about the whole text when that is empty too.
+type Change struct {
+	Kind    ChangeKind `json:"kind"`
+	Note    string     `json:"note,omitempty"`
+	Section string     `json:"section,omitempty"`
+	Text    string     `json:"text,omitempty"`
+}
+
+// AccordionKey is the answer key that holds the Action key the user pressed, empty when they left with q, and
+// ChangesKey the one that holds the Changes, as JSON, when they pressed KeySend.
+const (
+	AccordionKey = "key"
+	ChangesKey   = "changes"
+)
+
+// KeySend is the key that sends the marked changes in an Accordion with Edits.
+const KeySend = "s"
+
+// Show runs an accordion and returns the Action key the user pressed to close it, or "" for q, with the Changes when
+// that key is KeySend.
+func Show(name string, a Accordion) (string, []Change, error) {
 	answers, err := Run(Form{Name: name, Accordion: &a})
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
-	return answers.String(AccordionKey), nil
+	var changes []Change
+	if raw := answers.String(ChangesKey); raw != "" {
+		if err := json.Unmarshal([]byte(raw), &changes); err != nil {
+			return "", nil, fmt.Errorf("%s: decoding the changes: %w", name, err)
+		}
+	}
+	return answers.String(AccordionKey), changes, nil
 }
 
 // Answer is what the user gave for one field.
