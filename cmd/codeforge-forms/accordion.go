@@ -19,6 +19,7 @@ const (
 	// The size assumed until the terminal reports its own.
 	startWidth, startHeight = 80, 24
 	percent                 = 100
+	wheelLines              = 3 // lines one wheel notch scrolls
 )
 
 // accordion is the view of a forms.Accordion: a cursor over the sections, which are open or closed, scrolled so the
@@ -54,16 +55,63 @@ func (m *accordion) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, max(minHeight, msg.Height)
+		m.follow()
 	case tea.KeyMsg:
 		return m, m.key(msg.String())
+	case tea.MouseMsg:
+		m.mouse(msg)
 	}
-	m.follow()
 	return m, nil
+}
+
+// mouse opens or closes the section whose row was clicked, and scrolls with the wheel.
+func (m *accordion) mouse(msg tea.MouseMsg) {
+	if msg.Action != tea.MouseActionPress {
+		return
+	}
+	switch msg.Button {
+	case tea.MouseButtonWheelUp:
+		m.scroll(-wheelLines)
+	case tea.MouseButtonWheelDown:
+		m.scroll(wheelLines)
+	case tea.MouseButtonLeft:
+		if msg.Y < 0 || msg.Y >= m.visible() {
+			return
+		}
+		_, rows := m.lines()
+		line := m.offset + msg.Y
+		for i, r := range rows {
+			if r == line {
+				m.cursor = i
+				m.open[i] = !m.open[i]
+				m.follow()
+				return
+			}
+		}
+	default:
+	}
+}
+
+// visible is how many lines of the view fit above the key help.
+func (m *accordion) visible() int { return max(1, m.height-footerLines) }
+
+// scroll moves the view by n lines without moving the cursor, so reading down a long section never snaps back to it.
+func (m *accordion) scroll(n int) {
+	lines, _ := m.lines()
+	m.offset = max(0, min(m.offset+n, len(lines)-m.visible()))
 }
 
 // key acts on one key press and returns tea.Quit when the view is done.
 func (m *accordion) key(k string) tea.Cmd {
 	page := max(1, m.height-footerLines-1)
+	switch k {
+	case "pgdown", "ctrl+d", "f":
+		m.scroll(page)
+		return nil
+	case "pgup", "ctrl+u", "b":
+		m.scroll(-page)
+		return nil
+	}
 	switch k {
 	case "ctrl+c":
 		m.aborted = true
@@ -86,10 +134,6 @@ func (m *accordion) key(k string) tea.Cmd {
 		for i := range m.open {
 			m.open[i] = !all
 		}
-	case "pgdown", "ctrl+d", "f":
-		m.offset += page
-	case "pgup", "ctrl+u", "b":
-		m.offset = max(0, m.offset-page)
 	case "home", "g":
 		m.cursor, m.offset = 0, 0
 	case "end", "G":
@@ -178,7 +222,7 @@ func (m *accordion) View() string {
 	for _, act := range m.a.Keys {
 		keys = append(keys, act.Key+" "+act.Label)
 	}
-	keys = append(keys, "⏎ open", "↑↓ move", "a all", "q quit", "pgup/pgdn scroll")
+	keys = append(keys, "click or ⏎ open", "↑↓ move", "a all", "q quit", "wheel or pgup/pgdn scroll")
 	help := strings.Join(keys, " · ")
 	return strings.Join(shown, "\n") + "\n\n" + ansi.Truncate(m.a.Dim+help+reset, m.width, "…")
 }
@@ -186,7 +230,9 @@ func (m *accordion) View() string {
 // showAccordion runs the view on the alternate screen and answers with the Action key that closed it, if any.
 func showAccordion(a forms.Accordion) (forms.Answers, error) {
 	m := newAccordion(a)
-	if _, err := tea.NewProgram(m, tea.WithAltScreen()).Run(); err != nil {
+	// Mouse reporting lets a click open a section and the wheel scroll; terminals still select text with Option or
+	// Shift held while dragging.
+	if _, err := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion()).Run(); err != nil {
 		return nil, fmt.Errorf("accordion: %w", err)
 	}
 	if m.aborted {

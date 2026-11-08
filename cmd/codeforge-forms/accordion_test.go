@@ -59,6 +59,44 @@ func TestAccordion_MovesScrollsAndOpensAll(t *testing.T) {
 	require.Equal(t, 0, m.offset)
 }
 
+// click presses the left button on screen row y.
+func click(m *accordion, y int) {
+	m.Update(tea.MouseMsg{X: 4, Y: y, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
+}
+
+func TestAccordion_AClickOnARowOpensAndClosesIt(t *testing.T) {
+	m := testAccordion()
+	// Rows: 0 intro, 1 blank, 2 a.go, 3 b.go.
+	click(m, 3)
+	require.Equal(t, 1, m.cursor, "the clicked row takes the cursor")
+	require.True(t, m.open[1])
+	require.Contains(t, view(m), "▾ b.go")
+	click(m, 3)
+	require.False(t, m.open[1], "a second click closes it")
+
+	click(m, 0)
+	require.False(t, m.open[0] || m.open[1], "a click off a row does nothing")
+	click(m, 2)
+	require.True(t, m.open[0])
+	require.Equal(t, 0, m.cursor)
+	m.Update(tea.MouseMsg{Y: 2, Action: tea.MouseActionRelease, Button: tea.MouseButtonLeft})
+	require.True(t, m.open[0], "only the press counts, so one click toggles once")
+}
+
+func TestAccordion_TheWheelScrollsWithoutSnappingBack(t *testing.T) {
+	m := testAccordion()
+	m.key("a")
+	m.Update(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonWheelDown})
+	m.Update(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonWheelDown})
+	require.Equal(t, 2*wheelLines, m.offset, "the cursor's row may leave the screen while reading")
+	m.key("pgdown")
+	require.Greater(t, m.offset, 2*wheelLines)
+	m.Update(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonWheelUp})
+	before := m.offset
+	m.key("down")
+	require.NotEqual(t, before, m.offset, "moving the cursor brings its row back into view")
+}
+
 func TestAccordion_KeysThatEnd(t *testing.T) {
 	m := testAccordion()
 	require.NotNil(t, m.key("q"))

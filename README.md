@@ -54,7 +54,7 @@ The job runs in your terminal; when it finishes, a chat screen opens for follow-
 
 ## Reviews
 
-`codeforge review` opens the finished review as a list of files. Press Enter to open one: each finding shows the code
+`codeforge review` opens the finished review as a list of files. Click a file, or press Enter, to open it: each finding shows the code
 around it first (with the function it is in, and the lines the comment names marked), then the comment. `a` opens
 all, `q` quits, and `c` opens a chat to ask about the review. You can also ask later with `codeforge --resume ID`.
 
