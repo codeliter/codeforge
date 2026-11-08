@@ -58,28 +58,20 @@ The job runs in your terminal; when it finishes, a chat screen opens for follow-
 
 ## Reviews
 
-`codeforge review` opens the finished review as a list of files. Click a file, or press Enter, to open it: each finding shows the code
-around it first (with the function it is in, and the lines the comment names marked), then the comment. `a` opens
-all, `q` quits, and `c` opens a chat to ask about the review. You can also ask later with `codeforge --resume ID`.
+`codeforge review` shows the review by file: each finding with its code, then a final comment and a suggested
+decision. Enter or a click opens a file, `c` chats about it, `q` quits.
 
-The review reads like one you would leave: a comment on each place in the change, then a direct final comment, with a
-suggested decision. To post it, add `--comment` and pick the decision yourself in the review: `1` Approve, `2` Comment
-or `3` Request changes. It goes up as one GitHub review of that type in your voice, with each finding as an inline
-comment on its line. `4` posts the same comments without a review around them, so you can delete each one later: every
-finding on its line with the code above it (up to 20; further findings join the final comment), then the final
-comment as an ordinary PR comment. A submitted review cannot be deleted on GitHub, only edited. The model itself can
-never post.
-`--comment=yes` posts the suggested decision without asking.
+| To | Use |
+| --- | --- |
+| Post it as a GitHub review | `--comment`, then `1` Approve, `2` Comment or `3` Request changes |
+| Post comments you can delete later | `--comment`, then `4` |
+| Post the suggested decision without asking | `--comment=yes` |
+| Review your branch and run its tests | `codeforge gate` |
 
-Review a PR you reviewed before and codeforge follows up instead of starting over: each of your open threads comes
-first, with what the author said and a verdict against the code as it is now (fixed, not fixed, agreed, held,
-answered), then a review of only the commits since. Posting replies in each thread and resolves the ones that are
-settled; a blocker is never resolved on a promise. `--follow-up` asks for this round outright, `--fresh` for a full
-review instead.
+On a PR you reviewed before, codeforge follows up: a verdict on each of your open threads, replies and resolves
+the settled ones (never a blocker on a promise), then reviews only the new commits. `--fresh` starts over.
 
-`codeforge gate` reviews your branch the same way, and runs the changed packages' tests alongside. In a work or chat
-session you can just ask for a review; no second terminal is needed. Review sessions are read-only, enforced by a tool
-guard and a sandbox (macOS for now).
+Reviews are read-only and the model never posts; you do.
 
 ## Answering reviews
 
