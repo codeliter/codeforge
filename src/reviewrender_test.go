@@ -142,6 +142,24 @@ func TestRunReviewEngine_ShowsAnAccordionAndPostsOnP(t *testing.T) {
 	require.FileExists(t, f.ghArgs, "p posts without a second question")
 }
 
+func TestRunReviewEngine_CtrlCInTheReviewClosesItWithoutPosting(t *testing.T) {
+	f := newPostFixture(t, styledEngine, 0)
+	onTerminal(t, true)
+	old := showAccordion
+	showAccordion = func(string, forms.Accordion) (bool, error) { return false, forms.ErrAborted }
+	t.Cleanup(func() { showAccordion = old })
+
+	post := &review.PostRequest{}
+	post.Target("acme/w", "42")
+	ctx := review.WithPost(review.WithDeadline(t.Context(), time.Now().Add(time.Minute)), post)
+	out, _, err := captured(t, func() error {
+		return runReviewEngine(ctx, []string{f.engine, "the prompt"}, os.Environ(), time.Now().Add(10*time.Second))
+	})
+	require.ErrorIs(t, err, errReviewClosed, "the caller opens no chat after Ctrl+C")
+	require.Contains(t, out, "a.go", "the recap still stays in the terminal")
+	require.NoFileExists(t, f.ghArgs, "nothing is posted")
+}
+
 func TestReviewAccordion_SplitsAtHeadingsAndCountsFindings(t *testing.T) {
 	a := reviewAccordion(sampleReview, "**Unconfirmed blocking leads.** Check:\n- `x.go:1` drops data\n", codeStyle{wrap: true, width: 80}, nil)
 	require.Equal(t, "Moves tracing behind one seam.", a.Intro)

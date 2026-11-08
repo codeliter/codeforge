@@ -2,6 +2,7 @@ package src
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"slices"
@@ -36,6 +37,9 @@ func launchWith(ctx context.Context, home, bin, mode string, args []string, afte
 	if mode == modeReview && review.HasDeadline(ctx) && hasFlag(args, "--headless") {
 		err := runReviewEngine(ctx, argv, append(env, noAskEnv+"=1"), review.AgentEnd(ctx))
 		finishLeads(ctx, err)
+		if errors.Is(err, errReviewClosed) {
+			return nil
+		}
 		return err
 	}
 	if !hasFlag(args, "--headless") {
@@ -55,10 +59,15 @@ func launchWith(ctx context.Context, home, bin, mode string, args []string, afte
 			// This run is headless, so nobody can approve a call it asks about; the TUI that follows can.
 			err := runReviewEngine(ctx, initial, append(slices.Clone(env), noAskEnv+"=1"), limit)
 			finishLeads(ctx, err)
+			id := flagValue(argv, "--session-id")
+			if errors.Is(err, errReviewClosed) {
+				// Ctrl+C in the review means done: no chat opens, and the session can still be picked up later.
+				fmt.Fprintf(os.Stderr, "codeforge: review closed, nothing posted. Ask about it later with: codeforge --resume %s\n", id)
+				return nil
+			}
 			if err != nil {
 				return err
 			}
-			id := flagValue(argv, "--session-id")
 			if after != nil {
 				after(ctx, id)
 			}

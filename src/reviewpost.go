@@ -83,7 +83,11 @@ func runReviewEngine(ctx context.Context, argv, env []string, limit time.Time) e
 	}
 	asked, answer := false, false
 	if styled {
-		asked, answer = showReview(ctx, text, leads, out.Bytes(), post.Enabled() && !post.Preapproved())
+		var closed bool
+		asked, answer, closed = showReview(ctx, text, leads, out.Bytes(), post.Enabled() && !post.Preapproved())
+		if closed {
+			return errReviewClosed
+		}
 	} else {
 		fmt.Fprintln(os.Stdout, text)
 		if leads != "" {
@@ -125,10 +129,14 @@ func runReviewEngine(ctx context.Context, argv, env []string, limit time.Time) e
 	return nil
 }
 
+// errReviewClosed is returned when the user leaves the review with Ctrl+C: they are done, so nothing is posted and no
+// follow-up chat opens. It is not a failure.
+var errReviewClosed = errors.New("review closed")
+
 // showReview shows a finished review on the terminal: as an accordion of its files when the forms helper is there,
 // else printed in full. ask offers posting inside the accordion (key p); asked reports whether that question was put,
-// and post the answer.
-func showReview(ctx context.Context, text, leads string, raw []byte, ask bool) (asked, post bool) {
+// post the answer, and closed whether the user left with Ctrl+C.
+func showReview(ctx context.Context, text, leads string, raw []byte, ask bool) (asked, post, closed bool) {
 	st := codeStyleFor(ctx, os.Stdout)
 	code := reviewCode(ctx, st, text)
 	footer := runFooter(raw, st)
@@ -141,7 +149,7 @@ func showReview(ctx context.Context, text, leads string, raw []byte, ask bool) (
 		yes, err := showAccordion("review", a)
 		if err == nil || errors.Is(err, forms.ErrAborted) {
 			fmt.Fprint(os.Stdout, accordionRecap(a, st))
-			return ask, yes
+			return ask, yes, err != nil
 		}
 		fmt.Fprintln(os.Stderr, "codeforge: could not open the review view:", err)
 	}
@@ -153,7 +161,7 @@ func showReview(ctx context.Context, text, leads string, raw []byte, ask bool) (
 		full += "\n" + footer + "\n"
 	}
 	fmt.Fprint(os.Stdout, full)
-	return false, false
+	return false, false, false
 }
 
 // showAccordion runs the accordion through the forms helper, and accordionAvailable says whether there is one; tests
