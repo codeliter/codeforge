@@ -58,7 +58,7 @@ func stepBudget(steps int) string {
 		unit = "tool call"
 	}
 	return fmt.Sprintf("\n\nYou have at most %d tool steps, and the answer itself is one of them: make at most %d %s, then write the review. "+
-		"A review that runs out of steps returns nothing, whatever you found. The brief already holds the diff and the changed files in full, so read more only when a finding depends on it.", steps, calls, unit)
+		"A review that runs out of steps returns nothing, whatever you found. The brief already holds the diff and the changed files, so read more only when a finding depends on code it lacks.", steps, calls, unit)
 }
 
 // ParseVerdict reads only the final json object of the answer. Quoted diff content earlier in the answer

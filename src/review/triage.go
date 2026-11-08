@@ -62,10 +62,10 @@ func WithBudget(prompt string, t Tier, left time.Duration) string {
 	return prompt + stepBudget(t.MaxSteps) + "\n\n" + TimeNote(left)
 }
 
-// TimeNote tells a reviewer how long it has, so it can plan its steps and answer before the clock ends.
+// TimeNote tells a reviewer how long it has, so it can plan its steps and answer before the clock ends. What to read
+// and in what order to write is said once, by the step budget and the reviewer's own instructions.
 func TimeNote(left time.Duration) string {
-	return fmt.Sprintf("Time limit: %d seconds of wall clock is a ceiling, not a target. Stop and give the review the moment you can support every finding; finishing early is better, and a run that exceeds the ceiling is killed with nothing saved. "+
-		"Work from the diff and files already in the brief, read more only for a finding that depends on it. Write every blocking issue first, as soon as you find it; foresight, suggestions and nits come last and are dropped when time runs out.",
+	return fmt.Sprintf("Time limit: %d seconds of wall clock is a ceiling, not a target. Answer the moment you can support every finding; a run that exceeds the ceiling is killed with nothing saved.",
 		int(left/time.Second))
 }
 
