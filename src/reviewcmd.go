@@ -194,7 +194,17 @@ func reviewArgs(ctx context.Context, bin string, rc config.ReviewConfig, judges 
 			fmt.Fprintln(os.Stderr, note)
 		}
 		review.DisplayOf(ctx).Local()
-		prompt := panelBrief(ctx, rc, jurors, tier, false, func(t review.Tier, jury []string) string { return review.PromptLocal(l, t, jury) })
+		// The changed files and their callers come with the brief, as for the gate and PRs, so the reviewer and the
+		// jurors read instead of fetching and still reach a verdict.
+		packed := ""
+		if wd, err := os.Getwd(); err == nil {
+			if root, err := guard.RepoRoot(ctx, wd); err == nil {
+				pctx, pcancel := context.WithTimeout(ctx, review.LoadLimit)
+				defer pcancel()
+				packed = review.Pack(pctx, review.ExecRunner{}, root, l, tier)
+			}
+		}
+		prompt := panelBrief(ctx, rc, jurors, tier, false, func(t review.Tier, jury []string) string { return review.PromptLocal(l, t, jury) + packed })
 		bounded, note := bound(rest, tier)
 		return append(bounded, prompt+"\n\n"+note), nil
 	}
@@ -236,7 +246,7 @@ func reviewArgs(ctx context.Context, bin string, rc config.ReviewConfig, judges 
 	if b.HeadRef != "" {
 		pctx, pcancel := context.WithTimeout(ctx, review.LoadLimit)
 		defer pcancel()
-		packed = review.PackRef(pctx, review.ExecRunner{}, b.HeadRef, b.Files(), tier)
+		packed = review.PackRef(pctx, review.ExecRunner{}, b.HeadRef, b.Files(), b.Diff, tier)
 	}
 	prompt := panelBrief(ctx, rc, jurors, tier, b.HeadRef == "", func(t review.Tier, jury []string) string { return review.Prompt(b, t, jury) + packed })
 	if comment && post != nil {

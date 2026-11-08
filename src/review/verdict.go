@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 )
 
@@ -90,8 +91,12 @@ func escapedFencedBlock(out string) (string, bool) {
 	return strings.TrimSpace(block), true
 }
 
+// leakedToolClose matches the closing tags of a tool call a model sometimes writes out as text after its answer, as
+// in "```</parameter>\n</invoke>". Only these closing tags, and only at the very end, are dropped.
+var leakedToolClose = regexp.MustCompile(`(?:\s*</(?:parameter|invoke|function_calls|antml:parameter|antml:invoke|antml:function_calls)>)+\s*$`)
+
 func parseFinalObject(out string) (Verdict, error) {
-	body := strings.TrimSpace(out)
+	body := strings.TrimSpace(leakedToolClose.ReplaceAllString(out, ""))
 	body = strings.TrimSpace(strings.TrimSuffix(body, "```"))
 
 	end := strings.LastIndex(body, "}")

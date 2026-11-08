@@ -153,7 +153,7 @@ func TestPrompt(t *testing.T) {
 
 func TestPackRef_ReadsChangedFilesFromTheFetchedHead(t *testing.T) {
 	r := &fakeRunner{out: map[string]string{"git show refs/codeforge/pr-3:src/a.go": "package a\n"}}
-	got := PackRef(t.Context(), r, "refs/codeforge/pr-3", []string{"src/a.go", "src/missing.go", ".env"}, TierStandard)
+	got := PackRef(t.Context(), r, "refs/codeforge/pr-3", []string{"src/a.go", "src/missing.go", ".env"}, "", TierStandard)
 	require.Contains(t, got, "=== src/a.go ===")
 	require.Contains(t, got, "   1  package a")
 	require.NotContains(t, got, ".env", "secret files are never sent")
