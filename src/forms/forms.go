@@ -117,6 +117,8 @@ type Section struct {
 	Title   string `json:"title"`
 	Summary string `json:"summary,omitempty"`
 	Body    string `json:"body,omitempty"`
+	// Open shows the section open at the start.
+	Open bool `json:"open,omitempty"`
 }
 
 // AccordionKey is the answer key that holds the Action key the user pressed, empty when they left with q.

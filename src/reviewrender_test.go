@@ -64,7 +64,7 @@ func TestRenderReview_SteelColours(t *testing.T) {
 	require.Contains(t, got, "\x1b[1m\x1b[38;2;126;168;201mfunc", "fenced code is highlighted in Steel")
 }
 
-const styledEngine = `echo "memory.embedder: Failed to wire" >&2; printf '%s' '{"output":"Verdict: Comment. Fine.\n\n### a.go\n\nsuggestion: a.go:1 — use x\nnitpick: a.go:2 — tidy","steps":3,"cost":0.5,"duration":2000}'`
+const styledEngine = `echo "memory.embedder: Failed to wire" >&2; printf '%s' '{"output":"suggestion: a.go:1 — use x\nnitpick: a.go:2 — tidy\n\nAdds x as the description says. Fine once x is used.\n\nDecision: Approve","steps":3,"cost":0.5,"duration":2000}'`
 
 // onTerminal pretends standard output is a terminal and says whether the accordion helper is there.
 func onTerminal(t *testing.T, accordion bool) {
@@ -112,8 +112,10 @@ func TestRunReviewEngine_PrintsTheStyledReviewWithoutTheHelper(t *testing.T) {
 	args, err := os.ReadFile(f.engineArgs)
 	require.NoError(t, err)
 	require.Contains(t, string(args), "--json", "the review is read as JSON to be laid out")
-	require.NotContains(t, out, "Verdict")
-	require.Contains(t, out, "Fine.\n\na.go\n\n- suggestion: a.go:1 use x\n")
+	require.NotContains(t, out, "Decision:")
+	require.Contains(t, out, "- suggestion: a.go:1 use x\n")
+	require.Contains(t, out, "Adds x as the description says.")
+	require.Contains(t, out, "suggested: Approve")
 	require.Contains(t, out, "3 steps, $0.5000, 2.0s")
 	require.NoFileExists(t, f.ghArgs, "showing a review never posts it")
 }
@@ -136,10 +138,10 @@ func postingContext(t *testing.T) context.Context {
 	return review.WithDisplay(review.WithPost(review.WithDeadline(t.Context(), time.Now().Add(time.Minute)), post), &review.Display{})
 }
 
-func TestRunReviewEngine_ShowsAnAccordionAndPostsOnP(t *testing.T) {
+func TestRunReviewEngine_TheUserPicksTheDecisionThatIsPosted(t *testing.T) {
 	f := newPostFixture(t, styledEngine, 0)
 	onTerminal(t, true)
-	shown := pressing(t, keyPost, nil)
+	shown := pressing(t, "3", nil) // Request changes, though the review suggests Approve
 	var chat bool
 	out, _, err := captured(t, func() error {
 		var err error
@@ -148,14 +150,24 @@ func TestRunReviewEngine_ShowsAnAccordionAndPostsOnP(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.False(t, chat, "posting does not open the chat")
-	require.Equal(t, "Fine.", shown.Intro)
-	require.Len(t, shown.Items, 1)
+	require.Empty(t, shown.Intro)
+	require.Len(t, shown.Items, 2)
 	require.Equal(t, "a.go", shown.Items[0].Title)
 	require.Equal(t, "1 suggestion · 1 nitpick", shown.Items[0].Summary)
 	require.Contains(t, shown.Items[0].Body, "- suggestion: a.go:1 use x")
-	require.Equal(t, []forms.Action{{Key: "p", Label: "post on the PR"}, {Key: "c", Label: "chat about it"}}, shown.Keys)
-	require.Contains(t, out, "Fine.\n\n  a.go  1 suggestion · 1 nitpick\n", "a recap stays in the terminal")
-	require.FileExists(t, f.ghArgs, "p posts without a second question")
+	require.Equal(t, "Final comment", shown.Items[1].Title)
+	require.Equal(t, "suggested: Approve", shown.Items[1].Summary)
+	require.True(t, shown.Items[1].Open, "the final comment is open at the start")
+	require.Contains(t, shown.Items[1].Body, "Adds x as the description says.")
+	require.Equal(t, []forms.Action{
+		{Key: "1", Label: "post as Approve (suggested)"}, {Key: "2", Label: "post as Comment"}, {Key: "3", Label: "post as Request changes"},
+		{Key: "c", Label: "chat about it"},
+	}, shown.Keys)
+	require.Contains(t, out, "  a.go  1 suggestion · 1 nitpick\n", "a recap stays in the terminal")
+	posted, err := os.ReadFile(f.ghArgs)
+	require.NoError(t, err)
+	require.Contains(t, string(posted), `"event":"REQUEST_CHANGES"`, "the user's pick is posted, not the suggestion")
+	require.Contains(t, string(posted), "Adds x as the description says.")
 }
 
 func TestRunReviewEngine_OnlyCOpensTheChat(t *testing.T) {
@@ -198,19 +210,30 @@ func TestRunReviewEngine_OtherModesPassThroughAndOpenTheChat(t *testing.T) {
 	require.NotContains(t, string(args), "--json", "a task outside review mode is never laid out as a review")
 }
 
-func TestReviewAccordion_SplitsAtHeadingsAndCountsFindings(t *testing.T) {
-	a := reviewAccordion(sampleReview, "**Unconfirmed blocking leads.** Check:\n- `x.go:1` drops data\n", codeStyle{wrap: true, width: 80}, nil)
-	require.Equal(t, "Moves tracing behind one seam.", a.Intro)
+func TestReviewAccordion_GroupsFindingsByFileAndKeepsTheRestAsTheFinalComment(t *testing.T) {
+	text := "suggestion: b.go:4 — first in b\n" +
+		"issue (blocking): a.go:9 — breaks a\n" +
+		"nitpick (non-blocking): b.go:7 — Nit: tidy\n" +
+		"  and a second line\n\n" +
+		"### a heading a model added anyway\n\n" +
+		"Adds the retry the description promises, but also changes the timeout it does not mention.\n\nRequest changes until a.go is fixed.\n"
+	a := reviewAccordion(text, "**Unconfirmed blocking leads.** Check:\n- `x.go:1` drops data\n", codeStyle{wrap: true, width: 80}, nil)
+	require.Empty(t, a.Intro)
 	titles := make([]string, len(a.Items))
 	for i, s := range a.Items {
 		titles[i] = s.Title
 	}
-	require.Equal(t, []string{"search/serper/main.go", "Across files", "Unconfirmed blocking leads"}, titles)
-	require.Equal(t, "1 suggestion · 1 nitpick", a.Items[0].Summary)
-	require.Equal(t, "1 point", a.Items[1].Summary)
-	require.Contains(t, a.Items[2].Body, "x.go:1 drops data")
+	require.Equal(t, []string{"b.go", "a.go", "Final comment", "Unconfirmed blocking leads"}, titles, "files in the order they first come up")
+	require.Equal(t, "1 suggestion · 1 nitpick", a.Items[0].Summary, "a file's findings are together wherever they were written")
+	require.Contains(t, a.Items[0].Body, "and a second line")
+	require.Equal(t, "1 issue", a.Items[1].Summary)
+	require.Contains(t, a.Items[2].Body, "Adds the retry the description promises")
+	require.NotContains(t, a.Items[2].Body, "heading", "headings are dropped")
+	require.True(t, a.Items[2].Open)
+	require.Contains(t, a.Items[3].Body, "x.go:1 drops data")
+
 	only := reviewAccordion("Just prose.", "", codeStyle{}, nil)
-	require.Equal(t, "Review", only.Items[0].Title, "a review without headings is one section")
+	require.Equal(t, "Final comment", only.Items[0].Title, "a review with no findings is its final comment")
 }
 
 var errNotOnGitHub = errors.New("HTTP 404")

@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -385,40 +386,39 @@ func reviewAccordion(text, extra string, st codeStyle, code codeSource) forms.Ac
 	}
 	var a forms.Accordion
 	lines := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
-	start, title := 0, ""
-	flush := func(end int) {
-		chunk := lines[start:end]
-		if title == "" && start == 0 {
-			if intro := strings.TrimSpace(renderReview(strings.Join(chunk, "\n"), st, code)); intro != "" {
-				a.Intro = intro
+	// Findings are grouped by the file their path:line names, whatever order the review wrote them in; everything
+	// else is the review's final comment. Headings a model adds anyway are dropped: the rows are the structure.
+	byPath := map[string][]string{}
+	var order, rest []string
+	for i := 0; i < len(lines); i++ {
+		l := lines[i]
+		if f, ok := review.ParseLabeled(l); ok {
+			end := review.LabeledEnd(lines, i)
+			if _, seen := byPath[f.Path]; !seen {
+				order = append(order, f.Path)
 			}
-			return
-		}
-		color := st.pal.bold
-		if looksLikePath(title) {
-			color = st.pal.accent
-		}
-		a.Items = append(a.Items, forms.Section{
-			Title:   st.paint(color, title),
-			Summary: findingCounts(chunk),
-			Body:    strings.Trim(renderReview(strings.Join(chunk, "\n"), body, code), "\n"),
-		})
-	}
-	inFence := false
-	for i, l := range lines {
-		if mdFence.MatchString(l) {
-			inFence = !inFence
-		}
-		if inFence || !mdHeading.MatchString(l) {
+			byPath[f.Path] = append(byPath[f.Path], append(slices.Clone(lines[i:end]), "")...)
+			i = end - 1
 			continue
 		}
-		flush(i)
-		start, title = i+1, plainInline(mdHeading.FindStringSubmatch(l)[1])
+		if mdHeading.MatchString(l) {
+			continue
+		}
+		rest = append(rest, l)
 	}
-	flush(len(lines))
-	if len(a.Items) == 0 && a.Intro != "" {
-		a.Items = []forms.Section{{Title: st.paint(st.pal.bold, "Review"), Body: a.Intro}}
-		a.Intro = ""
+	for _, p := range order {
+		a.Items = append(a.Items, forms.Section{
+			Title:   st.paint(st.pal.accent, p),
+			Summary: findingCounts(byPath[p]),
+			Body:    strings.Trim(renderReview(strings.Join(byPath[p], "\n"), body, code), "\n"),
+		})
+	}
+	if prose := strings.TrimSpace(strings.Join(rest, "\n")); prose != "" {
+		a.Items = append(a.Items, forms.Section{
+			Title: st.paint(st.pal.bold, finalCommentTitle),
+			Body:  strings.Trim(renderReview(prose, body, nil), "\n"),
+			Open:  true, // the decision and its reasons are read first
+		})
 	}
 	if strings.TrimSpace(extra) != "" {
 		a.Items = append(a.Items, forms.Section{
@@ -429,6 +429,9 @@ func reviewAccordion(text, extra string, st codeStyle, code codeSource) forms.Ac
 	a.Accent, a.Dim = st.pal.accent, st.pal.dim
 	return a
 }
+
+// finalCommentTitle names the view's row for the review's closing comment; the review itself has no such heading.
+const finalCommentTitle = "Final comment"
 
 // accordionIndent is how far the accordion indents an open section's body.
 const accordionIndent = "    "

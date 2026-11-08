@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 
@@ -79,12 +80,12 @@ func (c *PostRequest) Enabled() bool {
 
 // CommentNote tells the reviewer how its answer will be used, so it writes the comment itself in the runner's voice.
 // The persona is a style, never a claim to be someone: the footer says the comment came from codeforge.
-const CommentNote = "This review will be posted on the PR from my GitHub account as a GitHub review, by codeforge after you finish; you post nothing. " +
-	"Each finding whose path:line is on the diff becomes an inline comment on that line, and the rest of your answer becomes the review's summary. " +
-	"Write your whole answer addressed to the author, in my voice as codeforge-persona describes it (codeforge-voice where it is silent). " +
-	"No verdict line. Open with one or two sentences on the change, then one `### path` heading per file with its findings under it, " +
-	"each a Conventional Comment that starts `label: path:line — ` on its own line, then the points that belong to no single line. " +
-	"No preamble, no mention of these instructions, no text about being an AI."
+const CommentNote = "This review will be posted on the PR from my GitHub account as a GitHub review, by codeforge once I choose to; you post nothing. " +
+	"Each finding whose path:line is on the diff becomes an inline comment on that line and your final comment becomes the review's body. " +
+	"Your closing Decision line is only a suggestion: I pick Approve, Comment or Request changes myself. " +
+	"Write it as I would, addressed to the author, in my voice as codeforge-persona describes it (codeforge-voice where it is silent), in the order the codeforge-review skill gives: " +
+	"the findings, then the final comment, then the Decision line. " +
+	"No headings or sections, no preamble, no mention of these instructions, no text about being an AI."
 
 // maxCommentBytes keeps the comment under GitHub's limit of 65,536 characters with room for the footer.
 const maxCommentBytes = 60_000
@@ -159,37 +160,71 @@ type Posted struct {
 	URL string
 	// Inline counts the findings posted on their lines.
 	Inline int
-	// Fallback is why GitHub refused the inline comments, when the review went up as one comment instead.
+	// Decision is the type the review went up as.
+	Decision Decision
+	// Downgraded is why GitHub refused the review's decision, when it went up as a Comment instead: GitHub does not
+	// let you approve or request changes on your own pull request.
+	Downgraded error
+	// Fallback is why GitHub refused the review, when it went up as one plain comment instead.
 	Fallback error
 }
 
-// Post puts the review on the pull request. Findings on lines of the diff become the inline comments of one GitHub
-// review (event COMMENT, never an approval), with the rest of the review and the leads as its summary. With no such
-// finding, or when GitHub refuses the inline comments, the whole review is posted as one comment.
-func (c *PostRequest) Post(ctx context.Context, r Runner, review, leads string) (Posted, error) {
+// markdownHeading matches a heading line. A review a person leaves has none, so none is posted, whatever the model wrote.
+var markdownHeading = regexp.MustCompile(`^\s{0,3}#{1,6}\s`)
+
+// withoutHeadings drops every heading, `### Final comment` and file headings included: posted, the final comment is
+// simply the review's body.
+func withoutHeadings(review string) string {
+	lines := strings.Split(review, "\n")
+	out := lines[:0]
+	for _, l := range lines {
+		if !markdownHeading.MatchString(l) {
+			out = append(out, l)
+		}
+	}
+	return strings.TrimSpace(collapseBlankLines(strings.Join(out, "\n")))
+}
+
+// collapseBlankLines keeps at most one blank line in a row.
+func collapseBlankLines(s string) string {
+	for strings.Contains(s, "\n\n\n") {
+		s = strings.ReplaceAll(s, "\n\n\n", "\n\n")
+	}
+	return s
+}
+
+// Post puts the review on the pull request as one GitHub review of the user's decision (Approve, Comment or Request
+// changes; "" takes the review's own suggestion): each finding on a line of the diff is an inline comment there, and
+// the final comment, any finding off the diff and the leads are its body. A decision GitHub refuses (your own PR) goes
+// up as a Comment; a review GitHub refuses altogether goes up as one plain comment, so nothing written is lost.
+func (c *PostRequest) Post(ctx context.Context, r Runner, review, leads string, decision Decision) (Posted, error) {
 	c.mu.Lock()
 	repo, number, diff := c.repo, c.number, c.diff
 	c.mu.Unlock()
 	if number == "" {
 		return Posted{}, ErrNoPR
 	}
-	review = StripVerdict(review)
-	whole, err := CommentBody(review, leads)
+	suggested, review := ParseDecision(StripVerdict(review))
+	if decision == "" {
+		decision = suggested
+	}
+	whole, err := CommentBody(withoutHeadings(review), leads)
 	if err != nil {
 		return Posted{}, err
 	}
 	summary, inline := SplitFindings(review, diff)
-	if len(inline) == 0 {
-		url, err := postComment(ctx, r, repo, number, whole)
-		return Posted{URL: url}, err
-	}
-	body, err := CommentBody(summary, leads)
+	body, err := CommentBody(withoutHeadings(summary), leads)
 	if err != nil {
 		return Posted{}, err
 	}
-	url, rerr := postReview(ctx, r, repo, number, body, inline)
+	url, rerr := postReview(ctx, r, repo, number, decision, body, inline)
 	if rerr == nil {
-		return Posted{URL: url, Inline: len(inline)}, nil
+		return Posted{URL: url, Inline: len(inline), Decision: decision}, nil
+	}
+	if decision != DecisionComment {
+		if curl, err := postReview(ctx, r, repo, number, DecisionComment, body, inline); err == nil {
+			return Posted{URL: curl, Inline: len(inline), Decision: DecisionComment, Downgraded: rerr}, nil
+		}
 	}
 	url, err = postComment(ctx, r, repo, number, whole)
 	return Posted{URL: url, Fallback: rerr}, err
@@ -221,15 +256,15 @@ type reviewComment struct {
 // private temporary file and sent with --input: gh's own field flags cannot build an array of objects that mixes
 // strings and numbers (it groups --raw-field and --field values separately, so lines landed on the wrong comments and
 // GitHub answered 422), and a file keeps the review's text out of argument parsing altogether.
-func postReview(ctx context.Context, r Runner, repo, number, body string, inline []InlineComment) (string, error) {
+func postReview(ctx context.Context, r Runner, repo, number string, decision Decision, body string, inline []InlineComment) (string, error) {
 	if repo == "" {
 		repo = "{owner}/{repo}" // gh fills these in from the checkout
 	}
 	req := struct {
-		Event    string          `json:"event"`
+		Event    Decision        `json:"event"`
 		Body     string          `json:"body"`
 		Comments []reviewComment `json:"comments"`
-	}{Event: "COMMENT", Body: body}
+	}{Event: decision, Body: body, Comments: []reviewComment{}}
 	for _, ic := range inline {
 		req.Comments = append(req.Comments, reviewComment{Path: ic.Path, Line: ic.Line, Side: "RIGHT", Body: ic.Body})
 	}

@@ -90,6 +90,9 @@ func runShownReview(ctx context.Context, argv, env []string, limit time.Time, st
 		return fmt.Errorf("not posting the review: %w", err)
 	}
 	text = review.StripVerdict(text)
+	// The closing Decision line is the review's suggestion for its type, shown as such, not as a line of text; the user
+	// picks the decision that is posted.
+	decision, display := review.ParseDecision(text)
 	// A blocker a juror found must not be missing from what goes up; everything else the jury says stays out. Without
 	// posting, the leads follow from finishLeads.
 	leads := ""
@@ -99,9 +102,13 @@ func runShownReview(ctx context.Context, argv, env []string, limit time.Time, st
 	asked, answer := false, false
 	if styled {
 		ask := post.Enabled() && !post.Preapproved()
-		key, shown := showReview(ctx, text, leads, out.Bytes(), ask)
+		key, shown := showReview(ctx, display, decision, leads, out.Bytes(), ask)
 		*chat = key == keyChat
-		asked, answer = ask && shown, key == keyPost
+		chosen, picked := decisionKeys[key]
+		asked, answer = ask && shown, picked
+		if picked {
+			decision = chosen
+		}
 	} else {
 		fmt.Fprintln(os.Stdout, text)
 		if leads != "" {
@@ -115,10 +122,10 @@ func runShownReview(ctx context.Context, argv, env []string, limit time.Time, st
 	// The review has ended; waiting for the user's answer is not part of its clock, so only the posting is bounded.
 	if !post.Preapproved() {
 		if !asked {
-			answer = confirmed(ctx, os.Stderr, "Post this review on the PR as your comment?")
+			answer = confirmed(ctx, os.Stderr, "Post this review on the PR as "+decision.Label()+"?")
 		}
 		if !answer {
-			fmt.Fprintln(os.Stderr, "codeforge: not posted. Press p in the review to post it, or run with --comment=yes to post without asking.")
+			fmt.Fprintln(os.Stderr, "codeforge: not posted. Pick a decision in the review (1, 2 or 3) to post it, or run with --comment=yes to post the suggested one without asking.")
 			return nil
 		}
 	}
@@ -128,39 +135,58 @@ func runShownReview(ctx context.Context, argv, env []string, limit time.Time, st
 	}
 	pctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), postLimit)
 	defer cancel()
-	posted, err := post.Post(pctx, review.ExecRunner{}, text, leads)
+	posted, err := post.Post(pctx, review.ExecRunner{}, text, leads, decision)
 	if err != nil {
 		return fmt.Errorf("the review above was not posted: %w", err)
 	}
 	switch {
 	case posted.Fallback != nil:
-		fmt.Fprintf(os.Stderr, "codeforge: GitHub refused the inline comments (%v); posted the review as one comment %s\n", posted.Fallback, posted.URL)
-	case posted.Inline > 0:
-		fmt.Fprintf(os.Stderr, "codeforge: posted the review on the PR with %d inline comments %s\n", posted.Inline, posted.URL)
+		fmt.Fprintf(os.Stderr, "codeforge: GitHub refused the review (%v); posted it as one plain comment, without its %s decision %s\n", posted.Fallback, decision.Label(), posted.URL)
+	case posted.Downgraded != nil:
+		fmt.Fprintf(os.Stderr, "codeforge: GitHub refused %s (%v; it does not allow it on your own PR); posted the review as Comment with %d inline comments %s\n",
+			decision.Label(), posted.Downgraded, posted.Inline, posted.URL)
 	default:
-		fmt.Fprintf(os.Stderr, "codeforge: posted the review on the PR %s\n", posted.URL)
+		fmt.Fprintf(os.Stderr, "codeforge: posted the review as %s with %d inline comments %s\n", posted.Decision.Label(), posted.Inline, posted.URL)
 	}
 	return nil
 }
 
-// The keys the review view offers besides moving around: post it on the PR, or chat about it.
-const (
-	keyPost = "p"
-	keyChat = "c"
+// The keys the review view offers besides moving around: post the review as one of the three decisions, or chat about
+// it. The user decides; the review's own decision is only marked as the suggestion.
+const keyChat = "c"
+
+var (
+	decisionOrder = []string{"1", "2", "3"}
+	decisionKeys  = map[string]review.Decision{
+		"1": review.DecisionApprove, "2": review.DecisionComment, "3": review.DecisionRequestChanges,
+	}
 )
 
 // showReview shows a finished review on the terminal: as an accordion of its files when the forms helper is there,
-// else printed in full. It offers c to chat about the review and, with ask, p to post it; key is the one pressed, ""
-// for q or Ctrl+C. shown reports whether the view ran, so the keys were offered.
-func showReview(ctx context.Context, text, leads string, raw []byte, ask bool) (key string, shown bool) {
+// else printed in full. The suggested decision sits on the final comment's row. It offers c to chat about the review
+// and, with ask, 1, 2 and 3 to post it as Approve, Comment or Request changes; key is the one pressed, "" for q or
+// Ctrl+C. shown reports whether the view ran, so the keys were offered.
+func showReview(ctx context.Context, text string, decision review.Decision, leads string, raw []byte, ask bool) (key string, shown bool) {
 	st := codeStyleFor(ctx, os.Stdout)
 	code := reviewCode(ctx, st, text)
 	footer := runFooter(raw, st)
+	verdict := st.paint(st.pal.dim, "suggested: ") + st.paint(decisionColor(decision, st), decision.Label())
 	if accordionAvailable() {
 		a := reviewAccordion(text, leads, st, code)
 		a.Outro = footer
+		for i, item := range a.Items {
+			if strings.Contains(item.Title, finalCommentTitle) {
+				a.Items[i].Summary = verdict
+			}
+		}
 		if ask {
-			a.Keys = append(a.Keys, forms.Action{Key: keyPost, Label: "post on the PR"})
+			for _, k := range decisionOrder {
+				label := "post as " + decisionKeys[k].Label()
+				if decisionKeys[k] == decision {
+					label += " (suggested)"
+				}
+				a.Keys = append(a.Keys, forms.Action{Key: k, Label: label})
+			}
 		}
 		a.Keys = append(a.Keys, forms.Action{Key: keyChat, Label: "chat about it"})
 		key, err := showAccordion("review", a)
@@ -170,7 +196,7 @@ func showReview(ctx context.Context, text, leads string, raw []byte, ask bool) (
 		}
 		fmt.Fprintln(os.Stderr, "codeforge: could not open the review view:", err)
 	}
-	full := renderReview(text, st, code)
+	full := renderReview(text, st, code) + "\n" + findingIndent + verdict + "\n"
 	if leads != "" {
 		full += "\n" + renderReview(leads, st, nil)
 	}
@@ -179,6 +205,17 @@ func showReview(ctx context.Context, text, leads string, raw []byte, ask bool) (
 	}
 	fmt.Fprint(os.Stdout, full)
 	return "", false
+}
+
+// decisionColor colours a decision like the labels it follows from: Request changes as an issue, Approve as praise.
+func decisionColor(d review.Decision, st codeStyle) string {
+	switch d {
+	case review.DecisionRequestChanges:
+		return st.pal.issue
+	case review.DecisionApprove:
+		return st.pal.praise
+	}
+	return st.pal.suggestion
 }
 
 // showAccordion runs the accordion through the forms helper, and accordionAvailable says whether there is one; tests

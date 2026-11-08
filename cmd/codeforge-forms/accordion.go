@@ -38,7 +38,7 @@ type accordion struct {
 func newAccordion(a forms.Accordion) *accordion {
 	m := &accordion{a: a, open: make([]bool, len(a.Items)), width: startWidth, height: startHeight}
 	for i := range m.open {
-		m.open[i] = a.Open
+		m.open[i] = a.Open || a.Items[i].Open
 	}
 	if m.a.Dim == "" {
 		m.a.Dim = "\x1b[2m"

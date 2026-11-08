@@ -35,38 +35,88 @@ func TestPostRequest_PostRunsGhWithTheTargetAndFooter(t *testing.T) {
 
 	c.Target("acme/widgets", "42")
 	require.True(t, c.Enabled())
-	run := &recordingRunner{out: "https://github.com/acme/widgets/pull/42#issuecomment-1\n"}
-	got, err := c.Post(t.Context(), run, "  Verdict: Request changes.\n\nData loss on retry.\n\n- issue: a.go:3 drops data  ", "")
+	run := &inputRunner{out: `{"html_url":"https://github.com/acme/widgets/pull/42#pullrequestreview-1"}`}
+	got, err := c.Post(t.Context(), run, "  Verdict: Request changes.\n\n### Final comment\n\nData loss on retry.\n\nDecision: Request changes", "", "")
 	require.NoError(t, err)
-	require.Equal(t, "https://github.com/acme/widgets/pull/42#issuecomment-1", got.URL)
-	require.Zero(t, got.Inline, "no diff, so nothing goes inline")
-	require.Equal(t, "gh", run.name)
-	require.Equal(t, []string{"pr", "comment", "42", "--repo", "acme/widgets"}, run.args[:5])
-	require.True(t, strings.HasPrefix(run.args[5], "--body=Data loss on retry."), "the body is one --body= argument, without the verdict label")
-	require.True(t, strings.HasSuffix(run.args[5], "Reviewed with codeforge.</sub>"))
+	require.Equal(t, Posted{URL: "https://github.com/acme/widgets/pull/42#pullrequestreview-1", Decision: DecisionRequestChanges}, got)
+	require.Equal(t, []string{"api", "--method", "POST", "repos/acme/widgets/pulls/42/reviews", "--input"}, run.args[:5])
+	req := decodeReview(t, run.input)
+	require.Equal(t, DecisionRequestChanges, req.Event)
+	require.True(t, strings.HasPrefix(req.Body, "Data loss on retry."), "the final comment is the body: no verdict label, heading or decision line")
+	require.True(t, strings.HasSuffix(req.Body, "Reviewed with codeforge.</sub>"))
+	require.Empty(t, req.Comments)
 }
 
-func TestPostRequest_PostWithoutRepoUsesTheCheckoutAndKeepsADashBody(t *testing.T) {
+// reviewRequest is the json codeforge sends to create a review.
+type reviewRequest struct {
+	Event    Decision        `json:"event"`
+	Body     string          `json:"body"`
+	Comments []reviewComment `json:"comments"`
+}
+
+func decodeReview(t *testing.T, data []byte) reviewRequest {
+	t.Helper()
+	var req reviewRequest
+	require.NoError(t, json.Unmarshal(data, &req))
+	return req
+}
+
+// ownPRRunner refuses Approve and Request changes, as GitHub does on your own pull request.
+type ownPRRunner struct{ events []Decision }
+
+func (r *ownPRRunner) Run(_ context.Context, _ string, args ...string) ([]byte, error) {
+	data, err := os.ReadFile(args[len(args)-1])
+	if err != nil {
+		return nil, fmt.Errorf("reading the request: %w", err)
+	}
+	var req reviewRequest
+	if err := json.Unmarshal(data, &req); err != nil {
+		return nil, fmt.Errorf("decoding the request: %w", err)
+	}
+	r.events = append(r.events, req.Event)
+	if req.Event != DecisionComment {
+		return nil, errors.New("HTTP 422: Can not request changes on your own pull request")
+	}
+	return []byte(`{"html_url":"https://github.com/o/r/pull/7#pullrequestreview-2"}`), nil
+}
+
+func TestPostRequest_OnYourOwnPRTheDecisionBecomesAComment(t *testing.T) {
 	var c PostRequest
 	c.Target("", "7")
-	run := &recordingRunner{}
-	_, err := c.Post(t.Context(), run, "- first point", "")
+	run := &ownPRRunner{}
+	got, err := c.Post(t.Context(), run, "### Final comment\n\nFix it.\n\nDecision: Request changes", "", "")
 	require.NoError(t, err)
-	require.Equal(t, []string{"pr", "comment", "7"}, run.args[:3])
-	require.Len(t, run.args, 4, "no --repo when none was given")
-	require.True(t, strings.HasPrefix(run.args[3], "--body=- first point"))
+	require.Equal(t, []Decision{DecisionRequestChanges, DecisionComment}, run.events)
+	require.Equal(t, DecisionComment, got.Decision)
+	require.ErrorContains(t, got.Downgraded, "own pull request")
+	require.NoError(t, got.Fallback)
 }
 
 func TestPostRequest_PostErrors(t *testing.T) {
 	var unset PostRequest
-	_, err := unset.Post(t.Context(), &recordingRunner{}, "x", "")
+	_, err := unset.Post(t.Context(), &recordingRunner{}, "x", "", "")
 	require.ErrorIs(t, err, ErrNoPR)
 
 	var c PostRequest
 	c.Target("", "7")
-	_, err = c.Post(t.Context(), &recordingRunner{err: errors.New("HTTP 403")}, "x", "")
+	_, err = c.Post(t.Context(), &recordingRunner{err: errors.New("HTTP 403")}, "x", "", "")
 	require.ErrorContains(t, err, "posting the review on PR 7")
 	require.ErrorContains(t, err, "HTTP 403")
+}
+
+func TestParseDecision(t *testing.T) {
+	for in, want := range map[string]Decision{
+		"text\n\nDecision: Approve":                                    DecisionApprove,
+		"text\n**Decision:** Request changes.":                         DecisionRequestChanges,
+		"text\ndecision: comment\n":                                    DecisionComment,
+		"text without a decision":                                      DecisionComment,
+		"issue (blocking): a.go:3 — drops data\n\nDecision: Approve":   DecisionRequestChanges,
+		"nitpick (non-blocking): a.go:3 — Nit: x\n\nDecision: Approve": DecisionApprove,
+	} {
+		got, rest := ParseDecision(in)
+		require.Equal(t, want, got, in)
+		require.NotContains(t, strings.ToLower(rest), "decision:", in)
+	}
 }
 
 func TestCommentBody_CutsALongReviewAtALine(t *testing.T) {
@@ -110,7 +160,7 @@ func TestCommentBody_RefusesToPostWhenTheBlockersDoNotFit(t *testing.T) {
 	var c PostRequest
 	c.Target("", "7")
 	run := &recordingRunner{}
-	_, err = c.Post(t.Context(), run, "Approve.", blockers.String())
+	_, err = c.Post(t.Context(), run, "Approve.", blockers.String(), "")
 	require.ErrorIs(t, err, ErrNoRoom)
 	require.Empty(t, run.name, "gh is not called")
 }
@@ -215,9 +265,9 @@ func TestPostRequest_PostsInlineCommentsAsOneReview(t *testing.T) {
 	c.Target("acme/w", "42")
 	c.SetDiff(inlineDiff)
 	run := &inputRunner{out: `{"html_url":"https://github.com/acme/w/pull/42#pullrequestreview-1"}`}
-	got, err := c.Post(t.Context(), run, inlineReview, LeadsHeader+"- `a.go:3` drops data\n")
+	got, err := c.Post(t.Context(), run, inlineReview, LeadsHeader+"- `a.go:3` drops data\n", "")
 	require.NoError(t, err)
-	require.Equal(t, Posted{URL: "https://github.com/acme/w/pull/42#pullrequestreview-1", Inline: 2}, got)
+	require.Equal(t, Posted{URL: "https://github.com/acme/w/pull/42#pullrequestreview-1", Inline: 2, Decision: DecisionComment}, got)
 	require.Equal(t, []string{"api", "--method", "POST", "repos/acme/w/pulls/42/reviews", "--input"}, run.args[:5])
 	require.NoFileExists(t, run.args[5], "the request file is removed after the call")
 
@@ -272,7 +322,7 @@ func TestPostRequest_FallsBackToOneCommentWhenGitHubRefusesTheLines(t *testing.T
 	c.Target("", "7")
 	c.SetDiff(inlineDiff)
 	run := &failFirstRunner{}
-	got, err := c.Post(t.Context(), run, inlineReview, "")
+	got, err := c.Post(t.Context(), run, inlineReview, "", "")
 	require.NoError(t, err)
 	require.ErrorContains(t, got.Fallback, "422")
 	require.Equal(t, "repos/{owner}/{repo}/pulls/7/reviews", run.calls[0][3])

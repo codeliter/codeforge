@@ -27,7 +27,9 @@ func newPostFixture(t *testing.T, engineBody string, ghExit int) postFixture {
 	dir := t.TempDir()
 	f := postFixture{engine: filepath.Join(dir, "engine"), engineArgs: filepath.Join(dir, "engine.args"), ghArgs: filepath.Join(dir, "gh.args")}
 	require.NoError(t, os.WriteFile(f.engine, []byte("#!/bin/sh\nprintf '%s ' \"$@\" > \""+f.engineArgs+"\"\n"+engineBody+"\n"), execPerm))
-	gh := "#!/bin/sh\nprintf '%s ' \"$@\" > \"" + f.ghArgs + "\"\necho https://github.com/acme/w/pull/42#issuecomment-9\nexit " + string(rune('0'+ghExit)) + "\n"
+	// The fake records its arguments and, for a review sent with --input, the request it was given.
+	gh := "#!/bin/sh\nprintf '%s ' \"$@\" > \"" + f.ghArgs + "\"\nprev=\nfor a in \"$@\"; do if [ \"$prev\" = --input ]; then cat \"$a\" >> \"" + f.ghArgs + "\"; fi; prev=$a; done\n" +
+		"echo https://github.com/acme/w/pull/42#issuecomment-9\nexit " + string(rune('0'+ghExit)) + "\n"
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "gh"), []byte(gh), execPerm))
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	return f
@@ -51,7 +53,7 @@ func reviewContext(t *testing.T, comment bool) context.Context {
 }
 
 func TestRunReviewEngine_PostsTheReviewWhenAskedTo(t *testing.T) {
-	f := newPostFixture(t, "printf '%s' '{\"output\":\"Request changes.\\n- issue: a.go:3 drops data\"}'", 0)
+	f := newPostFixture(t, "printf '%s' '{\"output\":\"### a.go\\n\\nissue (blocking): a.go:3 — drops data\\n\\n### Final comment\\n\\nFix the drop first.\\n\\nDecision: Request changes\"}'", 0)
 	require.NoError(t, runReview(reviewContext(t, true), []string{f.engine, "the prompt"}, os.Environ(), time.Now().Add(10*time.Second)))
 
 	args, err := os.ReadFile(f.engineArgs)
@@ -59,8 +61,12 @@ func TestRunReviewEngine_PostsTheReviewWhenAskedTo(t *testing.T) {
 	require.Contains(t, string(args), "--json", "the run's result is read as JSON")
 	posted, err := os.ReadFile(f.ghArgs)
 	require.NoError(t, err)
-	require.Contains(t, string(posted), "pr comment 42 --repo acme/w --body=Request changes.")
-	require.Contains(t, string(posted), "a.go:3 drops data")
+	require.Contains(t, string(posted), "api --method POST repos/acme/w/pulls/42/reviews --input ")
+	require.Contains(t, string(posted), `"event":"REQUEST_CHANGES"`, "the closing decision is the review's type")
+	require.Contains(t, string(posted), "a.go:3 — drops data")
+	require.Contains(t, string(posted), "Fix the drop first.")
+	require.NotContains(t, string(posted), "Decision:", "the decision line is not posted as text")
+	require.NotContains(t, string(posted), "### Final comment", "the final comment is the body, without its heading")
 	require.Contains(t, string(posted), "Reviewed with codeforge.")
 }
 
