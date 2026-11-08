@@ -176,6 +176,7 @@ func evalCases(t *testing.T, cases []largeCase, gate bool) {
 	if model == "" {
 		t.Skip("set CODEFORGE_EVAL_MODEL=provider/model")
 	}
+	applyEvalKnobs(t)
 	bin := cmpOr(os.Getenv("CODEFORGE_EVAL_BIN"), "empryo")
 	runs := 6
 	if v, err := strconv.Atoi(os.Getenv("CODEFORGE_EVAL_RUNS")); err == nil && v > 0 {

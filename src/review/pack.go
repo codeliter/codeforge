@@ -50,6 +50,9 @@ func Pack(ctx context.Context, r Runner, repo string, l Local, t Tier) string {
 	if callers != "" {
 		fmt.Fprintf(&s, "\n<callers>\n%s</callers>\n", callers)
 	}
+	if withAudit {
+		s.WriteString(auditSection(l.Diff))
+	}
 	return s.String()
 }
 
@@ -67,6 +70,9 @@ func PackRef(ctx context.Context, r Runner, ref string, files []string, diff str
 	}))
 	if callers := CallersAt(ctx, r, ref, diff, files); callers != "" {
 		fmt.Fprintf(&s, "\n<callers>\n%s</callers>\n", callers)
+	}
+	if withAudit {
+		s.WriteString(auditSection(diff))
 	}
 	return s.String()
 }
