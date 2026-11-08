@@ -218,6 +218,29 @@ func (s *Store) Put(ctx context.Context, session Session) error {
 	return nil
 }
 
+// Sessions lists every recorded launch identity, of every repository.
+func (s *Store) Sessions(ctx context.Context) ([]Session, error) {
+	ctx, cancel := context.WithTimeout(ctx, operationTimeout)
+	defer cancel()
+	rows, err := s.db.QueryContext(ctx, "SELECT id, mode, profile, repository FROM sessions")
+	if err != nil {
+		return nil, fmt.Errorf("listing sessions: %w", err)
+	}
+	defer func() { _ = rows.Close() }() // read only; rows.Err reports what matters
+	var out []Session
+	for rows.Next() {
+		var session Session
+		if err := rows.Scan(&session.ID, &session.Mode, &session.Profile, &session.Repository); err != nil {
+			return nil, fmt.Errorf("listing sessions: %w", err)
+		}
+		out = append(out, session)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("listing sessions: %w", err)
+	}
+	return out, nil
+}
+
 // Get loads launch identity without touching enforcement state.
 func (s *Store) Get(ctx context.Context, id string) (Session, error) {
 	ctx, cancel := context.WithTimeout(ctx, operationTimeout)

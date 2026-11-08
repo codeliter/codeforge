@@ -56,6 +56,11 @@ Or run `codeforge` and pick a mode. **Not sure? Start with `work`.**
 
 The job runs in your terminal; when it finishes, a chat screen opens for follow-up questions.
 
+To pick up earlier work, run `codeforge sessions`: it lists this directory's sessions, newest first, with when, mode,
+title, turns, time spent, cost and model, under a search box; type to narrow the list, Enter opens the session in its
+own mode. `--all` lists every project's sessions (those started at its root) and opens the one you pick in its project; `--list` prints them
+instead. Empryo's own session list does not know codeforge's modes, so use this one.
+
 ## Reviews
 
 `codeforge review` shows the review by file: each finding with its code, then a final comment and a suggested

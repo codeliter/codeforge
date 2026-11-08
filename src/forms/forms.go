@@ -35,6 +35,9 @@ const (
 	Input Kind = "input"
 	// Text is several lines of text; the answer is its Value.
 	Text Kind = "text"
+	// Search picks one of Options from a list under a search box that is always shown: typing narrows the list to
+	// the options whose label has every word typed. The answer is the Value picked. It takes a page of its own.
+	Search Kind = "search"
 )
 
 // Option is one choice of a Select or MultiSelect.
@@ -63,7 +66,7 @@ type Field struct {
 	// Affirmative and Negative label a Confirm's two answers; empty means Yes and No.
 	Affirmative string `json:"affirmative,omitempty"`
 	Negative    string `json:"negative,omitempty"`
-	// Lines is the height of a Text field.
+	// Lines is the height of a Text field, and at most how many options of a Search show at once (the rest scroll).
 	Lines int `json:"lines,omitempty"`
 	// Required, when set, is the complaint for an empty answer: a blank Input or Text, or a MultiSelect with nothing picked.
 	Required string `json:"required,omitempty"`
@@ -71,6 +74,10 @@ type Field struct {
 	Differs []Differ `json:"differs,omitempty"`
 	// Check names a check the helper runs on the answer; see Check.
 	Check string `json:"check,omitempty"`
+	// Header is a line shown above a Search's options, such as the names of the columns its labels are laid out in.
+	Header string `json:"header,omitempty"`
+	// Placeholder is what a Search's empty box says.
+	Placeholder string `json:"placeholder,omitempty"`
 }
 
 // When shows a group only while the field Key holds one of Is, or none of IsNot, and And (if any) holds too.
@@ -180,8 +187,8 @@ const KeySend = "s"
 func Show(name string, a Accordion) (string, []Change, error) {
 	if a.Edits || slices.ContainsFunc(a.Items, func(s Section) bool { return len(s.Notes) > 0 }) {
 		// An older helper knows no notes and no edits: it would show empty rows and no way to send. Say so instead.
-		if bin, err := Helper(); err == nil && helperProtocol(bin) < Protocol {
-			return "", nil, fmt.Errorf("%s: %w", name, ErrOldHelper)
+		if err := needProtocol(name, editsProtocol); err != nil {
+			return "", nil, err
 		}
 	}
 	answers, err := Run(Form{Name: name, Accordion: &a})
@@ -197,9 +204,22 @@ func Show(name string, a Accordion) (string, []Change, error) {
 	return answers.String(AccordionKey), changes, nil
 }
 
-// Protocol is the version of what codeforge sends codeforge-forms. 2 added an Accordion's Notes, Edits and Changes;
-// the helper answers ProtocolFlag with its own, and one that cannot is 1.
-const Protocol = 2
+// Protocol is the version of what codeforge sends codeforge-forms: 2 added an Accordion's Notes, Edits and Changes,
+// 3 the Search field. The helper answers ProtocolFlag with its own, and one that cannot is 1.
+const (
+	Protocol       = 3
+	editsProtocol  = 2
+	searchProtocol = 3
+)
+
+// needProtocol refuses, with ErrOldHelper, a form that needs protocol p when the helper is older. With no helper it
+// says nothing: Run reports that.
+func needProtocol(name string, p int) error {
+	if bin, err := Helper(); err == nil && protocolOf(bin) < p {
+		return fmt.Errorf("%s: %w", name, ErrOldHelper)
+	}
+	return nil
+}
 
 // ProtocolFlag asks the helper for its Protocol.
 const ProtocolFlag = "--protocol"
@@ -211,6 +231,10 @@ var ErrOldHelper = errors.New("codeforge-forms is older than codeforge and canno
 const protocolLimit = 5 * time.Second
 
 var protocols sync.Map // helper path, size and time -> its protocol
+
+// protocolOf is helperProtocol, called through a variable: the probe keeps its own time limit rather than a caller's
+// context, which most forms do not have.
+var protocolOf = helperProtocol
 
 // helperProtocol is the Protocol of the helper at bin; 1 when it cannot say. The answer is kept for that build of the
 // helper, by its path, size and modification time, so each build is asked once (a broken one costs protocolLimit once,
@@ -226,6 +250,7 @@ func helperProtocol(bin string) int {
 			return n
 		}
 	}
+	// Its own limit, not a caller's context: the forms that ask have none, and the probe must never hang them.
 	ctx, cancel := context.WithTimeout(context.Background(), protocolLimit)
 	defer cancel()
 	p := 1
@@ -355,6 +380,11 @@ func Run(f Form) (Answers, error) {
 func Ask(name string, field Field) (Answer, error) {
 	if field.Key == "" {
 		field.Key = "answer"
+	}
+	if field.Kind == Search {
+		if err := needProtocol(name, searchProtocol); err != nil {
+			return Answer{}, err
+		}
 	}
 	answers, err := Run(Page(name, field))
 	if err != nil {

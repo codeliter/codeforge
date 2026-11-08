@@ -34,6 +34,11 @@ func TestStore_IdentityAndPermissions(t *testing.T) {
 	require.ErrorIs(t, s.Put(t.Context(), session), ErrConflict)
 	_, err = s.Get(t.Context(), "missing")
 	require.ErrorIs(t, err, ErrNotFound)
+	other := Session{ID: "other", Mode: "work", Profile: "codeforge-work", Repository: "/elsewhere"}
+	require.NoError(t, s.Put(t.Context(), other))
+	all, err := s.Sessions(t.Context())
+	require.NoError(t, err)
+	require.ElementsMatch(t, []Session{{ID: "id", Mode: "review", Profile: "codeforge-review", Repository: "/repo"}, other}, all, "every repository's")
 	for _, name := range []string{"", "sessions.db", "sessions.db-wal", "sessions.db-shm"} {
 		info, err := os.Stat(filepath.Join(dir, name))
 		require.NoError(t, err)

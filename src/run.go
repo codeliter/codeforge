@@ -95,6 +95,19 @@ func Run(ctx context.Context, args []string) error {
 		return runDoctor(ctx, home, os.Stdout)
 	}
 
+	// sessions picks before anything is repaired or prepared, so that work goes to the project the session opens in.
+	// The picked session then opens as --resume opens it: in its own mode, with codeforge's profile and hooks.
+	if first(args) == "sessions" {
+		dir, id, err := runSessions(ctx, home, args[1:], os.Stdout)
+		if err != nil || id == "" {
+			return err
+		}
+		if wd, err := os.Getwd(); err == nil && !sameDir(wd, dir) {
+			return Run(ctx, []string{"--cwd", dir, "--resume", id}) // another project's session opens there
+		}
+		args = []string{"--resume", id}
+	}
+
 	repair, err := parseRepairArgs(args)
 	if err != nil {
 		return err
