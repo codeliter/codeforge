@@ -23,3 +23,4 @@ Help:
   help, -h, --help                   Show the everyday commands
   help --all                         Show every command, including models, providers and learning
   version                            Show the codeforge version
+  completion bash|zsh|fish           Print the shell completion script (Homebrew installs it for you)

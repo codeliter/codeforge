@@ -49,7 +49,7 @@ func printsOnlyCodeforge(w []string) bool {
 		return false // a bare codeforge opens the mode picker
 	}
 	switch args[0] {
-	case "help", "version", "--version":
+	case "help", "version", "--version", "completion":
 		return true
 	case "doctor":
 		return len(args) == 1

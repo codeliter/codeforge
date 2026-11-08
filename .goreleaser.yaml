@@ -48,5 +48,6 @@ brews:
     install: |
       bin.install "codeforge"
       bin.install "codeforge-forms"
+      generate_completions_from_executable(bin/"codeforge", "completion")
     test: |
       assert_match version.to_s, shell_output("#{bin}/codeforge version")

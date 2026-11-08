@@ -61,6 +61,10 @@ func Run(ctx context.Context, args []string) error {
 		fmt.Println("codeforge", Version)
 		return nil
 	}
+	// Completion only prints, and Homebrew runs it while installing, so it reads no config and repairs nothing.
+	if first(args) == "completion" {
+		return runCompletion(os.Stdout, args[1:])
+	}
 
 	home, err := os.UserHomeDir()
 	if err != nil {

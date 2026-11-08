@@ -11,6 +11,10 @@ brew install codeliter/tap/codeforge
 
 You also need Git 2.54 or newer and GitHub CLI (`gh`).
 
+Homebrew installs tab completion for zsh, bash and fish. Built from source? Add one line to your shell's startup file:
+`source <(codeforge completion zsh)` in `~/.zshrc`, `source <(codeforge completion bash)` in `~/.bashrc`, or
+`codeforge completion fish | source` in `~/.config/fish/config.fish`.
+
 From source, use `make install`: it installs both `codeforge` and `codeforge-forms`, its menus and review view.
 
 ```sh
