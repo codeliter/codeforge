@@ -3,8 +3,10 @@ package review
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -212,20 +214,47 @@ func TestPostRequest_PostsInlineCommentsAsOneReview(t *testing.T) {
 	var c PostRequest
 	c.Target("acme/w", "42")
 	c.SetDiff(inlineDiff)
-	run := &recordingRunner{out: `{"html_url":"https://github.com/acme/w/pull/42#pullrequestreview-1"}`}
+	run := &inputRunner{out: `{"html_url":"https://github.com/acme/w/pull/42#pullrequestreview-1"}`}
 	got, err := c.Post(t.Context(), run, inlineReview, LeadsHeader+"- `a.go:3` drops data\n")
 	require.NoError(t, err)
 	require.Equal(t, Posted{URL: "https://github.com/acme/w/pull/42#pullrequestreview-1", Inline: 2}, got)
-	require.Equal(t, []string{"api", "--method", "POST", "repos/acme/w/pulls/42/reviews", "--raw-field=event=COMMENT"}, run.args[:5])
-	require.True(t, strings.HasPrefix(run.args[5], "--raw-field=body=Correlation-only"))
-	require.Contains(t, run.args[5], "Unconfirmed blocking leads")
-	require.Equal(t, []string{
-		"--raw-field=comments[][path]=search/serper/main.go",
-		"--field=comments[][line]=72",
-		"--raw-field=comments[][side]=RIGHT",
-		"--raw-field=comments[][body]=suggestion: Remove the commented-out code.",
-	}, run.args[6:10])
-	require.Len(t, run.args, 14)
+	require.Equal(t, []string{"api", "--method", "POST", "repos/acme/w/pulls/42/reviews", "--input"}, run.args[:5])
+	require.NoFileExists(t, run.args[5], "the request file is removed after the call")
+
+	var req struct {
+		Event    string          `json:"event"`
+		Body     string          `json:"body"`
+		Comments []reviewComment `json:"comments"`
+	}
+	require.NoError(t, json.Unmarshal(run.input, &req))
+	require.Equal(t, "COMMENT", req.Event)
+	require.True(t, strings.HasPrefix(req.Body, "Correlation-only"))
+	require.Contains(t, req.Body, "Unconfirmed blocking leads")
+	require.Equal(t, []reviewComment{
+		{Path: "search/serper/main.go", Line: 72, Side: "RIGHT", Body: "suggestion: Remove the commented-out code."},
+		{Path: "common/go/telemetry/telemetry.go", Line: 2, Side: "RIGHT", Body: "suggestion: Init has no tests. Add focused tests for:\n- Init(ctx, nil)\n- the error path"},
+	}, req.Comments, "every comment keeps its own path, line and body: the 422 came from gh mixing them up")
+}
+
+// inputRunner records a gh call and the request file it was given with --input, read while the call runs.
+type inputRunner struct {
+	args  []string
+	input []byte
+	out   string
+}
+
+func (r *inputRunner) Run(_ context.Context, _ string, args ...string) ([]byte, error) {
+	r.args = args
+	for i, a := range args {
+		if a == "--input" && i+1 < len(args) {
+			data, err := os.ReadFile(args[i+1])
+			if err != nil {
+				return nil, fmt.Errorf("reading the request: %w", err)
+			}
+			r.input = data
+		}
+	}
+	return []byte(r.out), nil
 }
 
 type failFirstRunner struct{ calls [][]string }

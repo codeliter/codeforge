@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strconv"
+	"os"
 	"strings"
 	"sync"
 
@@ -209,24 +209,47 @@ func postComment(ctx context.Context, r Runner, repo, number, body string) (stri
 	return strings.TrimSpace(string(out)), nil
 }
 
-// postReview creates one GitHub review with an inline comment per finding. Every value is its own argument and text
-// goes through --raw-field, so nothing in the review is read as a flag, a file or a placeholder.
+// reviewComment is one inline comment of a GitHub review, as the API takes it.
+type reviewComment struct {
+	Path string `json:"path"`
+	Line int    `json:"line"`
+	Side string `json:"side"`
+	Body string `json:"body"`
+}
+
+// postReview creates one GitHub review with an inline comment per finding. The request body is written as json to a
+// private temporary file and sent with --input: gh's own field flags cannot build an array of objects that mixes
+// strings and numbers (it groups --raw-field and --field values separately, so lines landed on the wrong comments and
+// GitHub answered 422), and a file keeps the review's text out of argument parsing altogether.
 func postReview(ctx context.Context, r Runner, repo, number, body string, inline []InlineComment) (string, error) {
 	if repo == "" {
 		repo = "{owner}/{repo}" // gh fills these in from the checkout
 	}
-	args := []string{
-		"api", "--method", "POST", "repos/" + repo + "/pulls/" + number + "/reviews",
-		"--raw-field=event=COMMENT", "--raw-field=body=" + body,
-	}
+	req := struct {
+		Event    string          `json:"event"`
+		Body     string          `json:"body"`
+		Comments []reviewComment `json:"comments"`
+	}{Event: "COMMENT", Body: body}
 	for _, ic := range inline {
-		args = append(args,
-			"--raw-field=comments[][path]="+ic.Path,
-			"--field=comments[][line]="+strconv.Itoa(ic.Line),
-			"--raw-field=comments[][side]=RIGHT",
-			"--raw-field=comments[][body]="+ic.Body)
+		req.Comments = append(req.Comments, reviewComment{Path: ic.Path, Line: ic.Line, Side: "RIGHT", Body: ic.Body})
 	}
-	out, err := r.Run(ctx, "gh", args...)
+	data, err := json.Marshal(req)
+	if err != nil {
+		return "", fmt.Errorf("encoding the review: %w", err)
+	}
+	f, err := os.CreateTemp("", "codeforge-review-*.json")
+	if err != nil {
+		return "", fmt.Errorf("writing the review: %w", err)
+	}
+	defer os.Remove(f.Name()) //nolint:errcheck // best effort; the file is private and in the temp directory
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		return "", fmt.Errorf("writing the review: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		return "", fmt.Errorf("writing the review: %w", err)
+	}
+	out, err := r.Run(ctx, "gh", "api", "--method", "POST", "repos/"+repo+"/pulls/"+number+"/reviews", "--input", f.Name())
 	if err != nil {
 		return "", fmt.Errorf("posting the inline review on PR %s: %w", number, err)
 	}
