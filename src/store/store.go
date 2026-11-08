@@ -18,8 +18,15 @@ import (
 	"sync/atomic"
 	"time"
 
-	// Register the pure-Go SQLite database/sql driver.
-	_ "modernc.org/sqlite"
+	// The pure-Go SQLite database/sql driver, registered on import.
+	"modernc.org/sqlite"
+)
+
+// sqliteBusy is SQLITE_BUSY, the primary result code of a database another connection holds; walRetry is how long
+// enabling WAL waits before it tries again.
+const (
+	sqliteBusy = 5
+	walRetry   = 10 * time.Millisecond
 )
 
 //go:embed migrations/*.sql
@@ -163,8 +170,22 @@ func (s *Store) initialize(ctx context.Context, scripts fs.FS) (result error) {
 		return fmt.Errorf("committing migration: %w", err)
 	}
 	var journal string
-	if err := s.db.QueryRowContext(ctx, "PRAGMA journal_mode = WAL").Scan(&journal); err != nil {
-		return fmt.Errorf("enabling WAL: %w", err)
+	for {
+		err := s.db.QueryRowContext(ctx, "PRAGMA journal_mode = WAL").Scan(&journal)
+		if err == nil {
+			break
+		}
+		// Another process opening the same new database holds it for a moment, and SQLite's busy timeout does not
+		// cover a journal-mode change: wait and try again within the operation's time.
+		var se *sqlite.Error
+		if !errors.As(err, &se) || se.Code()&0xff != sqliteBusy {
+			return fmt.Errorf("enabling WAL: %w", err)
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("enabling WAL: %w", errors.Join(ctx.Err(), err))
+		case <-time.After(walRetry):
+		}
 	}
 	if journal != "wal" {
 		return fmt.Errorf("%w: WAL unavailable", errUnsafePath)
