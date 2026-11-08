@@ -72,5 +72,20 @@ The review is what the user would leave on the PR: a comment on each place in th
 
 Never mention the jury, its models, quorum or which juror said what. Report a kept jury finding as your own, at its `path:line`.
 
-## 8. Stop
+## 8. Follow-up round
+When the brief says this is a follow-up round, the user reviewed this PR before. `<earlier_review>` holds their open threads, each with what the author or others said since, and the brief holds the diff since the commit they reviewed. The round has two parts.
+1. **Each earlier thread gets a verdict** against the code as it is now, never against the reply alone:
+   - `fixed`: the new code fixes it. Check the line; a reply that says "done" is a claim, not evidence.
+   - `not fixed`: the reply says it is fixed and the code shows it is not. Say what is still wrong, at the line.
+   - `agreed`: the author's pushback is right. Say so plainly and drop the point; never re-argue it.
+   - `held`: the pushback does not hold. Give the evidence (the caller, the input, the number) in one or two sentences.
+   - `answered`: the author asked a question. Answer it.
+   - `accepted`: the author defers a non-blocking point ("in a follow-up"). Accept it; ask for a ticket only if the persona does. A blocking point is never deferred: hold it.
+   - `waiting`: nothing changed and no one replied. Leave the thread; the reply is empty.
+   The reply is what the user would write in that thread, in their voice: short and direct ("Confirmed in `abc1234`, thanks."). Never repeat the original comment.
+2. **The review of what changed:** findings only from the diff since the user's review, in section 7's format, then the final comment and the Decision line. Do not raise again what an earlier thread already covers, and do not raise points the user could have raised the first time unless they block. The final comment says where the PR stands now: what is settled, what still blocks. Suggest Approve when every blocking thread is `fixed` or `agreed` and nothing new blocks; Request changes while one is `not fixed` or `held` and blocking.
+
+The brief's note gives the json block that ends the answer, with one entry per earlier thread. Codeforge shows each verdict beside its thread and, when the user posts, replies in each thread and resolves the ones the verdict settles.
+
+## 9. Stop
 Draft only. Never post, approve or request changes without an explicit go. When posting goes through `codeforge review <PR> --comment`, the user reads the review, picks Approve, Comment or Request changes (yours is only the suggestion), and codeforge posts one GitHub review of that type: each finding whose `path:line` is on the diff as an inline comment on that line, and the final comment as the review's body; or, if the user picks it, the same comments with no review around them: each finding on its line, then the final comment as an ordinary PR comment. When told to post from this session instead, post one comment with `gh pr comment <number> --body '<the agreed text>'`, in the user's voice (codeforge-persona), with the text on the command line. The session is read-only, so the user is asked to approve that exact call in their terminal; do not try to work around a refusal, and do not use `gh pr review`, `gh api` or a body file, which are refused. If the user declines, say so and stop.

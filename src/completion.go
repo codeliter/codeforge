@@ -23,8 +23,10 @@ var completionTree = []struct {
 	{word{"chat", "Questions, explanations and small edits"}, sessionFlags},
 	{word{"ticket", "Take a ticket to a verified change and a draft PR"}, append([]word{{"--ticket", "Ticket ID"}}, sessionFlags...)},
 	{word{"review", "Read-only review of a PR, or of your local changes"}, append([]word{
-		{"--comment", "Post the review on the PR after you press p"},
+		{"--comment", "Post the review on the PR after you pick how"},
 		{"--comment=yes", "Post the review without asking"},
+		{"--follow-up", "Follow up on your earlier review: replies and changes since"},
+		{"--fresh", "Review the whole PR again, even after an earlier review"},
 		{"--repo", "The PR's repository, owner/name"},
 	}, sessionFlags...)},
 	{word{"respond", "Answer the open review comments on your PR"}, []word{

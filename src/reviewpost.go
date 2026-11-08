@@ -2,6 +2,7 @@ package src
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -66,7 +67,9 @@ func runReviewEngine(ctx context.Context, argv, env []string, limit time.Time) (
 	post := review.PostOf(ctx)
 	inReview := review.DisplayOf(ctx) != nil
 	styled := inReview && !hasFlag(argv, "--json") && stdoutStyled()
-	if !post.Enabled() && !styled {
+	// A follow-up round's verdicts are read even when nothing is shown or posted, so their block never reaches the
+	// output as review text; a script that asks for --json gets the run as it is.
+	if !post.Enabled() && !styled && (!review.FollowUpOf(ctx).Active() || hasFlag(argv, "--json")) {
 		return true, runEngine(ctx, argv, env, limit)
 	}
 	err = runShownReview(ctx, argv, env, limit, styled, &chat)
@@ -103,11 +106,36 @@ func runShownReview(ctx context.Context, argv, env []string, limit time.Time, st
 		}
 		return fmt.Errorf("not posting the review: %w", err)
 	}
+	// A follow-up round ends with its verdicts on the user's earlier threads; they are shown beside those threads and
+	// posted as replies, never as part of the review.
+	fu := review.FollowUpOf(ctx)
+	var answers []review.ThreadAnswer
+	judged := true      // whether every earlier thread got a verdict, so the round can count as done
+	unreadable := false // whether the verdicts could not be read at all: then nothing of the round is posted
+	if fu.Active() {
+		rest, a, perr := fu.ParseFollowUp(text)
+		text, answers, judged = rest, a, perr == nil
+		switch {
+		case errors.Is(perr, review.ErrUnanswered):
+			fmt.Fprintln(os.Stderr, "codeforge: some of your earlier threads got no verdict; they are left as they are, and the next round looks at them again.")
+		case perr != nil:
+			unreadable = true
+			fmt.Fprintln(os.Stderr, "codeforge: the reviewer gave no readable verdicts on your earlier threads, so this round is shown but not posted.")
+		}
+		if post.Preapproved() {
+			// Nobody looks before posting (--comment=yes): a reply may go up, but a blocker is only resolved by a person.
+			answers = fu.KeepBlockersOpen(answers)
+		}
+	}
 	// A note to the user before the findings is for the terminal at most, never for the PR.
 	text = review.StripPreamble(review.StripVerdict(text))
 	// The closing Decision line is the review's suggestion for its type, shown as such, not as a line of text; the user
 	// picks the decision that is posted.
 	decision, display := review.ParseDecision(text)
+	if fu.Active() && decision == review.DecisionApprove && fu.Unsettled(answers) {
+		// A blocking thread is still open: the suggestion is never to approve past it.
+		decision = review.DecisionRequestChanges
+	}
 	// A blocker a juror found must not be missing from what goes up; everything else the jury says stays out. Without
 	// posting, the leads follow from finishLeads.
 	leads := ""
@@ -116,8 +144,12 @@ func runShownReview(ctx context.Context, argv, env []string, limit time.Time, st
 	}
 	asked, answer := false, false
 	if styled {
-		ask := post.Enabled() && !post.Preapproved()
-		key, shown := showReview(ctx, display, decision, leads, out.Bytes(), ask)
+		ask := post.Enabled() && !post.Preapproved() && !unreadable // a round whose verdicts did not read is never posted
+		var threads []forms.Section
+		if fu.Active() {
+			threads = followUpSections(ctx, fu, answers, codeStyleFor(ctx, os.Stdout))
+		}
+		key, shown := showReview(ctx, display, decision, leads, out.Bytes(), ask, threads)
 		*chat = key == keyChat
 		chosen, picked := decisionKeys[key]
 		asked, answer = ask && shown, picked
@@ -125,12 +157,18 @@ func runShownReview(ctx context.Context, argv, env []string, limit time.Time, st
 			decision = chosen
 		}
 	} else {
+		// What may be posted is printed first, the replies to the earlier threads included.
+		fmt.Fprint(os.Stdout, followUpPlain(fu, answers))
 		fmt.Fprintln(os.Stdout, text)
 		if leads != "" {
 			fmt.Fprintln(os.Stdout, "\n"+leads)
 		}
 	}
 	if !post.Enabled() {
+		return nil
+	}
+	if unreadable {
+		fmt.Fprintln(os.Stderr, "codeforge: not posted. Run the review again for a follow-up whose verdicts read, or with --fresh for a full review.")
 		return nil
 	}
 
@@ -154,12 +192,19 @@ func runShownReview(ctx context.Context, argv, env []string, limit time.Time, st
 	}
 	pctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), postBound(decision))
 	defer cancel()
+	me, err := postingAccount(pctx, fu)
+	if err != nil {
+		return fmt.Errorf("the review above was not posted: %w", err)
+	}
 	posted, err := post.Post(pctx, review.ExecRunner{}, text, leads, decision)
 	if err != nil && posted.URL != "" {
-		// Part of it is on the PR: say so, so a rerun does not post it twice.
+		// Part of it is on the PR: say so, so a rerun does not post it twice, and keep what is up for the next round.
+		// The earlier threads are not answered, so the round does not count as having judged them.
+		recordPost(ctx, me, post, posted, postedAs(posted, decision), text, nil, fu, false)
 		return fmt.Errorf("only part of the review was posted, up to %s; post the rest by hand, since running again posts it all again: %w", posted.URL, err)
 	}
 	if errors.Is(err, review.ErrMayBePosted) {
+		recordPost(ctx, me, post, posted, postedAs(posted, decision), text, nil, fu, false)
 		return fmt.Errorf("the review above may not have been posted: %w", err)
 	}
 	if err != nil {
@@ -187,7 +232,26 @@ func runShownReview(ctx context.Context, argv, env []string, limit time.Time, st
 	default:
 		fmt.Fprintf(os.Stderr, "codeforge: posted the review as %s with %d inline comments %s\n", posted.Decision.Label(), posted.Inline, posted.URL)
 	}
-	return nil
+	// The record is kept after the threads are answered, so it knows which ones are really resolved.
+	var outcomes []review.ThreadOutcome
+	var ferr error
+	if len(answers) > 0 {
+		// The replies get their own time, never what is left of the review's.
+		fctx, fcancel := context.WithTimeout(context.WithoutCancel(ctx), review.PostCallLimit*time.Duration(2*len(answers)+1))
+		outcomes, ferr = postFollowUp(fctx, fu, answers)
+		fcancel()
+	}
+	recordPost(ctx, me, post, posted, postedAs(posted, decision), text, outcomes, fu, judged)
+	return ferr
+}
+
+// postedAs is the decision that actually went up: a review GitHub refused that went up as one plain comment is no
+// review at all, so no review state is recorded for it.
+func postedAs(posted review.Posted, decision review.Decision) review.Decision {
+	if posted.Fallback != nil {
+		return review.DecisionPlain
+	}
+	return cmp.Or(posted.Decision, decision)
 }
 
 // The keys the review view offers besides moving around: post the review as one of the three decisions, or chat about
@@ -206,13 +270,15 @@ var (
 // else printed in full. The suggested decision sits on the final comment's row. It offers c to chat about the review
 // and, with ask, 1, 2 and 3 to post it as Approve, Comment or Request changes, and 4 as separate comments; key is
 // the one pressed, "" for q or Ctrl+C. shown reports whether the view ran, so the keys were offered.
-func showReview(ctx context.Context, text string, decision review.Decision, leads string, raw []byte, ask bool) (key string, shown bool) {
+func showReview(ctx context.Context, text string, decision review.Decision, leads string, raw []byte, ask bool, threads []forms.Section) (key string, shown bool) {
 	st := codeStyleFor(ctx, os.Stdout)
 	code := reviewCode(ctx, st, text)
 	footer := runFooter(raw, st)
 	verdict := st.paint(st.pal.dim, "suggested: ") + st.paint(decisionColor(decision, st), decision.Label())
 	if accordionAvailable() {
 		a := reviewAccordion(text, leads, st, code)
+		// A follow-up round's earlier threads come first: what the author did about them is the point of the round.
+		a.Items = append(slices.Clone(threads), a.Items...)
 		a.Outro = footer
 		for i, item := range a.Items {
 			if strings.Contains(item.Title, finalCommentTitle) {
@@ -236,7 +302,11 @@ func showReview(ctx context.Context, text string, decision review.Decision, lead
 		}
 		fmt.Fprintln(os.Stderr, "codeforge: could not open the review view:", err)
 	}
-	full := renderReview(text, st, code) + "\n" + findingIndent + verdict + "\n"
+	var b strings.Builder
+	for _, t := range threads {
+		b.WriteString(t.Title + "\n\n" + t.Body + "\n\n")
+	}
+	full := b.String() + renderReview(text, st, code) + "\n" + findingIndent + verdict + "\n"
 	if leads != "" {
 		full += "\n" + renderReview(leads, st, nil)
 	}

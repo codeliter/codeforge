@@ -74,7 +74,7 @@ func TestMigration_UpgradesSessionsDatabase(t *testing.T) {
 	s, err := Open(t.Context(), dir)
 	require.NoError(t, err)
 	require.NoError(t, s.Put(t.Context(), Session{ID: "old", Mode: "chat", Profile: "codeforge-chat", Repository: "/repo"}))
-	for _, stmt := range []string{"DROP TABLE observations", "DROP TABLE rules", "DROP TABLE dismissals", "PRAGMA user_version = 1"} {
+	for _, stmt := range []string{"DROP TABLE observations", "DROP TABLE rules", "DROP TABLE dismissals", "DROP TABLE review_records", "PRAGMA user_version = 1"} {
 		_, err := s.db.ExecContext(t.Context(), stmt)
 		require.NoError(t, err)
 	}
@@ -88,7 +88,7 @@ func TestMigration_UpgradesSessionsDatabase(t *testing.T) {
 	require.Equal(t, "chat", got.Mode)
 	var version int
 	require.NoError(t, s.db.QueryRowContext(t.Context(), "PRAGMA user_version").Scan(&version))
-	require.Equal(t, 5, version)
+	require.Equal(t, 6, version)
 	_, err = s.Observations(t.Context(), "/repo", true)
 	require.NoError(t, err)
 }
@@ -142,6 +142,7 @@ func TestMigration_KeepsObservationsWhenRebuilt(t *testing.T) {
 		"DROP TABLE observations",
 		"DROP TABLE rules",
 		"DROP TABLE dismissals",
+		"DROP TABLE review_records",
 		"CREATE TABLE observations (id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL, text TEXT NOT NULL, repository TEXT NOT NULL, session_id TEXT NOT NULL DEFAULT '', origin TEXT NOT NULL, status TEXT, exit_code INTEGER, duration_ms INTEGER, created_at TEXT NOT NULL, reverted_at TEXT)",
 		"INSERT INTO observations(kind, text, repository, origin, created_at) VALUES ('correction', 'keep me', '/repo', 'cli', '2026-11-02T13:00:00Z')",
 		"PRAGMA user_version = 3",

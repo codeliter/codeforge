@@ -2,9 +2,11 @@ package src
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"slices"
 	"strings"
@@ -224,8 +226,18 @@ func threadCode(ctx context.Context, fb review.Feedback, st codeStyle) func(revi
 		}
 	}
 	if fb.HeadSHA != "" {
+		// From this checkout, or, for a PR reviewed from outside it, from GitHub at the same commit.
+		remote := ""
+		if src := review.DisplayOf(ctx).Source(); src.SHA != "" && src.HeadRef == "" && !src.Local {
+			remote = cmp.Or(src.Repo, "{owner}/{repo}")
+		}
 		files = prefetch(ctx, paths, func(ctx context.Context, file string) ([]byte, error) {
-			return codeRunner.Run(ctx, "git", "show", fb.HeadSHA+":"+file)
+			out, err := codeRunner.Run(ctx, "git", "show", fb.HeadSHA+":"+file)
+			if err != nil && remote != "" {
+				return codeRunner.Run(ctx, "gh", "api", "-H", "Accept: application/vnd.github.raw",
+					"repos/"+remote+"/contents/"+escapePath(file)+"?ref="+url.QueryEscape(fb.HeadSHA))
+			}
+			return out, err
 		})
 	}
 	return func(t review.Thread, fc focus) string {
@@ -279,11 +291,11 @@ func fixDiff(ctx context.Context, commit, path string, st codeStyle) string {
 // verdictColor colours a verdict by what it means for the author: fixed, pushed back, answered, or set aside.
 func verdictColor(v string, st codeStyle) string {
 	switch v {
-	case "valid", "partly valid":
+	case "valid", "partly valid", "fixed", "agreed", "accepted":
 		return st.pal.praise
-	case "not valid":
+	case "not valid", "not fixed", "held":
 		return st.pal.issue
-	case "question":
+	case "question", "answered":
 		return st.pal.question
 	}
 	return st.pal.dim

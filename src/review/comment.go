@@ -56,6 +56,12 @@ func (c *PostRequest) SetDiff(diff string) {
 	c.diff = diff
 }
 
+// Repo, Number and Head say where the review goes: the repository ("" for the checkout's), the pull request, and the
+// commit it reviewed.
+func (c *PostRequest) Repo() string   { c.mu.Lock(); defer c.mu.Unlock(); return c.repo }
+func (c *PostRequest) Number() string { c.mu.Lock(); defer c.mu.Unlock(); return c.number }
+func (c *PostRequest) Head() string   { c.mu.Lock(); defer c.mu.Unlock(); return c.head }
+
 // SetHead records the commit at the head of the pull request, which comments on its lines are pinned to.
 func (c *PostRequest) SetHead(sha string) {
 	c.mu.Lock()
@@ -72,6 +78,9 @@ func (c *PostRequest) Preapprove() {
 
 // Preapproved reports whether posting needs no further confirmation.
 func (c *PostRequest) Preapproved() bool {
+	if c == nil {
+		return false
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.preapproved
@@ -199,6 +208,9 @@ func CommentBody(review, leads string) (string, error) {
 // Posted is what a posted review left on the pull request.
 type Posted struct {
 	URL string
+	// ReviewID is the GitHub id of the review that went up, 0 when none did (plain comments, or the fallback): the key a
+	// later round tells codeforge's own reviews apart from the user's by.
+	ReviewID int64
 	// Inline counts the findings posted on their lines, in a review or, for DecisionPlain, as comments of their own.
 	Inline int
 	// Decision is the type the review went up as.
@@ -277,13 +289,13 @@ func (c *PostRequest) Post(ctx context.Context, r Runner, review, leads string, 
 	if err != nil {
 		return Posted{}, err
 	}
-	url, rerr := postReview(ctx, r, repo, number, decision, body, inline)
+	url, id, rerr := postReview(ctx, r, repo, number, head, decision, body, inline)
 	if rerr == nil {
-		return Posted{URL: url, Inline: len(inline), Decision: decision}, nil
+		return Posted{URL: url, ReviewID: id, Inline: len(inline), Decision: decision}, nil
 	}
 	if decision != DecisionComment {
-		if curl, err := postReview(ctx, r, repo, number, DecisionComment, body, inline); err == nil {
-			return Posted{URL: curl, Inline: len(inline), Decision: DecisionComment, Downgraded: rerr}, nil
+		if curl, cid, err := postReview(ctx, r, repo, number, head, DecisionComment, body, inline); err == nil {
+			return Posted{URL: curl, ReviewID: cid, Inline: len(inline), Decision: DecisionComment, Downgraded: rerr}, nil
 		}
 	}
 	url, err = postComment(ctx, r, repo, number, whole)
@@ -517,20 +529,28 @@ func commentOn(ic InlineComment) reviewComment {
 }
 
 // postReview creates one GitHub review with an inline comment per finding (see ghAPIPost for how it is sent).
-func postReview(ctx context.Context, r Runner, repo, number string, decision Decision, body string, inline []InlineComment) (string, error) {
+// The review is pinned to head, the commit that was reviewed, so a push in the meantime cannot move it onto code nobody
+// read; "" leaves it to GitHub's latest.
+// It returns the review's URL and its GitHub id, 0 when the answer has none.
+func postReview(ctx context.Context, r Runner, repo, number, head string, decision Decision, body string, inline []InlineComment) (string, int64, error) {
 	req := struct {
+		CommitID string          `json:"commit_id,omitempty"` //nolint:tagliatelle // GitHub's REST field
 		Event    Decision        `json:"event"`
 		Body     string          `json:"body"`
 		Comments []reviewComment `json:"comments"`
-	}{Event: decision, Body: body, Comments: []reviewComment{}}
+	}{CommitID: head, Event: decision, Body: body, Comments: []reviewComment{}}
 	for _, ic := range inline {
 		req.Comments = append(req.Comments, commentOn(ic))
 	}
 	out, err := ghAPIPost(ctx, r, repoPath(repo)+"/pulls/"+number+"/reviews", req)
 	if err != nil {
-		return "", fmt.Errorf("posting the inline review on PR %s: %w", number, err)
+		return "", 0, fmt.Errorf("posting the inline review on PR %s: %w", number, err)
 	}
-	return htmlURL(out), nil
+	var res struct {
+		ID int64 `json:"id"`
+	}
+	_ = json.Unmarshal(out, &res) //nolint:errcheck // an answer with no id leaves 0, which records nothing
+	return htmlURL(out), res.ID, nil
 }
 
 // repoPath is the API path of repo; an empty repo is the checkout's, which gh fills in.

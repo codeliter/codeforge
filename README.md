@@ -71,6 +71,12 @@ comment as an ordinary PR comment. A submitted review cannot be deleted on GitHu
 never post.
 `--comment=yes` posts the suggested decision without asking.
 
+Review a PR you reviewed before and codeforge follows up instead of starting over: each of your open threads comes
+first, with what the author said and a verdict against the code as it is now (fixed, not fixed, agreed, held,
+answered), then a review of only the commits since. Posting replies in each thread and resolves the ones that are
+settled; a blocker is never resolved on a promise. `--follow-up` asks for this round outright, `--fresh` for a full
+review instead.
+
 `codeforge gate` reviews your branch the same way, and runs the changed packages' tests alongside. In a work or chat
 session you can just ask for a review; no second terminal is needed. Review sessions are read-only, enforced by a tool
 guard and a sandbox (macOS for now).

@@ -3,8 +3,11 @@ package src
 import (
 	"cmp"
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -15,6 +18,7 @@ import (
 	"github.com/codeliter/codeforge/src/effort"
 	"github.com/codeliter/codeforge/src/guard"
 	"github.com/codeliter/codeforge/src/review"
+	"github.com/codeliter/codeforge/src/store"
 )
 
 // reviewJudgeSteps gives a classifier judge room for one tool call and its answer; with one step a judge that
@@ -120,9 +124,16 @@ func clampFlag(args []string, name string, limit int) []string {
 func reviewArgs(ctx context.Context, bin string, rc config.ReviewConfig, judges []review.Judge, jurors jurorFactory, args []string) ([]string, error) {
 	var ref, repo string
 	var rest []string
-	comment, preapproved := false, false
+	comment, preapproved, followUp, fresh := false, false, false, false
 	for i := 0; i < len(args); i++ {
 		switch {
+		case args[i] == "--follow-up":
+			// Codeforge's own flags: review only what changed since the user's earlier review and answer the replies to
+			// it (--follow-up), or review the whole PR again even so (--fresh). Without either, an earlier review is
+			// found on its own.
+			followUp = true
+		case args[i] == "--fresh":
+			fresh = true
 		case args[i] == "--comment" || args[i] == "--comment=yes":
 			// Codeforge's own flag: post the finished review on the PR once the user confirms it (--comment=yes: without
 			// asking). Empryo never sees it.
@@ -144,6 +155,12 @@ func reviewArgs(ctx context.Context, bin string, rc config.ReviewConfig, judges 
 
 	if comment && ref == "" && repo == "" {
 		return nil, errCommentNeedsPR
+	}
+	if followUp && fresh {
+		return nil, errFollowUpFresh
+	}
+	if followUp && ref == "" && repo == "" {
+		return nil, errFollowUpNeedsPR
 	}
 	if comment && hasFlag(rest, "--json") {
 		return nil, errCommentJSON
@@ -252,7 +269,28 @@ func reviewArgs(ctx context.Context, bin string, rc config.ReviewConfig, judges 
 		// Not in this checkout: read the changed files at the PR head from GitHub, so the brief is as full as it can be.
 		packed = review.PackRemote(pctx, review.ExecRunner{}, repo, b.PR.HeadRefOid, b.Files(), b.Diff, tier)
 	}
-	prompt := panelBrief(ctx, rc, jurors, tier, b.HeadRef == "", func(t review.Tier, jury []string) string { return review.Prompt(b, t, jury) + packed })
+	round := ""
+	if !fresh {
+		fu, found, err := earlierReview(ctx, repo, number, b.PR.HeadRefOid)
+		switch {
+		case err != nil && followUp:
+			return nil, fmt.Errorf("looking for your earlier review of PR %s: %w", number, err)
+		case err != nil:
+			fmt.Fprintln(os.Stderr, "codeforge: could not check for your earlier review, so this is a full review:", err)
+		case found:
+			review.FollowUpOf(ctx).Set(fu)
+			round = fu.PromptFollowUp()
+			fmt.Fprintf(os.Stderr, "codeforge: you reviewed PR %s before; this is a follow-up round on your %s and the changes since. Use --fresh for a full review.\n",
+				number, plural(len(fu.Threads()), "open thread"))
+		case followUp:
+			return nil, fmt.Errorf("PR %s: %w", number, review.ErrNoEarlierReview)
+		}
+	}
+	prompt := panelBrief(ctx, rc, jurors, tier, b.HeadRef == "", func(t review.Tier, jury []string) string { return review.Prompt(b, t, jury) + packed + round })
+	if round != "" {
+		// Only the reviewer answers the earlier threads; the jurors' brief has the round's context but not its block.
+		prompt += "\n" + review.FollowUpNote
+	}
 	if comment && post != nil {
 		post.SetDiff(b.Diff)
 		post.SetHead(b.PR.HeadRefOid)
@@ -260,6 +298,113 @@ func reviewArgs(ctx context.Context, bin string, rc config.ReviewConfig, judges 
 	}
 	rest, note := bound(rest, tier)
 	return append(rest, prompt+"\n\n"+note), nil
+}
+
+// errFollowUpFresh and errFollowUpNeedsPR reject flags that cannot go together.
+var (
+	errFollowUpFresh   = errors.New("--follow-up and --fresh ask for opposite rounds; pick one")
+	errFollowUpNeedsPR = errors.New("--follow-up needs a PR: a follow-up answers the replies to your review of one")
+)
+
+// recordStore keeps what codeforge posted for the user, one record per pull request, in the session database.
+type recordStore struct{}
+
+// reviewRecords is where codeforge keeps what it posted for the user.
+func reviewRecords() recordStore { return recordStore{} }
+
+var errNoRecordPlace = errors.New("no repository to keep the review record under")
+
+// open opens the session database the records live in.
+func (recordStore) open(ctx context.Context) (*store.Store, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, fmt.Errorf("finding the home directory: %w", err)
+	}
+	s, err := store.Open(ctx, filepath.Join(config.Dir(home), "sessions"))
+	if err != nil {
+		return nil, fmt.Errorf("opening the session database: %w", err)
+	}
+	return s, nil
+}
+
+// Load returns the record of account's last posted review of repo#number; false when there is none or it cannot be
+// read, which only makes the next review a full one.
+func (rs recordStore) Load(ctx context.Context, account, repo, number string) (review.Record, bool) {
+	s, err := rs.open(ctx)
+	if err != nil {
+		return review.Record{}, false
+	}
+	defer s.Close() //nolint:errcheck // read only
+	data, err := s.ReviewRecord(ctx, store.ReviewKey{Account: account, Repo: repo, Number: number})
+	var rec review.Record
+	if err != nil || json.Unmarshal(data, &rec) != nil {
+		return review.Record{}, false
+	}
+	return rec, true
+}
+
+// Update builds the next record of account's review of repo#number from the one before it with merge, in one
+// transaction keyed by account, repo and number: each account has its own history, and an update replaces.
+func (rs recordStore) Update(ctx context.Context, account, repo, number string, merge func(old review.Record, ok bool) review.Record) error {
+	if account == "" || !strings.Contains(repo, "/") || number == "" {
+		return fmt.Errorf("%w: %q %q #%s", errNoRecordPlace, account, repo, number)
+	}
+	s, err := rs.open(ctx)
+	if err != nil {
+		return err
+	}
+	defer s.Close() //nolint:errcheck // the transaction has committed or failed by then
+	return s.UpdateReviewRecord(ctx, store.ReviewKey{Account: account, Repo: repo, Number: number}, func(old []byte) ([]byte, error) {
+		var prev review.Record
+		ok := old != nil && json.Unmarshal(old, &prev) == nil
+		next := merge(prev, ok)
+		data, err := json.Marshal(next)
+		if err != nil {
+			return nil, fmt.Errorf("encoding the review record: %w", err)
+		}
+		return data, nil
+	})
+}
+
+// currentLogin is the GitHub account gh is signed in as, "" when it cannot tell.
+func currentLogin(ctx context.Context) string {
+	out, err := review.ExecRunner{}.Run(ctx, "gh", "api", "user", "--jq", ".login")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// fullRepo names repo as owner/name, asking gh for the checkout's own when it is "".
+func fullRepo(ctx context.Context, repo string) string {
+	if repo != "" {
+		return repo
+	}
+	return currentRepo(ctx)
+}
+
+// earlierReview looks for the user's earlier review of repo#number, so this review can be a follow-up round on it.
+func earlierReview(ctx context.Context, repo, number, head string) (*review.FollowUp, bool, error) {
+	lctx, cancel := context.WithTimeout(ctx, review.LoadLimit)
+	defer cancel()
+	// The record is this account's own: another account on the same machine has a history of its own.
+	rec, hasRec := review.Record{}, false
+	me := currentLogin(lctx)
+	if me != "" {
+		rec, hasRec = reviewRecords().Load(lctx, me, fullRepo(lctx, repo), number)
+	} else {
+		fmt.Fprintln(os.Stderr, "codeforge: could not tell which GitHub account is signed in, so what codeforge recorded of your earlier reviews is not used; every earlier thread counts as possibly blocking")
+	}
+	fu, found, err := review.LoadFollowUp(lctx, review.ExecRunner{}, repo, number, head, rec, hasRec)
+	if err != nil {
+		return nil, false, fmt.Errorf("reading the PR's reviews: %w", err)
+	}
+	// The round reads the PR as whoever gh is signed in as by then: one account's record never goes with another's
+	// threads.
+	if hasRec && found && fu.Me() != me {
+		return nil, false, fmt.Errorf("%w: the record was read as %s, but the PR as %s; review again", errAccountChanged, me, cmp.Or(fu.Me(), "no account"))
+	}
+	return fu, found, nil
 }
 
 // withSystemNote appends note to the run's system prompt, or adds one. Review sessions carry the time limit this way,

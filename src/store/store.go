@@ -1,4 +1,6 @@
-// Package store persists launch identity and inert learning evidence, never approvals or review verdicts.
+// Package store persists launch identity, inert learning evidence, and a record of what codeforge posted on pull
+// requests for the user, so a later review can follow up on it. It never holds approvals, and never a verdict that
+// lets anything through: a review record only ever says what went up.
 package store
 
 import (

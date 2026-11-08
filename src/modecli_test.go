@@ -17,9 +17,12 @@ import (
 
 // The engine fixture models Empryo's contract: only headless runs submit a
 // positional prompt; the TUI must reopen the conversation saved by that run.
+// Jurors run beside the reviewer, so each launch writes its record under a lock: two at once never interleave.
 const modeCLIEngine = `#!/bin/sh
+while ! mkdir "$CODEFORGE_CLI_CAPTURE.lock" 2>/dev/null; do sleep 0.01; done
 printf 'BEGIN\n' >> "$CODEFORGE_CLI_CAPTURE"
 printf '%s\n' "$@" >> "$CODEFORGE_CLI_CAPTURE"
+rmdir "$CODEFORGE_CLI_CAPTURE.lock"
 headless=0
 id=
 while [ "$#" -gt 0 ]; do

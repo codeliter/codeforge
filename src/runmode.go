@@ -174,6 +174,7 @@ func startReviewClock(ctx context.Context) (work, engine context.Context, cancel
 	end := time.Now().Add(review.HardLimit)
 	pipe, post := &review.Pipeline{}, &review.PostRequest{}
 	engine = review.WithDisplay(review.WithPost(review.WithPipeline(review.WithDeadline(ctx, end), pipe), post), &review.Display{})
+	engine = review.WithFollowUp(engine, &review.FollowUp{})
 	work, cancel = context.WithDeadline(engine, end)
 	return work, engine, cancel
 }

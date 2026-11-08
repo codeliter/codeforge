@@ -173,8 +173,8 @@ func TestRunReviewEngine_TheUserPicksTheDecisionThatIsPosted(t *testing.T) {
 
 func TestRunReviewEngine_APartialPlainPostSaysWhatIsOnThePR(t *testing.T) {
 	f := newPostFixture(t, styledEngine, 0)
-	// gh posts the first comment and fails on the next.
-	gh := "#!/bin/sh\nif [ -e \"" + f.ghArgs + "\" ]; then echo 'HTTP 502' >&2; exit 1; fi\ntouch \"" + f.ghArgs + "\"\necho '{\"html_url\":\"https://github.com/acme/w/pull/42#discussion_r1\"}'\n"
+	// gh tells who is signed in, posts the first comment and fails on the next.
+	gh := "#!/bin/sh\nif [ \"$1\" = api ] && [ \"$2\" = user ]; then echo me; exit 0; fi\nif [ -e \"" + f.ghArgs + "\" ]; then echo 'HTTP 502' >&2; exit 1; fi\ntouch \"" + f.ghArgs + "\"\necho '{\"html_url\":\"https://github.com/acme/w/pull/42#discussion_r1\"}'\n"
 	require.NoError(t, os.WriteFile(filepath.Join(filepath.Dir(f.ghArgs), "gh"), []byte(gh), execPerm))
 	onTerminal(t, true)
 	pressing(t, "4", nil)
