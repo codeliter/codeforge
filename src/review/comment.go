@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -21,7 +22,7 @@ import (
 type PostRequest struct {
 	mu           sync.Mutex
 	repo, number string
-	diff         string
+	diff, head   string
 	enabled      bool
 	preapproved  bool
 }
@@ -55,6 +56,13 @@ func (c *PostRequest) SetDiff(diff string) {
 	c.diff = diff
 }
 
+// SetHead records the commit at the head of the pull request, which comments on its lines are pinned to.
+func (c *PostRequest) SetHead(sha string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.head = sha
+}
+
 // Preapprove records that the user asked to post without being asked again (--comment=yes).
 func (c *PostRequest) Preapprove() {
 	c.mu.Lock()
@@ -83,7 +91,7 @@ func (c *PostRequest) Enabled() bool {
 // The persona is a style, never a claim to be someone: the footer says the comment came from codeforge.
 const CommentNote = "This review will be posted on the PR from my GitHub account as a GitHub review, by codeforge once I choose to; you post nothing. " +
 	"Each finding whose path:line is on the diff becomes an inline comment on that line and your final comment becomes the review's body. " +
-	"Your closing Decision line is only a suggestion: I pick Approve, Comment or Request changes myself, or post it as plain PR comments instead, one per file (up to ten) and then the final comment. " +
+	"Your closing Decision line is only a suggestion: I pick Approve, Comment or Request changes myself, or post the same comments without a review around them. " +
 	"So that every finding reads right either way, never refer to other comments or to where a comment sits. " +
 	"Write it as I would, addressed to the author, in my voice as codeforge-persona describes it (codeforge-voice where it is silent), in the order the codeforge-review skill gives: " +
 	"the findings, then the final comment, then the Decision line. " +
@@ -141,6 +149,14 @@ func cutAtLine(body string, limit int) string {
 	return head + cutNote
 }
 
+// closeFence closes a code block body leaves open, so text added after it is not read as code.
+func closeFence(body string) string {
+	if fence := openFence(strings.Split(body, "\n")); fence != "" {
+		return body + "\n" + fence
+	}
+	return body
+}
+
 // cutNote ends a comment cut to fit; maxCommentBytes leaves room for it, and for a closing fence, under GitHub's limit.
 const cutNote = "\n\n_The rest was cut: GitHub limits a comment's length._"
 
@@ -166,7 +182,7 @@ const leadsRule = "\n\n---\n"
 // says where it came from. When the whole is too long for GitHub the review is cut, never a lead; if the leads alone
 // cannot fit it returns ErrNoRoom.
 func CommentBody(review, leads string) (string, error) {
-	body := strings.TrimSpace(review)
+	body := closeFence(strings.TrimSpace(review)) // the leads and the footer must never read as code
 	extra := strings.TrimSpace(leads)
 	if extra != "" {
 		if len(extra)+len(leadsRule) > maxCommentBytes-min(len(body), minReviewShare) {
@@ -183,7 +199,7 @@ func CommentBody(review, leads string) (string, error) {
 // Posted is what a posted review left on the pull request.
 type Posted struct {
 	URL string
-	// Inline counts the findings posted on their lines; for plain comments (DecisionPlain), the file comments posted.
+	// Inline counts the findings posted on their lines, in a review or, for DecisionPlain, as comments of their own.
 	Inline int
 	// Decision is the type the review went up as.
 	Decision Decision
@@ -194,6 +210,9 @@ type Posted struct {
 	Fallback error
 	// Final reports, for plain comments, whether the final comment went up as a comment of its own.
 	Final bool
+	// Refused holds, for plain comments, why GitHub refused each finding it would not put on its line; those findings
+	// are in the final comment instead.
+	Refused []error
 }
 
 // markdownHeading matches a heading line. A review a person leaves has none, so none is posted, whatever the model wrote.
@@ -231,10 +250,11 @@ func collapseBlankLines(s string) string {
 // changes; "" takes the review's own suggestion): each finding on a line of the diff is an inline comment there, and
 // the final comment, any finding off the diff and the leads are its body. A decision GitHub refuses (your own PR) goes
 // up as a Comment; a review GitHub refuses altogether goes up as one plain comment, so nothing written is lost.
-// DecisionPlain posts no review: ordinary PR comments, one per file and then the final comment (see postPlain).
+// DecisionPlain posts no review: a comment on each finding's line and then the final comment, each deletable on its
+// own (see postPlain).
 func (c *PostRequest) Post(ctx context.Context, r Runner, review, leads string, decision Decision) (Posted, error) {
 	c.mu.Lock()
-	repo, number, diff := c.repo, c.number, c.diff
+	repo, number, diff, head := c.repo, c.number, c.diff, c.head
 	c.mu.Unlock()
 	if number == "" {
 		return Posted{}, ErrNoPR
@@ -244,7 +264,7 @@ func (c *PostRequest) Post(ctx context.Context, r Runner, review, leads string, 
 		decision = suggested
 	}
 	if decision == DecisionPlain {
-		return postPlain(ctx, r, repo, number, review, leads)
+		return postPlain(ctx, r, repo, number, head, diff, review, leads)
 	}
 	// The fallback comment carries every finding in its body, each named by its place and without its label.
 	all, _ := SplitFindings(review, "")
@@ -270,76 +290,162 @@ func (c *PostRequest) Post(ctx context.Context, r Runner, review, leads string, 
 	return Posted{URL: url, Fallback: rerr}, err
 }
 
-// MaxPlainFileComments caps the comments a plain post makes for files: each one notifies everyone on the PR, and many
-// in a row run into GitHub's limit on creating content. The files past it go into the final comment.
-const MaxPlainFileComments = 10
+// MaxPlainLineComments caps the line comments a plain post makes: each one notifies everyone on the PR, and many in a
+// row run into GitHub's limit on creating content. The findings past it go into the final comment.
+const MaxPlainLineComments = 20
 
-// postPlain posts the review as ordinary PR comments, no GitHub review: one per file with that file's findings, in the
-// order the review gives them, then the final comment with the leads and the footer. Inline counts the file comments
-// and Final reports whether a final comment went up. On a failure partway, Posted says what is already on the PR.
-func postPlain(ctx context.Context, r Runner, repo, number, review, leads string) (Posted, error) {
-	files, rest := FileComments(review)
-	closing := withoutHeadings(rest)
-	if len(files) > MaxPlainFileComments {
-		// After the reviewer's own words, so a cut to fit takes from the folded findings first.
-		var folded []string
-		for _, f := range files[MaxPlainFileComments:] {
-			folded = append(folded, f.Body)
-		}
-		closing = strings.TrimSpace(closing + "\n\n---\n\n" + strings.Join(folded, "\n\n"))
-		files = files[:MaxPlainFileComments]
+// postPlain posts the review as comments that are no GitHub review, so each can be edited or deleted on its own: every
+// finding on a line of the diff as a comment on that line, with the code shown above it as in a review, then the final
+// comment, which holds any finding off the diff and the leads, as an ordinary PR comment. Inline counts the line
+// comments and Final reports whether a final comment went up. On a failure partway, Posted says what is on the PR.
+func postPlain(ctx context.Context, r Runner, repo, number, head, diff, review, leads string) (Posted, error) {
+	summary, inline := SplitFindings(review, diff)
+	closing := withoutHeadings(summary)
+	var folded []string // findings that go in the final comment after all: past the cap, or refused by GitHub
+	for _, ic := range inline[min(len(inline), MaxPlainLineComments):] {
+		folded = append(folded, Named(ic.Place(), ic.Body))
 	}
-	if len(files) == 0 && closing == "" && strings.TrimSpace(leads) == "" {
+	inline = inline[:min(len(inline), MaxPlainLineComments)]
+	if len(inline) == 0 && closing == "" && len(folded) == 0 && strings.TrimSpace(leads) == "" {
 		return Posted{}, ErrNoReviewText
 	}
-	final, err := CommentBody(closing, leads)
-	if err != nil {
+	// The leads must reach the PR. Check they fit beside the most the final comment can hold, every finding folded in
+	// (past the cap, or refused on its line), before anything goes up: nothing is posted when they cannot.
+	worst := slices.Clone(folded)
+	for _, ic := range inline {
+		worst = append(worst, Named(ic.Place(), ic.Body))
+	}
+	if _, err := CommentBody(foldInto(closing, worst), leads); err != nil {
 		return Posted{}, err
 	}
-	// maxCommentBytes counts bytes, which are never fewer than the characters GitHub counts, so a cut in bytes keeps a
-	// comment, footer included, under GitHub's limit.
-	for i := range files {
-		files[i].Body = cutAtLine(files[i].Body, maxCommentBytes)
+	for i := range inline {
+		inline[i].Body = fitComment(inline[i].Body, maxCommentBytes)
 	}
-	if final == commentFooter {
-		// Nothing but findings: the last file comment carries the footer. (files is not empty: the check above.)
-		last := &files[len(files)-1]
-		last.Body = cutAtLine(last.Body, maxCommentBytes-len(commentFooter)) + commentFooter
-		final = ""
+	footed := closing == "" && len(folded) == 0 && strings.TrimSpace(leads) == ""
+	if footed {
+		// Nothing but findings: the last line comment carries the footer. (inline is not empty: the check above.)
+		last := &inline[len(inline)-1]
+		last.Body = closeFence(fitComment(last.Body, maxCommentBytes-len(commentFooter)-len("\n```"))) + commentFooter
+	}
+	if len(inline) > 0 && head == "" {
+		// A line comment is pinned to a commit; without the head from the brief, ask GitHub for it.
+		hctx, cancel := context.WithTimeout(ctx, PostCallLimit) // a lookup, not a post: nothing can be up if it times out
+		var err error
+		head, err = prHead(hctx, r, repo, number)
+		cancel()
+		if err != nil {
+			return Posted{}, err
+		}
 	}
 	posted := Posted{Decision: DecisionPlain}
-	for i, f := range files {
-		url, err := postCommentBounded(ctx, r, repo, number, f.Body)
-		if err != nil {
+	footerUp := false // whether a posted line comment carries the footer
+	for i, ic := range inline {
+		url, err := bounded(ctx, func(ctx context.Context) (string, error) { return postLineComment(ctx, r, repo, number, head, ic) })
+		if err == nil {
+			posted.URL, posted.Inline = url, posted.Inline+1
+			footerUp = footerUp || strings.HasSuffix(ic.Body, commentFooter)
+			continue
+		}
+		if !errors.Is(err, errRefused) {
+			// It may be up (a timeout), or GitHub is failing: posting it again could show it twice, so stop and say
+			// what is not on the PR.
 			var missing []string
-			for _, m := range files[i:] {
-				missing = append(missing, m.Path)
+			for _, m := range inline[i:] {
+				missing = append(missing, m.Place())
 			}
 			left := "the comments on " + strings.Join(missing, ", ")
-			if final != "" {
+			if !footed || len(folded) > 0 {
 				left += " and " + finalName(leads)
 			}
-			what := "not posted"
-			if errors.Is(err, ErrMayBePosted) {
-				what = "not posted, except possibly the one on " + f.Path + ", which may already be on the PR"
+			if n := len(posted.Refused); n > 0 {
+				left += fmt.Sprintf(" (which holds the %s GitHub refused)", CountLineComments(n))
 			}
-			return posted, fmt.Errorf("posted %d of %d file comments; %s are %s: %w", i, len(files), left, what, err)
-		}
-		posted.URL, posted.Inline = url, i+1
-	}
-	if final != "" {
-		url, err := postCommentBounded(ctx, r, repo, number, final)
-		if err != nil {
-			what := "is not posted"
+			what := "are not posted"
 			if errors.Is(err, ErrMayBePosted) {
-				what = "may already be on the PR"
+				what += ", except possibly the one on " + ic.Place() + ", which may already be on the PR"
 			}
-			return posted, fmt.Errorf("posted %s; %s %s: %w", CountFileComments(len(files)), finalName(leads), what, err)
+			return posted, fmt.Errorf("posted %s; %s %s: %w", CountLineComments(posted.Inline), left, what, err)
 		}
-		posted.URL, posted.Final = url, true
+		// GitHub would not put it on its line (a head that moved, a file too large to diff): it joins the final
+		// comment, named by its place, so it is not lost.
+		folded = append(folded, Named(ic.Place(), strings.TrimSuffix(ic.Body, commentFooter)))
+		posted.Refused = append(posted.Refused, err)
 	}
+	if footed && len(posted.Refused) == 0 {
+		return posted, nil
+	}
+	final, err := CommentBody(foldInto(closing, folded), leads)
+	if err != nil {
+		return posted, err
+	}
+	if footerUp {
+		final = strings.TrimSuffix(final, commentFooter) // said once, on the line comment
+	}
+	url, err := bounded(ctx, func(ctx context.Context) (string, error) { return postComment(ctx, r, repo, number, final) })
+	if err != nil {
+		what := "is not posted"
+		if errors.Is(err, ErrMayBePosted) {
+			what = "may already be on the PR"
+		}
+		return posted, fmt.Errorf("posted %s; %s %s: %w", CountLineComments(posted.Inline), finalName(leads), what, err)
+	}
+	posted.URL, posted.Final = url, true
 	return posted, nil
 }
+
+// foldInto puts findings that could not sit on their lines into the final comment, after the reviewer's own words so
+// a cut to fit takes from them first.
+func foldInto(closing string, folded []string) string {
+	if len(folded) == 0 {
+		return closing
+	}
+	return strings.TrimSpace(closing + "\n\n---\n\n" + strings.Join(folded, "\n\n"))
+}
+
+// postLineComment posts one comment on a line of the pull request's diff, outside any review, so its author can delete
+// it on its own.
+func postLineComment(ctx context.Context, r Runner, repo, number, head string, ic InlineComment) (string, error) {
+	req := struct {
+		reviewComment
+		CommitID string `json:"commit_id"`
+	}{commentOn(ic), head}
+	out, err := ghAPIPost(ctx, r, repoPath(repo)+"/pulls/"+number+"/comments", req)
+	if err != nil {
+		if strings.Contains(err.Error(), "(HTTP 422)") { // gh's own wording for the status
+			err = fmt.Errorf("%w: %w", errRefused, err)
+		}
+		return "", fmt.Errorf("posting the comment on %s: %w", ic.Place(), err)
+	}
+	return htmlURL(out), nil
+}
+
+// errRefused marks a line comment GitHub answered 422 for: it will not sit on that line (the head moved, the file is
+// too large to diff), and nothing was created, so it can safely go in the final comment instead.
+var errRefused = errors.New("GitHub would not put it on its line")
+
+// fitComment is cutAtLine for a comment that may hold a ```suggestion block: a cut one would apply an incomplete
+// replacement with one click, so a comment that must be cut keeps its code as a plain block.
+func fitComment(body string, limit int) string {
+	if len(body) <= limit {
+		return body
+	}
+	return cutAtLine(plainCode(body), limit)
+}
+
+// prHead asks GitHub for the commit at the head of the pull request.
+func prHead(ctx context.Context, r Runner, repo, number string) (string, error) {
+	args := []string{"pr", "view", number, "--json", "headRefOid", "--jq", ".headRefOid"}
+	if repo != "" {
+		args = append(args, "--repo", repo)
+	}
+	out, err := r.Run(ctx, "gh", args...)
+	if sha := strings.TrimSpace(string(out)); err == nil && sha != "" {
+		return sha, nil
+	}
+	return "", fmt.Errorf("finding the head commit of PR %s, which line comments are pinned to: %w", number, errors.Join(err, errNoHead))
+}
+
+var errNoHead = errors.New("no head commit")
 
 // finalName names the final comment in an error, with the unconfirmed blocking leads when it carries them, since
 // those must reach the PR.
@@ -357,23 +463,23 @@ const PostCallLimit = 20 * time.Second
 // ErrMayBePosted marks a comment whose gh call ran out of time: GitHub may have created it all the same.
 var ErrMayBePosted = errors.New("it timed out, so it may be on the PR already; check before posting it by hand")
 
-// postCommentBounded is postComment within PostCallLimit.
-func postCommentBounded(ctx context.Context, r Runner, repo, number, body string) (string, error) {
+// bounded runs one gh call that posts a comment within PostCallLimit.
+func bounded(ctx context.Context, post func(context.Context) (string, error)) (string, error) {
 	cctx, cancel := context.WithTimeout(ctx, PostCallLimit)
 	defer cancel()
-	url, err := postComment(cctx, r, repo, number, body)
+	url, err := post(cctx)
 	if err != nil && cctx.Err() != nil {
 		return "", fmt.Errorf("%w (%w)", err, ErrMayBePosted)
 	}
 	return url, err
 }
 
-// CountFileComments says "1 file comment" or "n file comments".
-func CountFileComments(n int) string {
+// CountLineComments says "1 line comment" or "n line comments".
+func CountLineComments(n int) string {
 	if n == 1 {
-		return "1 file comment"
+		return "1 line comment"
 	}
-	return fmt.Sprintf("%d file comments", n)
+	return fmt.Sprintf("%d line comments", n)
 }
 
 func postComment(ctx context.Context, r Runner, repo, number, body string) (string, error) {
@@ -390,55 +496,86 @@ func postComment(ctx context.Context, r Runner, repo, number, body string) (stri
 	return strings.TrimSpace(string(out)), nil
 }
 
-// reviewComment is one inline comment of a GitHub review, as the API takes it.
+// reviewComment is one inline comment of a GitHub review, as the API takes it. A comment on a range also has its first
+// line and side.
 type reviewComment struct {
-	Path string `json:"path"`
-	Line int    `json:"line"`
-	Side string `json:"side"`
-	Body string `json:"body"`
+	Path      string `json:"path"`
+	Line      int    `json:"line"`
+	Side      string `json:"side"`
+	StartLine int    `json:"start_line,omitempty"`
+	StartSide string `json:"start_side,omitempty"`
+	Body      string `json:"body"`
 }
 
-// postReview creates one GitHub review with an inline comment per finding. The request body is written as json to a
-// private temporary file and sent with --input: gh's own field flags cannot build an array of objects that mixes
-// strings and numbers (it groups --raw-field and --field values separately, so lines landed on the wrong comments and
-// GitHub answered 422), and a file keeps the review's text out of argument parsing altogether.
-func postReview(ctx context.Context, r Runner, repo, number string, decision Decision, body string, inline []InlineComment) (string, error) {
-	if repo == "" {
-		repo = "{owner}/{repo}" // gh fills these in from the checkout
+// commentOn is the API form of ic, on the new side of the diff.
+func commentOn(ic InlineComment) reviewComment {
+	c := reviewComment{Path: ic.Path, Line: ic.Line, Side: "RIGHT", Body: ic.Body}
+	if ic.StartLine > 0 {
+		c.StartLine, c.StartSide = ic.StartLine, "RIGHT"
 	}
+	return c
+}
+
+// postReview creates one GitHub review with an inline comment per finding (see ghAPIPost for how it is sent).
+func postReview(ctx context.Context, r Runner, repo, number string, decision Decision, body string, inline []InlineComment) (string, error) {
 	req := struct {
 		Event    Decision        `json:"event"`
 		Body     string          `json:"body"`
 		Comments []reviewComment `json:"comments"`
 	}{Event: decision, Body: body, Comments: []reviewComment{}}
 	for _, ic := range inline {
-		req.Comments = append(req.Comments, reviewComment{Path: ic.Path, Line: ic.Line, Side: "RIGHT", Body: ic.Body})
+		req.Comments = append(req.Comments, commentOn(ic))
 	}
-	data, err := json.Marshal(req)
+	out, err := ghAPIPost(ctx, r, repoPath(repo)+"/pulls/"+number+"/reviews", req)
 	if err != nil {
-		return "", fmt.Errorf("encoding the review: %w", err)
+		return "", fmt.Errorf("posting the inline review on PR %s: %w", number, err)
+	}
+	return htmlURL(out), nil
+}
+
+// repoPath is the API path of repo; an empty repo is the checkout's, which gh fills in.
+func repoPath(repo string) string {
+	if repo == "" {
+		repo = "{owner}/{repo}"
+	}
+	return "repos/" + repo
+}
+
+// ghAPIPost sends payload as json to the GitHub API path. It goes through a private temporary file and --input: gh's
+// own field flags cannot build an array of objects that mixes strings and numbers (it groups --raw-field and --field
+// values separately, so lines landed on the wrong comments and GitHub answered 422), and a file keeps the review's text
+// out of argument parsing altogether.
+func ghAPIPost(ctx context.Context, r Runner, path string, payload any) ([]byte, error) {
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("encoding the request: %w", err)
 	}
 	f, err := os.CreateTemp("", "codeforge-review-*.json")
 	if err != nil {
-		return "", fmt.Errorf("writing the review: %w", err)
+		return nil, fmt.Errorf("writing the request: %w", err)
 	}
 	defer os.Remove(f.Name()) //nolint:errcheck // best effort; the file is private and in the temp directory
 	if _, err := f.Write(data); err != nil {
 		_ = f.Close()
-		return "", fmt.Errorf("writing the review: %w", err)
+		return nil, fmt.Errorf("writing the request: %w", err)
 	}
 	if err := f.Close(); err != nil {
-		return "", fmt.Errorf("writing the review: %w", err)
+		return nil, fmt.Errorf("writing the request: %w", err)
 	}
-	out, err := r.Run(ctx, "gh", "api", "--method", "POST", "repos/"+repo+"/pulls/"+number+"/reviews", "--input", f.Name())
+	out, err := r.Run(ctx, "gh", "api", "--method", "POST", path, "--input", f.Name())
 	if err != nil {
-		return "", fmt.Errorf("posting the inline review on PR %s: %w", number, err)
+		return nil, fmt.Errorf("calling the GitHub API: %w", err)
 	}
+	return out, nil
+}
+
+// htmlURL is the html_url of a GitHub API answer, or the answer itself when it has none.
+func htmlURL(out []byte) string {
 	var res struct {
 		HTMLURL string `json:"html_url"`
 	}
 	if json.Unmarshal(out, &res) == nil && res.HTMLURL != "" {
-		return res.HTMLURL, nil
+		return res.HTMLURL
 	}
-	return strings.TrimSpace(string(out)), nil
+	return strings.TrimSpace(string(out))
 }

@@ -65,9 +65,10 @@ all, `q` quits, and `c` opens a chat to ask about the review. You can also ask l
 The review reads like one you would leave: a comment on each place in the change, then a direct final comment, with a
 suggested decision. To post it, add `--comment` and pick the decision yourself in the review: `1` Approve, `2` Comment
 or `3` Request changes. It goes up as one GitHub review of that type in your voice, with each finding as an inline
-comment on its line. `4` posts it as ordinary PR comments instead, with no review attached: one per file (up to 10; the
-findings on any further files go into the final comment), then the final comment, each of which you can edit or
-delete later. The model itself can never post.
+comment on its line. `4` posts the same comments without a review around them, so you can delete each one later: every
+finding on its line with the code above it (up to 20; further findings join the final comment), then the final
+comment as an ordinary PR comment. A submitted review cannot be deleted on GitHub, only edited. The model itself can
+never post.
 `--comment=yes` posts the suggested decision without asking.
 
 `codeforge gate` reviews your branch the same way, and runs the changed packages' tests alongside. In a work or chat

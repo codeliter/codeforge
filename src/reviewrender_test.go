@@ -161,7 +161,7 @@ func TestRunReviewEngine_TheUserPicksTheDecisionThatIsPosted(t *testing.T) {
 	require.True(t, shown.Items[1].Open, "the final comment is open at the start")
 	require.Contains(t, shown.Items[1].Body, "Adds x as the description says.")
 	require.Equal(t, []forms.Action{
-		{Key: "1", Label: "post as Approve (suggested)"}, {Key: "2", Label: "post as Comment"}, {Key: "3", Label: "post as Request changes"}, {Key: "4", Label: "post as plain PR comments"},
+		{Key: "1", Label: "post as Approve (suggested)"}, {Key: "2", Label: "post as Comment"}, {Key: "3", Label: "post as Request changes"}, {Key: "4", Label: "post as separate comments (deletable)"},
 		{Key: "c", Label: "chat about it"},
 	}, shown.Keys)
 	require.Contains(t, out, "  a.go  1 suggestion · 1 nitpick\n", "a recap stays in the terminal")
@@ -174,42 +174,52 @@ func TestRunReviewEngine_TheUserPicksTheDecisionThatIsPosted(t *testing.T) {
 func TestRunReviewEngine_APartialPlainPostSaysWhatIsOnThePR(t *testing.T) {
 	f := newPostFixture(t, styledEngine, 0)
 	// gh posts the first comment and fails on the next.
-	gh := "#!/bin/sh\nif [ -e \"" + f.ghArgs + "\" ]; then echo 'HTTP 502' >&2; exit 1; fi\ntouch \"" + f.ghArgs + "\"\necho https://github.com/acme/w/pull/42#issuecomment-1\n"
+	gh := "#!/bin/sh\nif [ -e \"" + f.ghArgs + "\" ]; then echo 'HTTP 502' >&2; exit 1; fi\ntouch \"" + f.ghArgs + "\"\necho '{\"html_url\":\"https://github.com/acme/w/pull/42#discussion_r1\"}'\n"
 	require.NoError(t, os.WriteFile(filepath.Join(filepath.Dir(f.ghArgs), "gh"), []byte(gh), execPerm))
 	onTerminal(t, true)
 	pressing(t, "4", nil)
 	_, _, err := captured(t, func() error {
-		_, err := runReviewEngine(postingContext(t), []string{f.engine, "the prompt"}, os.Environ(), time.Now().Add(10*time.Second))
+		_, err := runReviewEngine(linesContext(t), []string{f.engine, "the prompt"}, os.Environ(), time.Now().Add(10*time.Second))
 		return err
 	})
-	require.ErrorContains(t, err, "only part of the review was posted, up to https://github.com/acme/w/pull/42#issuecomment-1")
-	require.ErrorContains(t, err, "the final comment is not posted")
+	require.ErrorContains(t, err, "only part of the review was posted, up to https://github.com/acme/w/pull/42#discussion_r1")
+	require.ErrorContains(t, err, "posted 1 line comment; the comments on a.go:2 and the final comment are not posted",
+		"a 502 is no refusal: it may have created the comment, so nothing more is posted")
 	require.NotContains(t, err.Error(), "the review above was not posted")
 }
 
 func TestPostBound_PlainHasRoomForEveryComment(t *testing.T) {
 	require.Equal(t, postLimit, postBound(review.DecisionComment))
-	require.Equal(t, review.PostCallLimit*(review.MaxPlainFileComments+1), postBound(review.DecisionPlain))
+	require.Equal(t, review.PostCallLimit*(review.MaxPlainLineComments+plainOtherCalls), postBound(review.DecisionPlain))
 }
 
-func TestRunReviewEngine_FourPostsPlainCommentsAndNoReview(t *testing.T) {
+// linesContext is postingContext for a PR whose diff shows lines 1 and 2 of a.go, at head abc123.
+func linesContext(t *testing.T) context.Context {
+	t.Helper()
+	post := &review.PostRequest{}
+	post.Target("acme/w", "42")
+	post.SetDiff("diff --git a/a.go b/a.go\n--- a/a.go\n+++ b/a.go\n@@ -0,0 +1,2 @@\n+x\n+y\n")
+	post.SetHead("abc123")
+	return review.WithDisplay(review.WithPost(review.WithDeadline(t.Context(), time.Now().Add(time.Minute)), post), &review.Display{})
+}
+
+func TestRunReviewEngine_FourPostsDeletableLineCommentsAndNoReview(t *testing.T) {
 	f := newPostFixture(t, styledEngine, 0)
 	onTerminal(t, true)
 	pressing(t, "4", nil)
 	_, stderr, err := captured(t, func() error {
-		_, err := runReviewEngine(postingContext(t), []string{f.engine, "the prompt"}, os.Environ(), time.Now().Add(10*time.Second))
+		_, err := runReviewEngine(linesContext(t), []string{f.engine, "the prompt"}, os.Environ(), time.Now().Add(10*time.Second))
 		return err
 	})
 	require.NoError(t, err)
 	posted, err := os.ReadFile(f.ghArgs)
 	require.NoError(t, err)
-	calls := strings.Split(string(posted), "pr comment 42 --repo acme/w --body=")
-	require.Len(t, calls, 3, "two ordinary PR comments: %s", posted)
-	require.Equal(t, "`a.go:1`: use x\n\n`a.go:2`: tidy \n", calls[1], "the file's comment first, its findings named by their place, without labels")
-	require.True(t, strings.HasPrefix(calls[2], "Adds x as the description says."), "then the final comment")
-	require.NotContains(t, string(posted), "--input", "no review request is sent")
-	require.NotContains(t, string(posted), "/reviews")
-	require.Contains(t, stderr, "posted the review as plain PR comments: 1 file comment and the final comment")
+	require.Equal(t, 2, strings.Count(string(posted), "api --method POST repos/acme/w/pulls/42/comments --input "), "a comment on each finding's line: %s", posted)
+	require.Contains(t, string(posted), `{"path":"a.go","line":1,"side":"RIGHT","body":"use x","commit_id":"abc123"}`, "on its line, without its label")
+	require.Contains(t, string(posted), `{"path":"a.go","line":2,"side":"RIGHT","body":"tidy","commit_id":"abc123"}`)
+	require.Contains(t, string(posted), "pr comment 42 --repo acme/w --body=Adds x as the description says.", "then the final comment")
+	require.NotContains(t, string(posted), "/reviews", "no review")
+	require.Contains(t, stderr, "posted the review as separate comments you can delete one by one: 2 line comments and the final comment")
 }
 
 func TestRunReviewEngine_OnlyCOpensTheChat(t *testing.T) {

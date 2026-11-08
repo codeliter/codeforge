@@ -33,13 +33,40 @@ const maxAuditLines = 80
 // fails loudly on its own.
 func AuditLines(diff string) []string {
 	var sharp, plain []string
-	collect := func(entry, code string) {
+	eachAddedCode(diff, func(file string, line int, code string) {
+		if noiseLine.MatchString(code) || !checkedToken.MatchString(" "+code+" ") {
+			return
+		}
+		entry := fmt.Sprintf("%s:%d: %s", file, line, code)
 		if sharpToken.MatchString(" " + code + " ") {
 			sharp = append(sharp, entry)
 		} else {
 			plain = append(plain, entry)
 		}
-	}
+	})
+	out := slices.Concat(sharp, plain)
+	return out[:min(len(out), maxAuditLines)]
+}
+
+// wholeValue matches a line that logs or prints a whole value: every field of a struct goes out, secrets included,
+// and what the fields are is in a file the diff may not show.
+var wholeValue = regexp.MustCompile(`\b(zap\.(Any|Reflect|Object)|slog\.Any)\(|\)\.(Interface|Any|Object)\(|\b(Print|Println|Printf|Fprintf|Logf|Infof|Debugf|Warnf|Warningf|Fatalf|Panicf|Tracef|Infow|Debugw|Warnw)\([^)]*%[+#]v`)
+
+// ExposureLines lists the added code lines that log or print a whole value, as "path:line: code", for the reviewer to
+// check what that value holds.
+func ExposureLines(diff string) []string {
+	var out []string
+	eachAddedCode(diff, func(file string, line int, code string) {
+		if wholeValue.MatchString(code) && len(out) < maxAuditLines {
+			out = append(out, fmt.Sprintf("%s:%d: %s", file, line, code))
+		}
+	})
+	return out
+}
+
+// eachAddedCode calls fn with every added, non-empty line of code in diff, outside tests and docs, with its file and its
+// line number in the new version.
+func eachAddedCode(diff string, fn func(file string, line int, code string)) {
 	file, line, inHunk := "", 0, false
 	for _, l := range strings.Split(diff, "\n") {
 		switch {
@@ -65,9 +92,8 @@ func AuditLines(diff string) []string {
 		}
 		switch {
 		case strings.HasPrefix(l, "+"):
-			code := strings.TrimSpace(l[1:])
-			if code != "" && !noiseLine.MatchString(code) && checkedToken.MatchString(" "+code+" ") {
-				collect(fmt.Sprintf("%s:%d: %s", file, line, code), code)
+			if code := strings.TrimSpace(l[1:]); code != "" {
+				fn(file, line, code)
 			}
 			line++
 		case strings.HasPrefix(l, " ") || l == "":
@@ -77,8 +103,6 @@ func AuditLines(diff string) []string {
 			inHunk = false
 		}
 	}
-	out := slices.Concat(sharp, plain)
-	return out[:min(len(out), maxAuditLines)]
 }
 
 func pathExt(f string) string {
@@ -90,11 +114,21 @@ func pathExt(f string) string {
 
 // auditSection renders the checklist for the brief, or "" when the diff has no such lines.
 func auditSection(diff string) string {
+	var s strings.Builder
+	if exposed := ExposureLines(diff); len(exposed) > 0 {
+		s.WriteString("\n<check_what_is_logged>\n")
+		s.WriteString("These added lines log or print a whole value. Open the type of each value, even when its file is not in the diff, " +
+			"and check whether any field holds a secret, a token, a password inside a URL or personal data (CWE-532). " +
+			"A line that writes one is a blocking finding even when the leak predates the change, because the change rewrites it.\n")
+		for _, l := range exposed {
+			s.WriteString(l + "\n")
+		}
+		s.WriteString("</check_what_is_logged>\n")
+	}
 	lines := AuditLines(diff)
 	if len(lines) == 0 {
-		return ""
+		return s.String()
 	}
-	var s strings.Builder
 	s.WriteString("\n<check_each_line>\n")
 	s.WriteString("These added lines hold a comparison, boolean operator or bound. Check every one against what the code around it intends: " +
 		"is it < or <=, && or ||, == or !=, are the arguments in the right order, is the bound off by one? " +

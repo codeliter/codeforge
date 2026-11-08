@@ -13,9 +13,9 @@ const (
 	DecisionComment        Decision = "COMMENT"
 	DecisionApprove        Decision = "APPROVE"
 	DecisionRequestChanges Decision = "REQUEST_CHANGES"
-	// DecisionPlain posts no GitHub review at all: the review goes up as ordinary PR comments, one per file and then
-	// the final comment, which their author can edit or delete like any other. A review never suggests it; only the
-	// user picks it.
+	// DecisionPlain posts no GitHub review at all: each finding goes up as a comment on its line, as in a review, and
+	// the final comment as an ordinary PR comment, each of which its author can edit or delete on its own. A review
+	// never suggests it; only the user picks it.
 	DecisionPlain Decision = "PLAIN"
 )
 
@@ -27,7 +27,7 @@ func (d Decision) Label() string {
 	case DecisionRequestChanges:
 		return "Request changes"
 	case DecisionPlain:
-		return "plain PR comments"
+		return "separate comments (deletable)"
 	}
 	return "Comment"
 }

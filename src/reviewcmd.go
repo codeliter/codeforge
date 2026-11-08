@@ -243,14 +243,19 @@ func reviewArgs(ctx context.Context, bin string, rc config.ReviewConfig, judges 
 	}
 	// The changed files come with the brief, so the jurors and the reviewer read instead of fetching and still reach a verdict.
 	packed := ""
-	if b.HeadRef != "" {
-		pctx, pcancel := context.WithTimeout(ctx, review.LoadLimit)
-		defer pcancel()
+	pctx, pcancel := context.WithTimeout(ctx, review.LoadLimit)
+	defer pcancel()
+	switch {
+	case b.HeadRef != "":
 		packed = review.PackRef(pctx, review.ExecRunner{}, b.HeadRef, b.Files(), b.Diff, tier)
+	case b.PR.HeadRefOid != "":
+		// Not in this checkout: read the changed files at the PR head from GitHub, so the brief is as full as it can be.
+		packed = review.PackRemote(pctx, review.ExecRunner{}, repo, b.PR.HeadRefOid, b.Files(), b.Diff, tier)
 	}
 	prompt := panelBrief(ctx, rc, jurors, tier, b.HeadRef == "", func(t review.Tier, jury []string) string { return review.Prompt(b, t, jury) + packed })
 	if comment && post != nil {
 		post.SetDiff(b.Diff)
+		post.SetHead(b.PR.HeadRefOid)
 		prompt += "\n\n" + review.CommentNote
 	}
 	rest, note := bound(rest, tier)

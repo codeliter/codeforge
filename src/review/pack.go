@@ -1,13 +1,20 @@
 package review
 
 import (
+	"cmp"
 	"context"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"net/url"
 	"path"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 const (
@@ -75,6 +82,161 @@ func PackRef(ctx context.Context, r Runner, ref string, files []string, diff str
 		s.WriteString(auditSection(diff))
 	}
 	return s.String()
+}
+
+// PackRemote is Pack for a PR that is not in this checkout: the changed files are read at the head commit sha from
+// GitHub, all at once. Its callers cannot be searched without the repository, so the brief says so; the reviewer still
+// starts with every changed file instead of spending its steps fetching them.
+func PackRemote(ctx context.Context, r Runner, repo, sha string, files []string, diff string, t Tier) string {
+	got := fetchRemote(ctx, r, repo, sha, files)
+	var s strings.Builder
+	s.WriteString(packFiles(files, diff, packBudget(t), func(f string) ([]byte, error) {
+		data, ok := got[f]
+		if !ok {
+			return nil, fmt.Errorf("reading %s at %s: %w", f, sha, errNotFetched)
+		}
+		return data, nil
+	}))
+	s.WriteString("\nCallers of the changed code are not listed: the PR is not in this checkout. Check a changed exported symbol's callers with `gh search code` or `gh api` when a finding depends on them.\n")
+	if withAudit {
+		s.WriteString(auditSection(diff))
+	}
+	return s.String()
+}
+
+var errNotFetched = errors.New("not fetched")
+
+// remoteFetches bounds the files read from GitHub at once.
+const remoteFetches = 8
+
+// maxRemoteFileBytes skips a file too large to be worth sending whole or in part; packFiles cuts what it keeps far
+// below this.
+const maxRemoteFileBytes = 1 << 20
+
+// fetchRemote reads files at commit sha in repo ("" for this checkout's) from GitHub, remoteFetches at a time. Each is
+// read as the exact git blob its tree entry names, and only when that entry is a regular file: GitHub's contents API
+// follows a symlink to the file it points at, so a link named config.go could bring a .env into the brief. A file that
+// cannot be read, is too large, or whose path is not a plain path inside the repository is left out.
+func fetchRemote(ctx context.Context, r Runner, repo, sha string, files []string) map[string][]byte {
+	api := "repos/" + cmp.Or(repo, "{owner}/{repo}") + "/git/"
+	var wanted []string
+	for _, f := range files {
+		if filepath.IsLocal(f) && !strings.ContainsAny(f, "?#\\") && !secretName.MatchString(f) {
+			wanted = append(wanted, f)
+		}
+	}
+	blobs := regularBlobs(ctx, r, api, sha, wanted)
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	slots := make(chan struct{}, remoteFetches)
+	got := map[string][]byte{}
+	for f, blob := range blobs {
+		select {
+		case slots <- struct{}{}:
+		case <-ctx.Done():
+			wg.Wait()
+			return got
+		}
+		wg.Go(func() {
+			defer func() { <-slots }()
+			var b struct {
+				Encoding string `json:"encoding"`
+				Content  string `json:"content"`
+			}
+			if !ghJSON(ctx, r, api+"blobs/"+blob, &b) || b.Encoding != "base64" {
+				return
+			}
+			data, err := base64.StdEncoding.DecodeString(strings.ReplaceAll(b.Content, "\n", ""))
+			if err != nil {
+				return
+			}
+			mu.Lock()
+			got[f] = data
+			mu.Unlock()
+		})
+	}
+	wg.Wait()
+	return got
+}
+
+// treeEntry is one entry of a git tree as GitHub's API gives it.
+type treeEntry struct {
+	Path string `json:"path"`
+	Mode string `json:"mode"`
+	Type string `json:"type"`
+	SHA  string `json:"sha"`
+	Size int    `json:"size"`
+}
+
+// regularBlobs maps each of files to the blob of its tree entry at commit sha, keeping regular files (mode 100644 or
+// 100755) no larger than maxRemoteFileBytes. It reads the whole tree in one call, or, when GitHub cuts a large tree
+// short, walks down only the directories the files are in.
+func regularBlobs(ctx context.Context, r Runner, api, sha string, files []string) map[string]string {
+	blobs := map[string]string{}
+	keep := func(file string, e treeEntry) {
+		if e.Type == "blob" && (e.Mode == "100644" || e.Mode == "100755") && e.Size <= maxRemoteFileBytes {
+			blobs[file] = e.SHA
+		}
+	}
+	var whole struct {
+		Tree      []treeEntry `json:"tree"`
+		Truncated bool        `json:"truncated"`
+	}
+	if ghJSON(ctx, r, api+"trees/"+url.PathEscape(sha)+"?recursive=1", &whole) && !whole.Truncated {
+		want := map[string]bool{}
+		for _, f := range files {
+			want[f] = true
+		}
+		for _, e := range whole.Tree {
+			if want[e.Path] {
+				keep(e.Path, e)
+			}
+		}
+		return blobs
+	}
+	trees := map[string][]treeEntry{} // directory -> its entries; "" is the root
+	var dirTree func(dir string) []treeEntry
+	dirTree = func(dir string) []treeEntry {
+		if entries, ok := trees[dir]; ok {
+			return entries
+		}
+		trees[dir] = nil
+		treeSHA := sha
+		if dir != "" {
+			parent, name := path.Split(dir)
+			treeSHA = ""
+			for _, e := range dirTree(strings.TrimSuffix(parent, "/")) {
+				if e.Path == name && e.Type == "tree" {
+					treeSHA = e.SHA
+				}
+			}
+			if treeSHA == "" {
+				return nil
+			}
+		}
+		var t struct {
+			Tree []treeEntry `json:"tree"`
+		}
+		if ghJSON(ctx, r, api+"trees/"+url.PathEscape(treeSHA), &t) {
+			trees[dir] = t.Tree
+		}
+		return trees[dir]
+	}
+	for _, f := range files {
+		dir, name := path.Split(f)
+		for _, e := range dirTree(strings.TrimSuffix(dir, "/")) {
+			if e.Path == name {
+				keep(f, e)
+			}
+		}
+	}
+	return blobs
+}
+
+// ghJSON reads the GitHub API path into v, reporting whether it could.
+func ghJSON(ctx context.Context, r Runner, apiPath string, v any) bool {
+	out, err := r.Run(ctx, "gh", "api", apiPath)
+	return err == nil && json.Unmarshal(out, v) == nil
 }
 
 // excerptContext is how many lines around each changed hunk an excerpt keeps: enough for the function a change sits in.
