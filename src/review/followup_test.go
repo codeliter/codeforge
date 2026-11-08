@@ -647,3 +647,17 @@ func TestRecordOf_KeepsEachFindingWithWhetherItBlocks(t *testing.T) {
 		require.True(t, f.Blocking, "a non-blocking finding over the same line, in either order, never hides the blocker")
 	}
 }
+
+func TestParseFollowUp_NoThreadsAndInventedVerdictsStillPosts(t *testing.T) {
+	fu := &FollowUp{}
+	fu.Set(&FollowUp{})
+	out := "- nitpick: a.go:1 — x\n\nFix the bonus.\n\nDecision: Request changes\n\n```json\n{\"threads\":[{\"thread\":\"author-comment-101290f3\",\"verdict\":\"fixed\",\"reply\":\"Confirmed.\"}]}\n```"
+	review, _, err := fu.ParseFollowUp(out)
+	require.NoError(t, err, "with no thread to judge, verdicts on invented threads cost the round nothing")
+	require.NotContains(t, review, "threads")
+	require.True(t, strings.HasSuffix(review, "Decision: Request changes"))
+
+	withText := strings.Replace(out, `"reply":"Confirmed."`, `"reply":"Confirmed.","note":"a finding"`, 1)
+	_, _, err = fu.ParseFollowUp(withText)
+	require.Error(t, err, "a block with anything more is not cut")
+}

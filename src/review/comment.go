@@ -184,8 +184,8 @@ func openFence(lines []string) string {
 	return ""
 }
 
-// leadsRule separates the review from the unconfirmed leads under it.
-const leadsRule = "\n\n---\n"
+// leadsRule separates the review from the unconfirmed leads under it: a blank line, as a person would leave.
+const leadsRule = "\n\n"
 
 // CommentBody is the text to post: the review, then the unconfirmed blocking leads if there are any, and a footer that
 // says where it came from. When the whole is too long for GitHub the review is cut, never a lead; if the leads alone
@@ -230,8 +230,45 @@ type Posted struct {
 // markdownHeading matches a heading line. A review a person leaves has none, so none is posted, whatever the model wrote.
 var markdownHeading = regexp.MustCompile(`^\s{0,3}#{1,6}\s`)
 
-// withoutHeadings drops every heading, `### Final comment` and file headings included: posted, the final comment is
-// simply the review's body.
+// boldHeading matches a line that is only bold words, such as "**Final comment**" or "__Summary:__". Such a line is a
+// heading in all but syntax when it names a part of the review (headingWords); any other bold words are the reviewer's.
+var boldHeading = regexp.MustCompile(`^\s{0,3}(\*\*|__)\s*[^*_.!?]{1,40}?\s*:?\s*(\*\*|__)\s*:?\s*$`)
+
+// headingWords are the labels a model puts over parts of a review. A person's review has none of them; "**Do not
+// merge**" is the reviewer speaking and stays.
+var headingWords = map[string]bool{
+	"final comment": true, "final comments": true, "summary": true, "verdict": true, "review": true, "overall": true,
+	"findings": true, "comments": true, "conclusion": true, "overview": true, "general": true, "notes": true,
+	"before merge": true, "foresight": true, "decision": true,
+}
+
+// unheaded is line as posted, and false when it is a heading to drop: one in markdown syntax, or a short bold label on a
+// line of its own. A bold label that ends in a colon leads into what follows ("**Before merge:**"), so it stays, as
+// plain words.
+func unheaded(line string) (string, bool) {
+	if markdownHeading.MatchString(line) {
+		return "", false
+	}
+	if !boldHeading.MatchString(line) {
+		return line, true
+	}
+	// The colon may sit inside the markers or after them: "**Before merge:**", "**Before merge**:".
+	inner := strings.TrimSpace(line)
+	colon := strings.HasSuffix(inner, ":")
+	inner = strings.Trim(strings.TrimSuffix(inner, ":"), "*_ ")
+	colon = colon || strings.HasSuffix(inner, ":")
+	label := strings.TrimSpace(strings.TrimSuffix(inner, ":"))
+	switch {
+	case !headingWords[strings.ToLower(label)]:
+		return line, true // the reviewer's own emphasis
+	case colon:
+		return label + ":", true // a label that leads into what follows: kept, as plain words
+	}
+	return "", false // a label over a part of the review
+}
+
+// withoutHeadings drops every heading, `### Final comment`, `**Final comment**` and file headings included: posted,
+// the final comment is simply the review's body.
 func withoutHeadings(review string) string {
 	lines := strings.Split(review, "\n")
 	out := lines[:0]
@@ -243,8 +280,8 @@ func withoutHeadings(review string) string {
 			i = end - 1
 			continue
 		}
-		if !markdownHeading.MatchString(lines[i]) {
-			out = append(out, lines[i])
+		if line, keep := unheaded(lines[i]); keep {
+			out = append(out, line)
 		}
 	}
 	return strings.TrimSpace(collapseBlankLines(strings.Join(out, "\n")))

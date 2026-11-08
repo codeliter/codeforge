@@ -149,8 +149,9 @@ func oneLine(text string) string {
 	return strings.Join(strings.Fields(text), " ")
 }
 
-// LeadsHeader opens the list of unconfirmed blocking leads.
-const LeadsHeader = "**Unconfirmed blocking leads.** A second model flagged these and the review above did not confirm them. Check each before merging:\n"
+// LeadsHeader opens the list of unconfirmed blocking leads. It reads as the reviewer's own words: a review never says
+// how it was made, which models looked at it or that there was more than one.
+const LeadsHeader = "A few more things could block this, but I have not confirmed them. Worth checking before merging:\n\n"
 
 // RenderLeads lists the blocking items the jurors reported, once each, as leads for the author, not confirmed defects.
 // Jurors without a verdict, non-blocking items and who said what are left out.

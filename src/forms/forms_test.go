@@ -79,7 +79,7 @@ func TestShow_AnOlderHelperIsRefusedForEdits(t *testing.T) {
 	}{
 		{name: "a helper that cannot say its protocol", helper: "exit 1\n", wantErr: true},
 		{name: "a helper on the old protocol", helper: "[ \"$1\" = --protocol ] && { echo 1; exit 0; }\nexit 1\n", wantErr: true},
-		{name: "a helper on this protocol", helper: "[ \"$1\" = --protocol ] && { echo 2; exit 0; }\nprintf '%s' '{\"key\":{\"value\":\"s\"},\"changes\":{\"value\":\"[]\"}}' >&4\n"},
+		{name: "a helper on this protocol", helper: "[ \"$1\" = --protocol ] && { echo 4; exit 0; }\nprintf '%s' '{\"key\":{\"value\":\"s\"},\"changes\":{\"value\":\"[]\"}}' >&4\n"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

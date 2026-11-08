@@ -169,3 +169,29 @@ func TestMigration_InterruptedContext(t *testing.T) {
 	require.NoError(t, s.db.QueryRowContext(t.Context(), "PRAGMA user_version").Scan(&version))
 	require.Equal(t, 6, version)
 }
+
+func TestOpen_RebuildsReviewRecordsMadeWithoutAnAccount(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "sessions")
+	s, err := Open(t.Context(), dir)
+	require.NoError(t, err)
+	for _, stmt := range []string{
+		"DROP TABLE review_records",
+		"CREATE TABLE review_records (repo TEXT NOT NULL, number TEXT NOT NULL, record TEXT NOT NULL, saved_at TEXT NOT NULL, PRIMARY KEY (repo, number))",
+		"INSERT INTO review_records VALUES ('acme/w', '42', '{}', 'now')",
+	} {
+		_, err := s.db.ExecContext(t.Context(), stmt)
+		require.NoError(t, err)
+	}
+	require.NoError(t, s.Close())
+
+	s, err = Open(t.Context(), dir)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, s.Close()) })
+	key := ReviewKey{Account: "alice", Repo: "acme/w", Number: "42"}
+	_, err = s.ReviewRecord(t.Context(), key)
+	require.ErrorIs(t, err, ErrNotFound, "a record can be read again; the old rows named no account, so they are gone")
+	require.NoError(t, s.UpdateReviewRecord(t.Context(), key, func([]byte) ([]byte, error) { return []byte(`{"head":"abc"}`), nil }))
+	got, err := s.ReviewRecord(t.Context(), key)
+	require.NoError(t, err)
+	require.JSONEq(t, `{"head":"abc"}`, string(got))
+}

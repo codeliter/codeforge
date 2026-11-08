@@ -329,3 +329,23 @@ func TestAccordion_NoActionKeysWithoutKeys(t *testing.T) {
 	require.NotContains(t, view(m), "post")
 	require.Nil(t, m.key("p"))
 }
+
+func TestAccordion_ANoteOfSeveralLinesIsRewrittenWhole(t *testing.T) {
+	m := newAccordion(forms.Accordion{Edits: true, Items: []forms.Section{{Title: "Final comment", Open: true, Notes: []forms.Note{
+		{ID: "final", Body: "Close.\n- Fix it.", Raw: "Close.\n- Fix it.", Label: "the final comment"},
+	}}}})
+	m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	m.key("e")
+	require.True(t, m.multiline)
+	require.Contains(t, view(m), "✎ Rewrite the final comment")
+	require.Contains(t, view(m), "ctrl+s save  ·  ⏎ new line  ·  esc cancel")
+	m.area.SetValue("Fine.")
+	m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("- Ship it.")})
+	require.True(t, m.typing, "enter starts a new line")
+	m.Update(tea.KeyMsg{Type: tea.KeyCtrlS})
+	require.False(t, m.typing)
+	require.Equal(t, []forms.Change{{Kind: forms.ChangeEdit, Note: "final", Text: "Fine.\n- Ship it."}}, m.changes)
+	require.Contains(t, view(m), "→ Fine.")
+	require.Contains(t, view(m), "  - Ship it.   edited by you ")
+}

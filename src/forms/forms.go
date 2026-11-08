@@ -205,10 +205,10 @@ func Show(name string, a Accordion) (string, []Change, error) {
 }
 
 // Protocol is the version of what codeforge sends codeforge-forms: 2 added an Accordion's Notes, Edits and Changes,
-// 3 the Search field. The helper answers ProtocolFlag with its own, and one that cannot is 1.
+// 3 the Search field, 4 the rewrite of a note of several lines. The helper answers ProtocolFlag with its own, and one that cannot is 1.
 const (
-	Protocol       = 3
-	editsProtocol  = 2
+	Protocol       = 4
+	editsProtocol  = 4 // 4 rewrites a note of several lines, such as the final comment, keeping its lines
 	searchProtocol = 3
 )
 

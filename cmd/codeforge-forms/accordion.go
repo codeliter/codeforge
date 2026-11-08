@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/huh"
@@ -25,6 +26,11 @@ const (
 	percent                 = 100
 	wheelLines              = 3 // lines one wheel notch scrolls
 	inputLimit              = 2000
+	// A rewrite of several lines: how much it may hold, and the box's height while it is typed.
+	areaLimitFactor = 4
+	areaMinLines    = 3
+	areaMaxLines    = 10
+	areaSpareLines  = 2 // room to add lines below the text
 )
 
 // accordion is the view of a forms.Accordion: a cursor over the sections, which are open or closed, scrolled so the
@@ -46,6 +52,10 @@ type accordion struct {
 	typing  bool
 	input   textinput.Model
 	pending forms.Change
+	// multiline is set while rewriting a note of several lines, such as the final comment: it is typed in area, where
+	// Enter starts a new line and ctrl+s keeps the text.
+	multiline bool
+	area      textarea.Model
 	// notice is a line that asks for attention, and armed the key that, pressed again, goes ahead past it.
 	notice string
 	armed  string
@@ -73,6 +83,10 @@ func newAccordion(a forms.Accordion) *accordion {
 	m.input = textinput.New()
 	m.input.Prompt = ""
 	m.input.CharLimit = inputLimit
+	m.area = textarea.New()
+	m.area.Prompt = ""
+	m.area.ShowLineNumbers = false
+	m.area.CharLimit = inputLimit * areaLimitFactor
 	return m
 }
 
@@ -105,6 +119,7 @@ func (m *accordion) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, max(minHeight, msg.Height)
 		m.input.Width = max(1, m.width-boxPadding)
+		m.area.SetWidth(max(1, m.width-boxPadding))
 		m.follow()
 	case tea.KeyMsg:
 		if m.typing {
@@ -354,6 +369,15 @@ func (m *accordion) askedText(target forms.Change) string {
 
 func (m *accordion) startTyping(target forms.Change, text string) {
 	m.typing, m.pending = true, target
+	m.multiline = target.Kind == forms.ChangeEdit && strings.Contains(text, "\n")
+	if m.multiline {
+		m.area.SetValue(text)
+		m.area.SetWidth(max(1, m.width-boxPadding))
+		m.area.SetHeight(min(areaMaxLines, max(areaMinLines, strings.Count(text, "\n")+areaSpareLines)))
+		m.area.Placeholder = "Write it as it should read"
+		m.area.Focus()
+		return
+	}
 	m.input.SetValue(text)
 	m.input.CursorEnd()
 	m.input.Width = max(1, m.width-boxPadding)
@@ -366,6 +390,9 @@ func (m *accordion) startTyping(target forms.Change, text string) {
 
 // typeKey handles a key while the user types: Enter keeps the text, Esc drops it.
 func (m *accordion) typeKey(msg tea.KeyMsg) tea.Cmd {
+	if m.multiline {
+		return m.typeAreaKey(msg)
+	}
 	switch msg.String() {
 	case "ctrl+c":
 		m.aborted = true
@@ -383,6 +410,29 @@ func (m *accordion) typeKey(msg tea.KeyMsg) tea.Cmd {
 	}
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
+	return cmd
+}
+
+// typeAreaKey handles a key while the user rewrites a note of several lines: ctrl+s keeps the text, Esc drops it, and
+// every other key, Enter included, types.
+func (m *accordion) typeAreaKey(msg tea.KeyMsg) tea.Cmd {
+	switch msg.String() {
+	case "ctrl+c":
+		m.aborted = true
+		return tea.Quit
+	case "esc":
+		m.typing, m.multiline = false, false
+		m.area.Blur()
+		return nil
+	case "ctrl+s":
+		m.typing, m.multiline = false, false
+		m.area.Blur()
+		m.commit(strings.TrimSpace(m.area.Value()))
+		m.follow()
+		return nil
+	}
+	var cmd tea.Cmd
+	m.area, cmd = m.area.Update(msg)
 	return cmd
 }
 
@@ -574,7 +624,19 @@ func (m *accordion) noteLines(n forms.Note) []string {
 		for k, l := range lines {
 			lines[k] = m.a.Dim + ansi.Strip(l) + reset
 		}
-		lines = append(lines, m.mark("→", m.changes[c].Text, "edited by you"))
+		// A rewrite of several lines shows each of them; the tag goes on the last.
+		text := strings.Split(m.changes[c].Text, "\n")
+		for k, l := range text {
+			sign := "→"
+			if k > 0 {
+				sign = " "
+			}
+			if k == len(text)-1 {
+				lines = append(lines, m.mark(sign, l, "edited by you"))
+				continue
+			}
+			lines = append(lines, m.a.Warn+sign+" "+l+reset)
+		}
 	}
 	if c := m.find(forms.ChangeAsk, n.ID, ""); c >= 0 {
 		lines = append(lines, m.mark("?", m.changes[c].Text, "asked"))
@@ -635,18 +697,24 @@ func (m *accordion) inputBox() []string {
 	if ansi.StringWidth(title) > inner-boxSides {
 		title = ansi.Truncate(title, inner-boxSides, "… ")
 	}
-	body := m.input.View()
-	edge := func(s string) string { return m.a.Accent + s + reset }
-	return []string{
-		edge("┌─") + m.a.Accent + title + reset + edge(strings.Repeat("─", max(0, inner-1-ansi.StringWidth(title)))+"┐"),
-		edge("│") + " " + body + strings.Repeat(" ", max(0, inner-boxSides-ansi.StringWidth(body))) + " " + edge("│"),
-		edge("└" + strings.Repeat("─", inner) + "┘"),
+	bodies := []string{m.input.View()}
+	if m.multiline {
+		bodies = strings.Split(strings.TrimRight(m.area.View(), "\n"), "\n")
 	}
+	edge := func(s string) string { return m.a.Accent + s + reset }
+	box := []string{edge("┌─") + m.a.Accent + title + reset + edge(strings.Repeat("─", max(0, inner-1-ansi.StringWidth(title)))+"┐")}
+	for _, body := range bodies {
+		box = append(box, edge("│")+" "+body+strings.Repeat(" ", max(0, inner-boxSides-ansi.StringWidth(body)))+" "+edge("│"))
+	}
+	return append(box, edge("└"+strings.Repeat("─", inner)+"┘"))
 }
 
 // inputPrompt is the words before the input while the user types.
 func (m *accordion) inputPrompt() string {
 	switch {
+	case m.pending.Kind == forms.ChangeEdit && m.multiline:
+		n, _ := m.noteByID(m.pending.Note)
+		return "✎ Rewrite " + cmpOr(n.Label, "this note") + ": "
 	case m.pending.Kind == forms.ChangeEdit:
 		n, _ := m.noteByID(m.pending.Note)
 		return "✎ Rewrite " + cmpOr(n.Label, "this finding") + " (its first line): "
@@ -677,6 +745,9 @@ func (m *accordion) footer(lay layout) []string {
 		enter := "add"
 		if m.pending.Kind == forms.ChangeEdit || m.find(m.pending.Kind, m.pending.Note, m.pending.Section) >= 0 {
 			enter = "save"
+		}
+		if m.multiline {
+			return append(m.inputBox(), m.joinHelp(m.keyHelp("ctrl+s", "save"), m.keyHelp("⏎", "new line"), m.keyHelp("esc", "cancel")))
 		}
 		return append(m.inputBox(), m.joinHelp(m.keyHelp("⏎", enter), m.keyHelp("esc", "cancel")))
 	}

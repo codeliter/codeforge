@@ -449,7 +449,9 @@ func short(sha string) string { return sha[:min(len(sha), shortSHALen)] }
 const FollowUpNote = "After the review (new findings, the final comment, the Decision line), end your answer with exactly one block fenced as ```" + verdictsTag + ", holding json, and nothing after it:\n" +
 	"```" + verdictsTag + "\n{\"threads\":[{\"thread\":\"<thread id>\",\"verdict\":\"fixed|not fixed|agreed|held|answered|accepted|waiting\"," +
 	"\"reply\":\"<the reply to post, in my voice, or empty>\",\"resolve\":true}]}\n```\n" +
-	"Give one entry per thread in <earlier_review>. resolve is true only for fixed, agreed or accepted.\n"
+	"Give one entry per thread in <earlier_review>, by the id given there; never invent an id. When it lists no thread, " +
+	"give an empty threads list. resolve is true only for fixed, agreed or accepted. The review itself never mentions this " +
+	"block, thread ids or how the round works: the author reads only the review.\n"
 
 // ThreadAnswer is a follow-up round's verdict on one of the user's threads.
 type ThreadAnswer struct {
@@ -698,6 +700,31 @@ func namesThreads(block string, ids map[string]bool) bool {
 	})
 }
 
+// verdictsInShape reports whether block is verdicts and nothing else, whatever threads they name (isVerdicts on the
+// threads the block names itself), with no finding in a reply.
+func verdictsInShape(block string) bool {
+	var doc struct {
+		Threads []struct {
+			Thread string `json:"thread"`
+			Reply  string `json:"reply"`
+		} `json:"threads"`
+	}
+	if json.Unmarshal([]byte(block), &doc) != nil {
+		return false
+	}
+	ids := map[string]bool{}
+	for _, t := range doc.Threads {
+		ids[t.Thread] = true
+		// A reply that holds a finding is review text: cut with the block, it would vanish.
+		for _, l := range strings.Split(t.Reply, "\n") {
+			if _, ok := ParseLabeled(l); ok {
+				return false
+			}
+		}
+	}
+	return isVerdicts(block, ids)
+}
+
 // looksLikeVerdicts reports whether a block's contents carry a threads key, in any case or escape the json decoder
 // would accept. With loose, contents that do not decode (a block cut off) count when they say "threads" at all.
 func looksLikeVerdicts(block string, loose bool) bool {
@@ -808,7 +835,9 @@ func (fu *FollowUp) splitFollowUp(output string) (string, []ThreadAnswer, error)
 			return strings.TrimSpace(cut + "\n\n" + after), nil, fmt.Errorf("%w: a verdicts block is out of place", ErrNoAnswers)
 		}
 		// The Decision line closes the review: after it comes the verdicts block or nothing.
-		if before, last, whole := trailingJSON(tail); tail != "" && (!whole || before != "" || fenceLines(tail) != 1 || !isVerdicts(last, fu.threadIDs())) {
+		// A round with no thread to judge needs no verdicts, but a model may still write a block of them on threads it
+		// invented: one that is verdicts in shape and nothing else is cut, and the round stands.
+		if before, last, whole := trailingJSON(tail); tail != "" && (!whole || before != "" || fenceLines(tail) != 1 || !verdictsInShape(last)) {
 			// Shown as written, since a finding may sit inside a block there; it is never posted.
 			return strings.TrimSpace(review + "\n\n" + tail), nil, fmt.Errorf("%w: the review goes on after its Decision line", ErrNoAnswers)
 		}

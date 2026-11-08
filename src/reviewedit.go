@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -55,6 +55,9 @@ func findingSpans(lines []string) []findingSpan {
 	}
 	return spans
 }
+
+// finalNoteID is the id the view knows the review's final comment by.
+const finalNoteID = "final"
 
 // noteMark is what the view shows on a finding after a round of changes: a tag (revised, new, edited by you) and the
 // reviewer's answer to the user's question about it.
@@ -175,7 +178,16 @@ func applyEdits(text string, changes []forms.Change) (out string, questions []qu
 	}
 	replace := map[int]string{} // first line of a finding -> its rewrite
 	drop := map[int]bool{}      // first line of a deleted finding
+	final, finalChanged := "", false
 	for _, c := range changes {
+		if c.Note == finalNoteID && c.Kind != forms.ChangeAsk {
+			// The final comment is rewritten whole, or deleted: the words between the findings and the Decision line.
+			final, finalChanged = strings.TrimSpace(c.Text), true
+			if c.Kind == forms.ChangeEdit {
+				edited = append(edited, final)
+			}
+			continue
+		}
 		s, onFinding := byID[c.Note]
 		switch {
 		case !onFinding:
@@ -222,6 +234,8 @@ func applyEdits(text string, changes []forms.Change) (out string, questions []qu
 		q := question{Text: strings.TrimSpace(c.Text), About: "the whole review"}
 		s, onFinding := byID[c.Note]
 		switch {
+		case c.Note == finalNoteID:
+			q.About = "your final comment"
 		case onFinding:
 			q.About, q.Place = "`"+s.Place()+"` ("+s.Raw+")", s.Place()
 			if k, ok := at[s.Start]; ok {
@@ -240,7 +254,31 @@ func applyEdits(text string, changes []forms.Change) (out string, questions []qu
 		}
 		questions = append(questions, q)
 	}
-	return collapseBlankLines(strings.Join(kept, "\n")), questions, edited
+	out = collapseBlankLines(strings.Join(kept, "\n"))
+	if finalChanged {
+		out = withFinalComment(out, final)
+	}
+	return out, questions, edited
+}
+
+// withFinalComment is text with its final comment (the words that are no finding and no Decision line) replaced by
+// final: the findings first, then final, then the Decision line.
+func withFinalComment(text, final string) string {
+	lines := reviewLines(text)
+	var findings []string
+	for _, s := range findingSpans(lines) {
+		findings = append(findings, strings.Join(lines[s.Start:s.End], "\n"))
+	}
+	parts := []string{strings.Join(findings, "\n\n")}
+	if final != "" {
+		parts = append(parts, final)
+	}
+	for _, l := range lines {
+		if review.IsDecisionLine(l) {
+			parts = append(parts, strings.TrimSpace(l))
+		}
+	}
+	return collapseBlankLines(strings.Join(parts, "\n\n"))
 }
 
 // isClosingDecision reports whether line i is the review's Decision line: one ParseDecision reads, with nothing but
@@ -523,22 +561,55 @@ func reviewTurn(argv, env []string) func(context.Context, string) (string, error
 			return "", errSessionMissing
 		}
 		args := withoutPrompt(dropFlag(dropFlag(argv[1:], "--session-id"), "--session"))
-		turn := append(append([]string{argv[0], "--session", id}, args...), prompt)
-		// The review's own clock has run out by now; the turn gets a limit of its own from when the user sent it. Ctrl+C
-		// still stops it: with a limit the engine runs in its own process group and runEngineTo forwards the interrupt.
-		tctx := context.WithoutCancel(ctx)
-		var out, chatter bytes.Buffer
-		err := runEngineTo(withEngineStderr(tctx, &chatter), turn, env, time.Now().Add(revisionLimit), &out)
-		if err != nil {
-			fmt.Fprint(os.Stderr, chatter.String())
-			return "", fmt.Errorf("asking the reviewer: %w", err)
+		reply, err := resumedTurn(ctx, append(append([]string{argv[0], "--session", id}, args...), prompt), env)
+		var exit *EngineExitError
+		if err == nil || ctx.Err() != nil || !errors.As(err, &exit) || exit.Code != exitUsage {
+			return reply, err // done, stopped by the user, or failed for a reason a plainer call does not change
 		}
-		reply, err := review.EngineOutput(out.Bytes())
-		if err != nil {
-			return "", fmt.Errorf("reading the reviewer's answer: %w", err)
+		// A flag the review ran with may not suit a resumed turn: try once more with only what a turn needs, the
+		// review's profile, mode and model, so a question still gets its answer.
+		minimal := []string{argv[0], "--session", id, "--headless", "--json"}
+		for _, f := range []string{"--profile", "--mode", "--model"} {
+			if v := flagValue(argv, f); v != "" {
+				minimal = append(minimal, f, v)
+			}
 		}
-		return reply, nil
+		if reply, again := resumedTurn(ctx, append(minimal, prompt), env); again == nil {
+			return reply, nil
+		}
+		return "", err
 	}
+}
+
+// exitUsage is the status an engine exits with when its command line is wrong (EX_USAGE): the one failure a turn with
+// fewer flags can get past.
+const exitUsage = 64
+
+// resumedTurn runs one turn of the engine, argv in full, and returns what it wrote. On a failure the error ends with
+// the engine's own last line of complaint, so the user sees why, not only an exit status.
+func resumedTurn(ctx context.Context, argv, env []string) (string, error) {
+	// The review's own clock has run out by now; the turn gets a limit of its own from when the user sent it. Ctrl+C
+	// still stops it: with a limit the engine runs in its own process group and runEngineTo forwards the interrupt.
+	tctx := context.WithoutCancel(ctx)
+	var out, chatter bytes.Buffer
+	if err := runEngineTo(withEngineStderr(tctx, &chatter), argv, env, time.Now().Add(revisionLimit), &out); err != nil {
+		if why := lastLine(chatter.String()); why != "" {
+			return "", fmt.Errorf("asking the reviewer: %w (%s)", err, why)
+		}
+		return "", fmt.Errorf("asking the reviewer: %w", err)
+	}
+	reply, err := review.EngineOutput(out.Bytes())
+	if err != nil {
+		return "", fmt.Errorf("reading the reviewer's answer: %w", err)
+	}
+	return reply, nil
+}
+
+// lastLine is the last line of s that holds anything, cut to a length that fits a message.
+func lastLine(s string) string {
+	const maxWhy = 200
+	lines := strings.Split(strings.TrimSpace(s), "\n")
+	return clip(strings.TrimSpace(lines[len(lines)-1]), maxWhy)
 }
 
 // withoutPrompt drops the review's prompt, its last positional argument, and keeps everything else as it was: every
@@ -559,4 +630,273 @@ func withoutPrompt(args []string) []string {
 		return slices.Clone(args)
 	}
 	return slices.Concat(args[:prompt], args[prompt+1:])
+}
+
+// voiceLeads has the reviewer rewrite the unconfirmed blocking leads, which another reviewer wrote in its own words, as
+// the user would leave them: short, plain and in the persona's voice, one line each, every lead kept at its place. The
+// leads are returned as they were when the turn fails or its answer does not keep every lead, so a blocker is never
+// lost to a rewrite.
+func voiceLeads(ctx context.Context, leads string, turn func(context.Context, string) (string, error)) string {
+	header, body, found := strings.Cut(leads, review.LeadsHeader)
+	if !found || strings.TrimSpace(header) != "" {
+		return leads
+	}
+	want := leadPlaces(body)
+	if len(want) == 0 || len(want) != nonEmptyLines(body) {
+		return leads // a lead in a shape that cannot be checked after a rewrite is posted as it was written
+	}
+	reply, err := turn(ctx, leadsPrompt(body))
+	if err != nil {
+		return leads
+	}
+	var lines []string
+	for _, l := range reviewLines(reply) {
+		if l = strings.TrimSpace(l); leadLine.MatchString(l) {
+			lines = append(lines, l)
+		}
+	}
+	if !slices.Equal(leadPlaces(strings.Join(lines, "\n")), want) {
+		return leads
+	}
+	// A rewrite that says next to nothing, or rambles past the limit, has lost the lead: the original stands.
+	for _, l := range lines {
+		if n := len(strings.Fields(l)) - leadPrefixWords; n < minLeadWords || n > maxLeadWords+maxLeadWords/2 {
+			return leads
+		}
+	}
+	return review.LeadsHeader + strings.Join(lines, "\n") + "\n"
+}
+
+// nonEmptyLines counts the lines of text that hold anything.
+func nonEmptyLines(text string) int {
+	n := 0
+	for _, l := range reviewLines(text) {
+		if strings.TrimSpace(l) != "" {
+			n++
+		}
+	}
+	return n
+}
+
+// leadLine is one lead as listed: a list item that opens with its place in backticks.
+var leadLine = regexp.MustCompile("^- `([^`]+:\\d+)` \\S")
+
+// leadPlaces lists the places of the leads in text, in order.
+func leadPlaces(text string) []string {
+	var places []string
+	for _, l := range reviewLines(text) {
+		if m := leadLine.FindStringSubmatch(strings.TrimSpace(l)); m != nil {
+			places = append(places, m[1])
+		}
+	}
+	return places
+}
+
+// maxLeadWords bounds one rewritten lead: a reader takes it in at a glance. minLeadWords is the fewest that can still
+// say what breaks and what to do.
+const (
+	maxLeadWords = 45
+	minLeadWords = 5
+	// leadPrefixWords are the list marker and the place a lead's line opens with.
+	leadPrefixWords = 2
+)
+
+// leadsPrompt asks the reviewer, in its own session, to put the leads in the user's words.
+func leadsPrompt(leads string) string {
+	return "Another check of this change found the possible blockers below, which your review does not confirm. " +
+		"They go on the PR under your review, so rewrite each one as I would leave it, in my voice as codeforge-persona " +
+		"describes it (codeforge-voice where it is silent): what breaks, then what to do, in plain words, " +
+		fmt.Sprintf("at most two sentences and %d words, with no hedging, no walkthrough and no mention of models, tools or ", maxLeadWords) +
+		"a second check. Keep every lead, in the same order, each on one line that starts with its place exactly as " +
+		"given (`- `path:line` text`). Reply with those lines and nothing else.\n\n" + leads
+}
+
+// isBlocking reports whether a finding's label blocks the merge, as ParseDecision reads it.
+func isBlocking(label string) bool {
+	l := strings.ToLower(label)
+	return strings.Contains(l, "blocking") && !strings.Contains(l, "non-blocking")
+}
+
+// leadNearby is how many lines from a finding a lead may sit and still be the same point.
+const leadNearby = 5
+
+// dropCoveredLeads leaves out the leads the review already makes as a finding of its own: one in the same file within
+// leadNearby lines. Posted twice, the same blocker reads as two. The rest keep their order; with none left, no leads.
+func dropCoveredLeads(leads, text string) string {
+	header, body, found := strings.Cut(leads, review.LeadsHeader)
+	if !found || strings.TrimSpace(header) != "" {
+		return leads
+	}
+	spans := findingSpans(reviewLines(text))
+	var kept []string
+	for _, l := range reviewLines(body) {
+		l = strings.TrimSpace(l)
+		if l == "" {
+			continue
+		}
+		m := leadLine.FindStringSubmatch(l)
+		if m == nil {
+			kept = append(kept, l) // a lead it cannot place is never dropped
+			continue
+		}
+		path, line, _ := strings.Cut(m[1], ":")
+		n, err := strconv.Atoi(line)
+		// Only a blocking finding covers a lead: a nit nearby says nothing about the blocker.
+		covered := err == nil && slices.ContainsFunc(spans, func(s findingSpan) bool {
+			return isBlocking(s.F.Label) && s.F.Path == path && s.F.Line >= n-leadNearby && s.F.Line <= n+leadNearby
+		})
+		if !covered {
+			kept = append(kept, l)
+		}
+	}
+	if len(kept) == 0 {
+		return ""
+	}
+	return review.LeadsHeader + strings.Join(kept, "\n") + "\n"
+}
+
+// The most words a posted comment may have before the reviewer is asked to cut it: the instructions ask for about 40
+// per finding and 80 for the final comment, and these leave room for a needed example.
+const (
+	maxFindingWords = 60
+	maxFinalWords   = 120
+	// What a cut asks for: the instructions' own targets.
+	targetFindingWords = 40
+	targetFinalWords   = 80
+)
+
+// longComment is one comment of a review that runs past its limit.
+type longComment struct {
+	Place string // the finding's path:line, "" for the final comment
+	Words int
+}
+
+// longComments lists the comments of review that run past their limit: each finding as posted (its text after the
+// place, with its continuation lines, but not a code suggestion), and the final comment.
+func longComments(text string) []longComment {
+	lines := reviewLines(text)
+	spans := findingSpans(lines)
+	var long []longComment
+	inSpan := map[int]bool{}
+	for _, s := range spans {
+		_, first, _ := strings.Cut(s.Raw, " — ")
+		words := len(strings.Fields(first)) + proseWords(lines[s.Start+1:s.End])
+		if words > maxFindingWords {
+			long = append(long, longComment{Place: s.Place(), Words: words})
+		}
+		for i := s.Start; i < s.End; i++ {
+			inSpan[i] = true
+		}
+	}
+	var rest []string
+	for i, l := range lines {
+		if !inSpan[i] && !review.IsDecisionLine(l) {
+			rest = append(rest, l)
+		}
+	}
+	if words := proseWords(rest); words > maxFinalWords {
+		long = append(long, longComment{Words: words})
+	}
+	return long
+}
+
+// proseWords counts the words in lines, leaving out fenced code: a suggestion block is code, not reading.
+func proseWords(lines []string) int {
+	n, fenced := 0, false
+	for _, l := range lines {
+		if strings.HasPrefix(strings.TrimSpace(l), "```") {
+			fenced = !fenced
+			continue
+		}
+		if !fenced {
+			n += len(strings.Fields(l))
+		}
+	}
+	return n
+}
+
+// tightenReview asks the reviewer, in its own session, to cut the comments that run past their limit, once. The cut
+// review is kept only when it still has every finding at its place and is shorter; otherwise, or when the turn fails,
+// the review is kept as it was. clean tidies the reply as the first one was tidied.
+func tightenReview(ctx context.Context, text string, turn func(context.Context, string) (string, error), clean func(string) string) string {
+	long := longComments(text)
+	if len(long) == 0 {
+		return text
+	}
+	reply, err := turn(ctx, tightenPrompt(text, long))
+	if err != nil {
+		return text
+	}
+	revised := strings.TrimSpace(reply)
+	if clean != nil {
+		revised = clean(revised)
+	}
+	if revised == "" || len(strings.Fields(revised)) >= len(strings.Fields(text)) || !sameFindings(text, revised, long) {
+		return text
+	}
+	// The suggested decision follows the blocking labels; a cut never changes it.
+	if before, _ := review.ParseDecision(text); before != func() review.Decision { d, _ := review.ParseDecision(revised); return d }() {
+		return text
+	}
+	return revised
+}
+
+// sameFindings reports whether after has the findings of before, in order, at the same places with the same labels, and
+// every finding not named in long word for word.
+func sameFindings(before, after string, long []longComment) bool {
+	a, b := findingSpans(reviewLines(before)), findingSpans(reviewLines(after))
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i].Place() != b[i].Place() || !strings.EqualFold(a[i].F.Label, b[i].F.Label) {
+			return false
+		}
+		cut := slices.ContainsFunc(long, func(c longComment) bool { return c.Place == a[i].Place() })
+		if !cut && strings.Join(reviewLines(before)[a[i].Start:a[i].End], "\n") != strings.Join(reviewLines(after)[b[i].Start:b[i].End], "\n") {
+			return false
+		}
+	}
+	// The final comment, unless it was asked to be cut, stays word for word too.
+	if !slices.ContainsFunc(long, func(c longComment) bool { return c.Place == "" }) &&
+		strings.Join(strings.Fields(finalComment(before)), " ") != strings.Join(strings.Fields(finalComment(after)), " ") {
+		return false
+	}
+	return true
+}
+
+// finalComment is the review without its findings and its Decision line.
+func finalComment(text string) string {
+	lines := reviewLines(text)
+	in := map[int]bool{}
+	for _, s := range findingSpans(lines) {
+		for i := s.Start; i < s.End; i++ {
+			in[i] = true
+		}
+	}
+	var rest []string
+	for i, l := range lines {
+		if !in[i] && !review.IsDecisionLine(l) {
+			rest = append(rest, l)
+		}
+	}
+	return strings.Join(rest, "\n")
+}
+
+// tightenPrompt names the comments to cut and how far.
+func tightenPrompt(text string, long []longComment) string {
+	var b strings.Builder
+	b.WriteString("Some comments in your review are too long for the author to take in on one read:\n")
+	for _, c := range long {
+		if c.Place == "" {
+			fmt.Fprintf(&b, "- the final comment: %d words; keep it under %d\n", c.Words, targetFinalWords)
+			continue
+		}
+		fmt.Fprintf(&b, "- the finding at `%s`: %d words; keep it under %d\n", c.Place, c.Words, targetFindingWords)
+	}
+	b.WriteString("\nCut them to what is wrong, why it matters and the change you want, in my voice as codeforge-persona " +
+		"describes it, and as plain and unambiguous as before: drop walkthroughs, second examples and restated code, never " +
+		"the ask. Change nothing else: keep every finding, its label and its place, the other comments word for word, and " +
+		"the Decision line. Reply with the complete review in the same format and nothing else.\n\nThe review:\n\n" + text)
+	return b.String()
 }

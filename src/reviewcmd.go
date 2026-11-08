@@ -279,6 +279,12 @@ func reviewArgs(ctx context.Context, bin string, rc config.ReviewConfig, judges 
 			fmt.Fprintln(os.Stderr, "codeforge: could not check for your earlier review, so this is a full review (--follow-up stops instead):", err)
 		case found:
 			review.FollowUpOf(ctx).Set(fu)
+			if !comment && post != nil && !hasFlag(rest, "--json") { // a script that asks for --json gets the run as it is
+				// A follow-up round is about the user's own threads on the PR, so it can always be posted: the view offers
+				// the decisions, and nothing goes up until the user picks one.
+				comment = true
+				post.Target(repo, number)
+			}
 			round = fu.PromptFollowUp()
 			fmt.Fprintf(os.Stderr, "codeforge: you reviewed PR %s before; this is a follow-up round on your %s and the changes since. Use --fresh for a full review.\n",
 				number, plural(len(fu.Threads()), "open thread"))

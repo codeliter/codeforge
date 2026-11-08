@@ -144,11 +144,11 @@ func TestCommentBody_KeepsTheLeadsWhenTheReviewIsLong(t *testing.T) {
 	require.Contains(t, body, "`a.go:3` drops data", "the lead survives the cut")
 	require.Contains(t, body, "The rest was cut")
 	require.True(t, strings.HasSuffix(body, commentFooter))
-	require.Less(t, strings.Index(body, "Looks fine."), strings.Index(body, "Unconfirmed"), "the review comes first")
+	require.Less(t, strings.Index(body, "Looks fine."), strings.Index(body, "not confirmed"), "the review comes first")
 
 	only, err := CommentBody("", leads)
 	require.NoError(t, err)
-	require.True(t, strings.HasPrefix(only, "**Unconfirmed"), "no rule above the leads when the summary is empty")
+	require.True(t, strings.HasPrefix(only, LeadsHeader), "nothing above the leads when the summary is empty")
 }
 
 func TestCommentBody_RefusesToPostWhenTheBlockersDoNotFit(t *testing.T) {
@@ -684,7 +684,7 @@ func TestPostRequest_PostsInlineCommentsAsOneReview(t *testing.T) {
 	require.NoError(t, json.Unmarshal(run.input, &req))
 	require.Equal(t, "COMMENT", req.Event)
 	require.True(t, strings.HasPrefix(req.Body, "Correlation-only"))
-	require.Contains(t, req.Body, "Unconfirmed blocking leads")
+	require.Contains(t, req.Body, LeadsHeader)
 	require.Equal(t, []reviewComment{
 		{Path: "search/serper/main.go", Line: 72, Side: "RIGHT", Body: "Remove the commented-out code."},
 		{Path: "common/go/telemetry/telemetry.go", Line: 2, Side: "RIGHT", Body: "Init has no tests. Add focused tests for:\n- Init(ctx, nil)\n- the error path"},
@@ -754,4 +754,28 @@ func TestPostRequest_Preapproval(t *testing.T) {
 	require.False(t, c.Preapproved())
 	c.Preapprove()
 	require.True(t, c.Preapproved())
+}
+
+func TestWithoutHeadings_ABoldLabelIsAHeadingButABoldSentenceIsNot(t *testing.T) {
+	tests := []struct{ in, want string }{
+		{in: "**Final comment**\n\nThe rules engine is solid.", want: "The rules engine is solid."},
+		{in: "__Summary__\nFine.", want: "Fine."},
+		{in: "**Before merge:**\n- End the game.", want: "Before merge:\n- End the game."},
+		{in: "**Do not merge this yet.**\nIt drops data.", want: "**Do not merge this yet.**\nIt drops data."},
+		{in: "**This one blocks the release for every single user**", want: "**This one blocks the release for every single user**"},
+		{in: "Use **x** here.", want: "Use **x** here."},
+		{in: "**Do not merge**\nIt drops data.", want: "**Do not merge**\nIt drops data."},
+		{in: "**Warning: data loss:**\nOn retry.", want: "**Warning: data loss:**\nOn retry."},
+		{in: "**Before merge**:\n- End the game.", want: "Before merge:\n- End the game."},
+		{in: "__Summary__:\nFine.", want: "Summary:\nFine."},
+	}
+	for _, tt := range tests {
+		t.Run(tt.in, func(t *testing.T) { require.Equal(t, tt.want, withoutHeadings(tt.in)) })
+	}
+}
+
+func TestLeadsHeader_NeverSaysHowTheReviewWasMade(t *testing.T) {
+	for _, word := range []string{"model", "second", "AI", "jur", "**", "#"} {
+		require.NotContains(t, LeadsHeader, word)
+	}
 }

@@ -431,10 +431,11 @@ func reviewAccordion(text, extra string, st codeStyle, code codeSource, marks ma
 		})
 	}
 	if prose := strings.TrimSpace(strings.Join(rest, "\n")); prose != "" {
+		// The final comment is a note of its own, so it can be rewritten, deleted or asked about like a finding.
 		a.Items = append(a.Items, forms.Section{
 			Title: st.paint(st.pal.bold, finalCommentTitle),
-			Body:  strings.Trim(renderReview(prose, body, nil), "\n"),
 			Open:  true, // the decision and its reasons are read first
+			Notes: []forms.Note{{ID: finalNoteID, Body: strings.Trim(renderReview(prose, body, nil), "\n"), Raw: prose, Label: "the final comment"}},
 		})
 	}
 	if strings.TrimSpace(extra) != "" {

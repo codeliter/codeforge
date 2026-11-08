@@ -3,7 +3,10 @@ package src
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -11,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/codeliter/codeforge/src/forms"
+	"github.com/codeliter/codeforge/src/review"
 )
 
 const editableReview = "- issue (blocking): a.go:3 — AlwaysSample sends every span\n" +
@@ -367,6 +371,191 @@ func TestReviseReview_TheAnswerFollowsTheFindingAsTheUserLeftIt(t *testing.T) {
 				require.Empty(t, m.Reply, "no finding carries the answer: %s", id)
 			}
 			require.Equal(t, []string{tt.wantNote}, round.Answers)
+		})
+	}
+}
+
+func TestVoiceLeads(t *testing.T) {
+	leads := review.LeadsHeader + "- `a.go:3` The ranking assumes the winner bonus always wins, and it does not. Duel example: ...\n- `b.go:9` drops data\n"
+	tests := []struct {
+		name  string
+		reply string
+		err   error
+		want  string
+	}{
+		{
+			name:  "rewritten in the user's words",
+			reply: "- `a.go:3` A finisher can rank below a player who never finished. Sort by finished first.\n- `b.go:9` The retry drops the body. Buffer it.",
+			want:  review.LeadsHeader + "- `a.go:3` A finisher can rank below a player who never finished. Sort by finished first.\n- `b.go:9` The retry drops the body. Buffer it.\n",
+		},
+		{name: "a lead left out keeps the original", reply: "- `a.go:3` Short.", want: leads},
+		{name: "a place changed keeps the original", reply: "- `a.go:4` x\n- `b.go:9` y", want: leads},
+		{name: "a failed turn keeps the original", err: errors.New("down"), want: leads}, //nolint:err113 // a stand-in failure
+		{
+			name:  "prose around the lines is dropped",
+			reply: "Here they are:\n- `a.go:3` A loser can outrank the winner here.\n- `b.go:9` The retry drops the body here.\nDone.",
+			want:  review.LeadsHeader + "- `a.go:3` A loser can outrank the winner here.\n- `b.go:9` The retry drops the body here.\n",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var prompt string
+			turn := func(_ context.Context, p string) (string, error) { prompt = p; return tt.reply, tt.err }
+			require.Equal(t, tt.want, voiceLeads(t.Context(), leads, turn))
+			require.Contains(t, prompt, "codeforge-persona")
+			require.NotContains(t, prompt, review.LeadsHeader, "only the leads are sent, not the header")
+		})
+	}
+	require.Empty(t, voiceLeads(t.Context(), "", func(context.Context, string) (string, error) { t.Fatal("no leads, no turn"); return "", nil }))
+}
+
+func TestDropCoveredLeads(t *testing.T) {
+	text := "- issue (blocking): a.go:520 — the winner can rank below a loser\n\nFix the ranking.\n\nDecision: Request changes"
+	tests := []struct{ name, leads, want string }{
+		{name: "a lead the review makes itself goes", leads: review.LeadsHeader + "- `a.go:519` ranking is wrong\n", want: ""},
+		{name: "one far from any finding stays", leads: review.LeadsHeader + "- `a.go:519` x\n- `a.go:900` y\n", want: review.LeadsHeader + "- `a.go:900` y\n"},
+		{name: "another file stays", leads: review.LeadsHeader + "- `b.go:520` z\n", want: review.LeadsHeader + "- `b.go:520` z\n"},
+		{name: "no leads", leads: "", want: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) { require.Equal(t, tt.want, dropCoveredLeads(tt.leads, text)) })
+	}
+}
+
+func TestLongComments(t *testing.T) {
+	words := func(n int) string { return strings.TrimSpace(strings.Repeat("word ", n)) }
+	tests := []struct {
+		name string
+		text string
+		want []longComment
+	}{
+		{name: "short comments pass", text: "- nitpick: a.go:1 — " + words(30) + "\n\n" + words(50) + "\n\nDecision: Comment"},
+		{
+			name: "a long finding, its continuation counted",
+			text: "- issue (blocking): a.go:3 — " + words(40) + "\n  " + words(30) + "\n\nFine.\n\nDecision: Request changes",
+			want: []longComment{{Place: "a.go:3", Words: 70}},
+		},
+		{
+			name: "a code suggestion is not counted",
+			text: "- suggestion: a.go:3 — " + words(20) + "\n```suggestion\n" + words(80) + "\n```\n\nOk.",
+		},
+		{name: "a long final comment", text: "- nitpick: a.go:1 — x\n\n" + words(130) + "\n\nDecision: Comment", want: []longComment{{Words: 130}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) { require.Equal(t, tt.want, longComments(tt.text)) })
+	}
+}
+
+func TestTightenReview(t *testing.T) {
+	long := "- issue (blocking): a.go:3 — " + strings.Repeat("too many words ", 30) + "\n- nitpick: b.go:1 — fine\n\nOk.\n\nDecision: Request changes"
+	short := "- issue (blocking): a.go:3 — The retry drops the body. Buffer it.\n- nitpick: b.go:1 — fine\n\nOk.\n\nDecision: Request changes"
+	tests := []struct {
+		name  string
+		text  string
+		reply string
+		err   error
+		want  string
+	}{
+		{name: "nothing long, no turn", text: short, want: short},
+		{name: "cut", text: long, reply: short, want: short},
+		{name: "a finding lost keeps the original", text: long, reply: "- issue (blocking): a.go:3 — Buffer it.\n\nOk.", want: long},
+		{name: "a failed turn keeps the original", text: long, err: errors.New("down"), want: long}, //nolint:err113 // a stand-in failure
+		{name: "not shorter keeps the original", text: long, reply: long + " more", want: long},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var prompt string
+			turn := func(_ context.Context, p string) (string, error) {
+				if tt.reply == "" && tt.err == nil {
+					t.Fatal("no long comment, no turn")
+				}
+				prompt = p
+				return tt.reply, tt.err
+			}
+			require.Equal(t, tt.want, tightenReview(t.Context(), tt.text, turn, nil))
+			if prompt != "" {
+				require.Contains(t, prompt, "the finding at `a.go:3`: 90 words; keep it under 40")
+			}
+		})
+	}
+}
+
+func TestDropCoveredLeads_OnlyABlockingFindingCoversALead(t *testing.T) {
+	text := "- nitpick: a.go:10 — rename x\n\nOk."
+	leads := review.LeadsHeader + "- `a.go:12` nil deref crashes\n"
+	require.Equal(t, leads, dropCoveredLeads(leads, text))
+}
+
+func TestTightenReview_ACutNeverChangesALabelTheDecisionOrAnotherFinding(t *testing.T) {
+	long := "- issue (blocking): a.go:3 — " + strings.Repeat("too many words ", 30) + "\n- nitpick: b.go:1 — fine as it is\n\nOk.\n\nDecision: Request changes"
+	for name, reply := range map[string]string{
+		"a label softened":       "- suggestion: a.go:3 — Buffer it.\n- nitpick: b.go:1 — fine as it is\n\nOk.\n\nDecision: Request changes",
+		"another finding edited": "- issue (blocking): a.go:3 — Buffer it.\n- nitpick: b.go:1 — fine\n\nOk.\n\nDecision: Request changes",
+	} {
+		t.Run(name, func(t *testing.T) {
+			require.Equal(t, long, tightenReview(t.Context(), long, func(context.Context, string) (string, error) { return reply, nil }, nil))
+		})
+	}
+}
+
+func TestVoiceLeads_ARewriteThatSaysNothingKeepsTheOriginal(t *testing.T) {
+	leads := review.LeadsHeader + "- `a.go:3` the retry re-sends the read body, so the upload is empty\n"
+	require.Equal(t, leads, voiceLeads(t.Context(), leads, func(context.Context, string) (string, error) { return "- `a.go:3` Looks fine.", nil }))
+}
+
+func TestLeads_ALeadThatCannotBePlacedIsNeverLost(t *testing.T) {
+	leads := review.LeadsHeader + "- `a.go:3` \n- `b.go:9` the retry drops the body\n"
+	require.Equal(t, leads, voiceLeads(t.Context(), leads, func(context.Context, string) (string, error) {
+		t.Fatal("a lead that cannot be checked after a rewrite is not rewritten")
+		return "", nil
+	}))
+	require.Contains(t, dropCoveredLeads(leads, "- issue (blocking): b.go:9 — x\n\nOk."), "- `a.go:3`", "kept though it cannot be placed")
+}
+
+func TestReviewView_SaysWhyItCannotPost(t *testing.T) {
+	old := reviewPostNote
+	t.Cleanup(func() { reviewPostNote = old })
+	reviewPostNote = noPostNote(false, false)
+	a := reviewView(codeStyle{width: 80}, nil, editableReview, "", review.DecisionComment, reviewRound{}, nil, false)
+	require.Contains(t, a.Intro, "run codeforge review with --comment")
+	a = reviewView(codeStyle{width: 80}, nil, editableReview, "", review.DecisionComment, reviewRound{}, nil, true)
+	require.NotContains(t, a.Intro, "Posting is off", "a view that can post says nothing")
+	require.Contains(t, noPostNote(true, true), "could not be read")
+}
+
+func TestApplyEdits_TheFinalCommentCanBeRewrittenOrDeleted(t *testing.T) {
+	out, _, edited := applyEdits(editableReview, []forms.Change{{Kind: forms.ChangeEdit, Note: finalNoteID, Text: "Close.\n- Fix the sampler."}})
+	require.Contains(t, out, "- nitpick: b.go:2 — rename h\n\nClose.\n- Fix the sampler.\n\nDecision: Request changes")
+	require.NotContains(t, out, "Looks close.")
+	require.Equal(t, []string{"Close.\n- Fix the sampler."}, edited)
+
+	out, _, _ = applyEdits(editableReview, []forms.Change{{Kind: forms.ChangeDelete, Note: finalNoteID}})
+	require.NotContains(t, out, "Looks close.")
+	require.True(t, strings.HasSuffix(out, "rename h\n\nDecision: Request changes"), out)
+
+	_, questions, _ := applyEdits(editableReview, []forms.Change{{Kind: forms.ChangeAsk, Note: finalNoteID, Text: "too harsh?"}})
+	require.Equal(t, "your final comment", questions[0].About)
+}
+
+func TestReviewTurn_RetriesPlainerOnlyWhenTheCommandLineWasWrong(t *testing.T) {
+	for _, code := range []int{64, 1} {
+		t.Run(strconv.Itoa(code), func(t *testing.T) {
+			dir := t.TempDir()
+			engine := filepath.Join(dir, "engine")
+			calls := filepath.Join(dir, "calls")
+			script := fmt.Sprintf("#!/bin/sh\necho x >> %s\ncase \" $* \" in *\" --odd \"*) exit %d ;; esac\nprintf '%%s' '{\"output\":\"Plain.\"}'\n", calls, code)
+			require.NoError(t, os.WriteFile(engine, []byte(script), 0o700))
+			reply, err := reviewTurn([]string{engine, "--odd", "--session-id", "rev-1", "--profile", "codeforge-review", "brief"}, os.Environ())(t.Context(), "q")
+			n, rerr := os.ReadFile(calls)
+			require.NoError(t, rerr)
+			if code == exitUsage {
+				require.NoError(t, err)
+				require.Equal(t, "Plain.", reply)
+				require.Equal(t, 2, strings.Count(string(n), "x"), "once as the review ran, once plainer")
+				return
+			}
+			require.Error(t, err)
+			require.Equal(t, 1, strings.Count(string(n), "x"), "another failure is not run again")
 		})
 	}
 }

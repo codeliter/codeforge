@@ -166,6 +166,9 @@ func (s *Store) initialize(ctx context.Context, scripts fs.FS) (result error) {
 			return fmt.Errorf("advancing schema: %w", err)
 		}
 	}
+	if err := repairReviewRecords(ctx, tx, scripts); err != nil {
+		return err
+	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("committing migration: %w", err)
 	}
@@ -254,4 +257,34 @@ func (s *Store) Get(ctx context.Context, id string) (Session, error) {
 		return session, fmt.Errorf("loading session: %w", err)
 	}
 	return session, nil
+}
+
+// reviewRecordsMigration is the migration that makes review_records.
+const reviewRecordsMigration = "migrations/006_review_records.sql"
+
+// repairReviewRecords rebuilds a review_records table made before it had its account column: a build from before
+// 006_review_records.sql was final made one, and every later read of it fails. Its rows name no account, so they
+// cannot be kept under one; without them a later review of those PRs is a full review, not a follow-up round.
+func repairReviewRecords(ctx context.Context, tx *sql.Tx, scripts fs.FS) error {
+	var tables, accounts int
+	if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'review_records'").Scan(&tables); err != nil {
+		return fmt.Errorf("checking review records: %w", err)
+	}
+	if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM pragma_table_info('review_records') WHERE name = 'account'").Scan(&accounts); err != nil {
+		return fmt.Errorf("checking review records: %w", err)
+	}
+	if tables == 0 || accounts > 0 {
+		return nil
+	}
+	script, err := fs.ReadFile(scripts, reviewRecordsMigration)
+	if err != nil {
+		return fmt.Errorf("reading migration: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, "DROP TABLE review_records"); err != nil {
+		return fmt.Errorf("repairing review records: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, string(script)); err != nil {
+		return fmt.Errorf("repairing review records: %w", err)
+	}
+	return nil
 }

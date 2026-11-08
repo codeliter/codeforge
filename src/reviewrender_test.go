@@ -160,7 +160,7 @@ func TestRunReviewEngine_TheUserPicksTheDecisionThatIsPosted(t *testing.T) {
 	require.Equal(t, "Final comment", shown.Items[1].Title)
 	require.Equal(t, "suggested: Approve", shown.Items[1].Summary)
 	require.True(t, shown.Items[1].Open, "the final comment is open at the start")
-	require.Contains(t, shown.Items[1].Body, "Adds x as the description says.")
+	require.Contains(t, shown.Items[1].Notes[0].Body, "Adds x as the description says.", "the final comment is a note, so it can be rewritten")
 	require.Equal(t, []forms.Action{
 		{Key: "1", Label: "post as Approve (suggested)", Group: "Post as"}, {Key: "2", Label: "post as Comment", Group: "Post as"},
 		{Key: "3", Label: "post as Request changes", Group: "Post as"}, {Key: "4", Label: "post as separate comments (deletable)", Group: "Or"},
@@ -330,7 +330,7 @@ func TestReviewAccordion_GroupsFindingsByFileAndKeepsTheRestAsTheFinalComment(t 
 	require.Contains(t, a.Items[0].Notes[1].Body, "and a second line")
 	require.Equal(t, "1 issue", a.Items[1].Summary)
 	require.Equal(t, "f1", a.Items[1].Notes[0].ID)
-	require.Contains(t, a.Items[2].Body, "Adds the retry the description promises")
+	require.Contains(t, a.Items[2].Notes[0].Body, "Adds the retry the description promises")
 	require.NotContains(t, a.Items[2].Body, "heading", "headings are dropped")
 	require.True(t, a.Items[2].Open)
 	require.Contains(t, a.Items[3].Body, "x.go:1 drops data")

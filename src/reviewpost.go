@@ -129,6 +129,16 @@ func runShownReview(ctx context.Context, argv, env []string, limit time.Time, st
 	}
 	// A note to the user before the findings is for the terminal at most, never for the PR.
 	text = review.StripPreamble(review.StripVerdict(text))
+	// A comment too long to take in on one read goes back to the reviewer once, to be cut.
+	if long := longComments(text); len(long) > 0 {
+		fmt.Fprintf(os.Stderr, "codeforge: asking the reviewer to cut %s that run too long.\n", plural(len(long), "comment"))
+		text = tightenReview(ctx, text, reviewTurn(argv, env), func(revised string) string {
+			if fu.Active() {
+				revised, _, _ = fu.ParseFollowUp(revised) //nolint:errcheck // only the review part is kept; the first reply's verdicts stand
+			}
+			return review.StripPreamble(review.StripVerdict(revised))
+		})
+	}
 	// The closing Decision line is the review's suggestion for its type, shown as such, not as a line of text; the user
 	// picks the decision that is posted.
 	decision, display := review.ParseDecision(text)
@@ -141,10 +151,19 @@ func runShownReview(ctx context.Context, argv, env []string, limit time.Time, st
 	leads := ""
 	if pipe := review.PipelineOf(ctx); pipe != nil && post.Enabled() {
 		leads = pipe.Leads(ctx)
+		if dropCoveredLeads(leads, text) != "" {
+			// Another reviewer wrote them; what goes on the PR reads as the user's own, like the rest of the review.
+			fmt.Fprintln(os.Stderr, "codeforge: putting the unconfirmed blocking leads in your words...")
+			leads = voiceLeads(ctx, leads, reviewTurn(argv, env))
+		}
 	}
 	asked, answer := false, false
 	if styled {
 		ask := post.Enabled() && !post.Preapproved() && !unreadable // a round whose verdicts did not read is never posted
+		reviewPostNote = ""                                         // one review's note never carries over to the next
+		if !ask && !post.Preapproved() {
+			reviewPostNote = noPostNote(post.Enabled(), unreadable)
+		}
 		var threads []forms.Section
 		if fu.Active() {
 			threads = followUpSections(ctx, fu, answers, codeStyleFor(ctx, os.Stdout))
@@ -152,7 +171,9 @@ func runShownReview(ctx context.Context, argv, env []string, limit time.Time, st
 		// The user may mark changes and send them, as often as they like: rewrites and deletions apply as written,
 		// questions go to the reviewer, and the view opens again on the review as it now reads.
 		var round reviewRound
-		key, changes, shown := showReview(ctx, display, decision, leads, out.Bytes(), ask, threads, round)
+		// A lead the review makes as a blocking finding of its own is left out, against the review as it reads now: one
+		// the user's edits have left uncovered shows, and is posted, again.
+		key, changes, shown := showReview(ctx, display, decision, dropCoveredLeads(leads, text), out.Bytes(), ask, threads, round)
 		for key == forms.KeySend {
 			if n := countQuestions(changes); n > 0 {
 				fmt.Fprintf(os.Stderr, "codeforge: asking the reviewer %s (up to %d minutes); the review opens again with the answers.\n",
@@ -176,7 +197,7 @@ func runShownReview(ctx context.Context, argv, env []string, limit time.Time, st
 			if fu.Active() && decision == review.DecisionApprove && fu.Unsettled(answers) {
 				decision = review.DecisionRequestChanges
 			}
-			key, changes, shown = showReview(ctx, display, decision, leads, out.Bytes(), ask, threads, round)
+			key, changes, shown = showReview(ctx, display, decision, dropCoveredLeads(leads, text), out.Bytes(), ask, threads, round)
 		}
 		*chat = key == keyChat
 		chosen, picked := decisionKeys[key]
@@ -188,8 +209,8 @@ func runShownReview(ctx context.Context, argv, env []string, limit time.Time, st
 		// What may be posted is printed first, the replies to the earlier threads included.
 		fmt.Fprint(os.Stdout, followUpPlain(fu, answers))
 		fmt.Fprintln(os.Stdout, text)
-		if leads != "" {
-			fmt.Fprintln(os.Stdout, "\n"+leads)
+		if l := dropCoveredLeads(leads, text); l != "" {
+			fmt.Fprintln(os.Stdout, "\n"+l)
 		}
 	}
 	if !post.Enabled() {
@@ -224,7 +245,7 @@ func runShownReview(ctx context.Context, argv, env []string, limit time.Time, st
 	if err != nil {
 		return fmt.Errorf("the review above was not posted: %w", err)
 	}
-	posted, err := post.Post(pctx, review.ExecRunner{}, text, leads, decision)
+	posted, err := post.Post(pctx, review.ExecRunner{}, text, dropCoveredLeads(leads, text), decision)
 	if err != nil && posted.URL != "" {
 		// Part of it is on the PR: say so, so a rerun does not post it twice, and keep what is up for the next round.
 		// The earlier threads are not answered, so the round does not count as having judged them.
@@ -347,6 +368,9 @@ func reviewView(st codeStyle, code codeSource, text, leads string, decision revi
 	a := reviewAccordion(text, leads, st, code, round.Marks)
 	a.Edits = true
 	a.Intro = roundIntro(st, text, round)
+	if !ask && reviewPostNote != "" {
+		a.Intro = strings.TrimSpace(st.paint(st.pal.dim, reviewPostNote) + "\n\n" + a.Intro)
+	}
 	// A follow-up round's earlier threads come first: what the author did about them is the point of the round.
 	a.Items = append(slices.Clone(threads), a.Items...)
 	verdict := st.paint(st.pal.dim, "suggested: ") + st.paint(decisionColor(decision, st), decision.Label())
@@ -372,6 +396,17 @@ func reviewView(st codeStyle, code codeSource, text, leads string, decision revi
 	}
 	a.Keys = append(a.Keys, forms.Action{Key: keyChat, Label: "chat about it", Group: other})
 	return a
+}
+
+// reviewPostNote, when set, says in the view why it offers no way to post, so p showing only the chat is not a mystery.
+var reviewPostNote string
+
+// noPostNote says why a review cannot be posted from the view.
+func noPostNote(enabled, unreadable bool) string {
+	if enabled && unreadable {
+		return "Posting is off for this round: the reviewer's verdicts on your earlier threads could not be read. Run the review again to post it."
+	}
+	return "Posting is off: run codeforge review with --comment to post this review."
 }
 
 // decisionColor colours a decision like the labels it follows from: Request changes as an issue, Approve as praise.
