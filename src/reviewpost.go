@@ -130,7 +130,7 @@ func runReviewEngine(ctx context.Context, argv, env []string, limit time.Time) e
 // and post the answer.
 func showReview(ctx context.Context, text, leads string, raw []byte, ask bool) (asked, post bool) {
 	st := codeStyleFor(ctx, os.Stdout)
-	code := reviewCode(ctx, st)
+	code := reviewCode(ctx, st, text)
 	footer := runFooter(raw, st)
 	if accordionAvailable() {
 		a := reviewAccordion(text, leads, st, code)

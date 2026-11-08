@@ -223,7 +223,7 @@ func reviewArgs(ctx context.Context, bin string, rc config.ReviewConfig, judges 
 	if err != nil {
 		return nil, fmt.Errorf("loading PR %s: %w", number, err)
 	}
-	review.DisplayOf(ctx).PR(b.HeadRef)
+	review.DisplayOf(ctx).PR(b.HeadRef, repo, b.PR.HeadRefOid)
 	cctx, ccancel := context.WithTimeout(ctx, review.LoadLimit)
 	defer ccancel()
 	tier, _ := review.Classify(cctx, judges, b.Diff, b.Files())

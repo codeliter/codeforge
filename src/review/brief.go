@@ -22,6 +22,7 @@ type PR struct {
 	URL         string `json:"url"`
 	BaseRefName string `json:"baseRefName"`
 	HeadRefName string `json:"headRefName"`
+	HeadRefOid  string `json:"headRefOid"`
 	Author      struct {
 		Login string `json:"login"`
 	} `json:"author"`
@@ -48,7 +49,7 @@ type PR struct {
 	} `json:"statusCheckRollup"`
 }
 
-const prFields = "number,title,body,url,baseRefName,headRefName,author,additions,deletions,files,commits,reviews,statusCheckRollup"
+const prFields = "number,title,body,url,baseRefName,headRefName,headRefOid,author,additions,deletions,files,commits,reviews,statusCheckRollup"
 
 var (
 	ErrNoPR       = errors.New("review: PR number or URL is required")
@@ -126,7 +127,8 @@ func Load(ctx context.Context, r Runner, repo, number string) (Brief, error) {
 }
 
 // originRepo matches owner/name at the end of a GitHub remote URL: https://github.com/o/r(.git) or git@github.com:o/r(.git).
-var originRepo = regexp.MustCompile(`github\.com[:/]([\w.-]+/[\w.-]+?)(?:\.git)?/?$`)
+// Any host is accepted, so an SSH alias (git@github-work:o/r.git) matches too.
+var originRepo = regexp.MustCompile(`[:/]([\w.-]+/[\w.-]+?)(?:\.git)?/?$`)
 
 // isOrigin reports whether owner/name repo is the GitHub repository this checkout's origin points at.
 func isOrigin(ctx context.Context, r Runner, repo string) bool {

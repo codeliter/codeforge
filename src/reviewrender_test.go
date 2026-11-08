@@ -2,9 +2,11 @@ package src
 
 import (
 	"context"
+	"errors"
 	"io"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -155,16 +157,71 @@ func TestReviewAccordion_SplitsAtHeadingsAndCountsFindings(t *testing.T) {
 	require.Equal(t, "Review", only.Items[0].Title, "a review without headings is one section")
 }
 
+var errNotOnGitHub = errors.New("HTTP 404")
+
+// codeCalls records the git and gh calls reviewCode makes and answers each with a ten-line file.
+type codeCalls struct {
+	mu    sync.Mutex
+	calls []string
+}
+
+func (c *codeCalls) Run(_ context.Context, name string, args ...string) ([]byte, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.calls = append(c.calls, name+" "+strings.Join(args, " "))
+	if strings.Contains(strings.Join(args, " "), "missing.go") {
+		return nil, errNotOnGitHub
+	}
+	return []byte("l1\nl2\nl3\nl4\nl5\nl6\nl7\nl8\nl9\nl10\n"), nil
+}
+
+func useCodeRunner(t *testing.T) *codeCalls {
+	t.Helper()
+	c := &codeCalls{}
+	old := codeRunner
+	codeRunner = c
+	t.Cleanup(func() { codeRunner = old })
+	return c
+}
+
+const pathsReview = "suggestion: a/b.go:5 — x\nnitpick: a/b.go:6 — y\nissue: dir/ü.go:2 — z\nfyi: missing.go:1 — w\nquestion: ../escape.go:1 — v\n"
+
 func TestReviewCode_ReadsWhereTheReviewSays(t *testing.T) {
 	st := codeStyle{width: 80}
-	require.Nil(t, reviewCode(t.Context(), st), "outside a review there is nothing to read")
+	require.Nil(t, reviewCode(t.Context(), st, pathsReview), "outside a review there is nothing to read")
 	d := &review.Display{}
 	ctx := review.WithDisplay(context.Background(), d)
-	require.Nil(t, reviewCode(ctx, st), "a PR whose head was not fetched")
+	d.PR("", "", "")
+	require.Nil(t, reviewCode(ctx, st, pathsReview), "a PR with neither a fetched head nor a commit")
 	d.Local()
-	require.NotNil(t, reviewCode(ctx, st))
-	d.PR("refs/codeforge/pr-1")
-	ref, local := d.Source()
-	require.Equal(t, "refs/codeforge/pr-1", ref)
-	require.False(t, local)
+	require.NotNil(t, reviewCode(ctx, st, pathsReview))
+}
+
+func TestReviewCode_ReadsAFetchedHeadWithGit(t *testing.T) {
+	calls := useCodeRunner(t)
+	d := &review.Display{}
+	d.PR("refs/codeforge/pr-1", "acme/core", "abc123")
+	code := reviewCode(review.WithDisplay(t.Context(), d), codeStyle{width: 80}, pathsReview)
+	require.Contains(t, code("a/b.go", 5), "> 5 | l5")
+	require.Contains(t, calls.calls, "git show refs/codeforge/pr-1:a/b.go")
+	require.Len(t, calls.calls, 3, "each file once (a/b.go, dir/ü.go, missing.go), never a path outside the repository")
+}
+
+func TestReviewCode_ReadsAPRFromAnotherCheckoutOnGitHub(t *testing.T) {
+	calls := useCodeRunner(t)
+	d := &review.Display{}
+	d.PR("", "ecosia/core", "abc123")
+	code := reviewCode(review.WithDisplay(t.Context(), d), codeStyle{width: 80}, pathsReview)
+	require.Contains(t, code("a/b.go", 6), "> 6 | l6")
+	require.Contains(t, code("dir/ü.go", 2), "> 2 | l2")
+	require.Empty(t, code("missing.go", 1), "a file GitHub does not have shows no code")
+	require.Empty(t, code("../escape.go", 1))
+	require.Contains(t, calls.calls, "gh api -H Accept: application/vnd.github.raw repos/ecosia/core/contents/a/b.go?ref=abc123")
+	require.Contains(t, calls.calls, "gh api -H Accept: application/vnd.github.raw repos/ecosia/core/contents/dir/%C3%BC.go?ref=abc123")
+
+	d.PR("", "", "abc123")
+	calls.calls = nil
+	reviewCode(review.WithDisplay(t.Context(), d), codeStyle{width: 80}, "suggestion: a.go:1 — x")
+	require.Equal(t, []string{"gh api -H Accept: application/vnd.github.raw repos/{owner}/{repo}/contents/a.go?ref=abc123"}, calls.calls,
+		"a PR named by number is read from this checkout's repository")
 }

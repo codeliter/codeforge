@@ -1,12 +1,16 @@
 package src
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/term"
@@ -260,10 +264,11 @@ func collapseBlank(s string) string {
 
 // reviewCode reads the code a review is about from where the review says it is: the working tree for local work, the
 // PR's fetched head otherwise. With neither, findings are shown without code.
-func reviewCode(ctx context.Context, st codeStyle) codeSource {
-	ref, local := review.DisplayOf(ctx).Source()
+func reviewCode(ctx context.Context, st codeStyle, text string) codeSource {
+	src := review.DisplayOf(ctx).Source()
+	var read func(ctx context.Context, file string) ([]byte, error)
 	switch {
-	case local:
+	case src.Local:
 		wd, err := os.Getwd()
 		if err != nil {
 			return nil
@@ -273,23 +278,78 @@ func reviewCode(ctx context.Context, st codeStyle) codeSource {
 			return nil
 		}
 		return func(file string, line int) string { return codeAround(root, file, line, st) }
-	case ref != "":
-		files := map[string]string{}
-		return func(file string, line int) string {
-			content, seen := files[file]
-			if !seen {
-				gctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), gitShowLimit)
-				out, err := review.ExecRunner{}.Run(gctx, "git", "show", ref+":"+file)
-				cancel()
-				if err == nil {
-					content = string(out)
-				}
-				files[file] = content
+	case src.HeadRef != "":
+		read = func(ctx context.Context, file string) ([]byte, error) {
+			return codeRunner.Run(ctx, "git", "show", src.HeadRef+":"+file)
+		}
+	case src.SHA != "":
+		// The PR is not in this checkout: read each file at its head commit from GitHub.
+		repo := cmp.Or(src.Repo, "{owner}/{repo}")
+		read = func(ctx context.Context, file string) ([]byte, error) {
+			return codeRunner.Run(ctx, "gh", "api", "-H", "Accept: application/vnd.github.raw",
+				"repos/"+repo+"/contents/"+escapePath(file)+"?ref="+url.QueryEscape(src.SHA))
+		}
+	default:
+		return nil
+	}
+	files := prefetch(ctx, findingPaths(text), read)
+	return func(file string, line int) string {
+		content, ok := files[strings.TrimPrefix(file, "./")]
+		if !ok {
+			return ""
+		}
+		return codeSnippet(content, file, line, st)
+	}
+}
+
+// codeRunner runs git and gh for reviewCode; tests replace it.
+var codeRunner review.Runner = review.ExecRunner{}
+
+// prefetch reads every file at once, each bounded by codeReadLimit; a file that cannot be read is left out.
+func prefetch(ctx context.Context, paths []string, read func(context.Context, string) ([]byte, error)) map[string]string {
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	files := map[string]string{}
+	for _, p := range paths {
+		wg.Go(func() {
+			rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), codeReadLimit)
+			defer cancel()
+			if out, err := read(rctx, p); err == nil {
+				mu.Lock()
+				files[p] = string(out)
+				mu.Unlock()
 			}
-			return codeSnippet(content, file, line, st)
+		})
+	}
+	wg.Wait()
+	return files
+}
+
+// findingPaths lists the files the review's findings point at, once each.
+func findingPaths(text string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, l := range strings.Split(text, "\n") {
+		if f, ok := review.ParseLabeled(l); ok && !seen[f.Path] && validRepoPath(f.Path) {
+			seen[f.Path] = true
+			out = append(out, f.Path)
 		}
 	}
-	return nil
+	return out
+}
+
+// validRepoPath keeps a path the model wrote to a plain relative path inside the repository.
+func validRepoPath(p string) bool {
+	return filepath.IsLocal(p) && !strings.ContainsAny(p, "?#\\")
+}
+
+// escapePath escapes each segment of a repository path for a URL, keeping the slashes.
+func escapePath(p string) string {
+	parts := strings.Split(p, "/")
+	for i, s := range parts {
+		parts[i] = url.PathEscape(s)
+	}
+	return strings.Join(parts, "/")
 }
 
 // reviewAccordion splits a review at its headings into the sections of an accordion: the text before the first heading
@@ -406,8 +466,8 @@ func accordionRecap(a forms.Accordion, st codeStyle) string {
 	return b.String()
 }
 
-// gitShowLimit bounds reading one file from the PR's head ref.
-const gitShowLimit = 5 * time.Second
+// codeReadLimit bounds reading one file from the PR's head, locally or from GitHub.
+const codeReadLimit = 8 * time.Second
 
 // stdoutStyled reports whether the review is printed for a person: standard output is a terminal.
 var stdoutStyled = func() bool { return term.IsTerminal(int(os.Stdout.Fd())) }
