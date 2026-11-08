@@ -17,9 +17,16 @@ import (
 
 // The engine fixture models Empryo's contract: only headless runs submit a
 // positional prompt; the TUI must reopen the conversation saved by that run.
-// Jurors run beside the reviewer, so each launch writes its record under a lock: two at once never interleave.
+// Jurors run beside the reviewer, so each launch writes its record under a lock: two at once never interleave. A lock
+// still held after about ten seconds was left by a killed launch: the launch fails then, rather than hang or take the
+// lock over (two waiters taking it over at once would interleave again).
 const modeCLIEngine = `#!/bin/sh
-while ! mkdir "$CODEFORGE_CLI_CAPTURE.lock" 2>/dev/null; do sleep 0.01; done
+n=0
+while ! mkdir "$CODEFORGE_CLI_CAPTURE.lock" 2>/dev/null; do
+  n=$((n+1))
+  if [ "$n" -gt 1000 ]; then echo "capture lock stuck: $CODEFORGE_CLI_CAPTURE.lock" >&2; exit 1; fi
+  sleep 0.01
+done
 printf 'BEGIN\n' >> "$CODEFORGE_CLI_CAPTURE"
 printf '%s\n' "$@" >> "$CODEFORGE_CLI_CAPTURE"
 rmdir "$CODEFORGE_CLI_CAPTURE.lock"

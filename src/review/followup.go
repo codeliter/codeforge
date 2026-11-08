@@ -89,6 +89,9 @@ func (fu *FollowUp) Threads() []MyThread {
 
 // Feedback is the round's threads in the form the thread view and the reply poster take.
 func (fu *FollowUp) Feedback() Feedback {
+	if fu == nil {
+		return Feedback{}
+	}
 	fu.mu.Lock()
 	defer fu.mu.Unlock()
 	n, _ := strconv.Atoi(fu.data.Number) //nolint:errcheck // a number ParseRef accepted
@@ -143,7 +146,7 @@ func LoadFollowUp(ctx context.Context, r Runner, repo, number, head string, rec 
 		for _, rv := range page {
 			at, err := time.Parse(time.RFC3339, rv.SubmittedAt)
 			if rv.User.Login != d.Me || rv.State == "PENDING" || rv.State == "DISMISSED" || err != nil || at.Before(latest) ||
-				(hasRec && (slices.Contains(rec.Posted, rv.ID) || !at.After(rec.At))) {
+				(hasRec && (slices.Contains(rec.Posted, rv.ID) || at.Before(rec.At))) {
 				continue
 			}
 			d.LastState, d.Since, reviewedAt, latest = rv.State, rv.CommitID, rv.SubmittedAt, at
@@ -570,8 +573,16 @@ func verdictsFence(out string, ids map[string]bool) (string, bool) {
 // (another key at either level, a repeated key whose first value the decoder would drop, an entry for a thread that is
 // not the round's) may carry review text that must not vanish with the block.
 func isVerdicts(block string, ids map[string]bool) bool {
+	_, ok := verdictsOf(block, ids)
+	return ok
+}
+
+// verdictsOf decodes block once, as isVerdicts checks it, and returns its verdicts (never nil when ok).
+func verdictsOf(block string, ids map[string]bool) ([]ThreadAnswer, bool) {
+	// repeatsKey is the real guard: encoding/json matches field names in any case, and even look-alike letters, and
+	// keeps the last of two that match, so DisallowUnknownFields alone lets a second copy of a key hide the first.
 	if repeatsKey(block) {
-		return false
+		return nil, false
 	}
 	var doc struct {
 		Threads *[]ThreadAnswer `json:"threads"`
@@ -579,12 +590,15 @@ func isVerdicts(block string, ids map[string]bool) bool {
 	dec := json.NewDecoder(strings.NewReader(block))
 	dec.DisallowUnknownFields() // checked on every nested struct too
 	if dec.Decode(&doc) != nil || doc.Threads == nil {
-		return false
+		return nil, false
 	}
 	if _, err := dec.Token(); !errors.Is(err, io.EOF) { // nothing after the object
-		return false
+		return nil, false
 	}
-	return !slices.ContainsFunc(*doc.Threads, func(a ThreadAnswer) bool { return !ids[a.Thread] })
+	if slices.ContainsFunc(*doc.Threads, func(a ThreadAnswer) bool { return !ids[a.Thread] }) {
+		return nil, false
+	}
+	return *doc.Threads, true
 }
 
 // verdictKeys are the only keys a verdicts block may use, spelled exactly so: encoding/json would match any case of
@@ -825,19 +839,17 @@ func (fu *FollowUp) splitFollowUp(output string) (string, []ThreadAnswer, error)
 			return cut, nil, fmt.Errorf("%w: more than one verdicts block", ErrNoAnswers)
 		}
 	}
-	var doc struct {
-		Threads *[]ThreadAnswer `json:"threads"`
-	}
-	// The block holds verdicts on the round's threads and nothing else (isVerdicts): anything more may carry review
+	// The block holds verdicts on the round's threads and nothing else (verdictsOf): anything more may carry review
 	// text, which must not vanish with it.
-	if !isVerdicts(block, fu.threadIDs()) || json.Unmarshal([]byte(block), &doc) != nil {
+	verdicts, ok := verdictsOf(block, fu.threadIDs())
+	if !ok {
 		if decided || looksLikeVerdicts(block, true) { // the block that ends the answer, where the verdicts go
 			return review, nil, fmt.Errorf("%w: the verdicts do not read", ErrNoAnswers)
 		}
 		return out, nil, ErrNoAnswers
 	}
 	given := map[string]ThreadAnswer{}
-	for _, a := range *doc.Threads {
+	for _, a := range verdicts {
 		if _, dup := given[a.Thread]; dup {
 			// Two verdicts for one thread cannot both stand, and picking one could approve past the other.
 			return review, nil, fmt.Errorf("%w: thread %s has two verdicts", ErrNoAnswers, a.Thread)
@@ -921,65 +933,77 @@ func (fu *FollowUp) PostFollowUp(ctx context.Context, r Runner, answers []Thread
 		roots[t.ID] = t.RootID
 	}
 	out := make([]ThreadOutcome, len(answers))
+	// The replies go up first, all at once. Then the head is read once, so a push while they went up keeps every thread
+	// open; only a push in the moment between that check and the resolves can slip through.
 	var wg sync.WaitGroup
 	for i, a := range answers {
 		root, ok := roots[a.Thread]
 		if !ok {
 			continue
 		}
+		out[i].Thread = a.Thread
+		if a.Reply == "" {
+			continue
+		}
 		wg.Go(func() {
-			o := ThreadOutcome{Thread: a.Thread}
-			if a.Reply != "" && root == 0 {
+			if root == 0 {
 				// GitHub takes a reply only to the thread's first comment; without it the reply cannot go up.
-				o.Err = errNoRoot
-				out[i] = o
+				out[i].Err = errNoRoot
 				return
 			}
-			if a.Reply != "" {
-				raw, err := bounded(ctx, func(ctx context.Context) (string, error) {
-					out, err := r.Run(ctx, "gh", "api", "--method", "POST",
-						repoPath(d.Repo)+"/pulls/"+d.Number+"/comments/"+strconv.Itoa(root)+"/replies", "--raw-field=body="+a.Reply)
-					return string(out), err
-				})
-				if err != nil {
-					o.Err = fmt.Errorf("posting the reply: %w", err)
-					out[i] = o
-					return
-				}
-				o.URL = htmlURL([]byte(raw))
+			raw, err := bounded(ctx, func(ctx context.Context) (string, error) {
+				out, err := r.Run(ctx, "gh", "api", "--method", "POST",
+					repoPath(d.Repo)+"/pulls/"+d.Number+"/comments/"+strconv.Itoa(root)+"/replies", "--raw-field=body="+a.Reply)
+				return string(out), err
+			})
+			if err != nil {
+				out[i].Err = fmt.Errorf("posting the reply: %w", err)
+				return
 			}
-			if a.Resolve && fu.HeadMoved(ctx, r) {
-				// Checked right before resolving, so a push while the reply went up still keeps the thread open; only a
-				// push in the moment between this check and the call below can slip through.
-				o.Moved = true
-				a.Resolve = false
+			out[i].URL = htmlURL([]byte(raw))
+		})
+	}
+	wg.Wait()
+	resolves := func(i int) bool { return out[i].Thread != "" && out[i].Err == nil && answers[i].Resolve }
+	moved := false
+	for i := range answers {
+		if resolves(i) {
+			moved = fu.HeadMoved(ctx, r)
+			break
+		}
+	}
+	for i, a := range answers {
+		if !resolves(i) {
+			continue
+		}
+		if moved {
+			out[i].Moved = true
+			continue
+		}
+		wg.Go(func() {
+			raw, err := bounded(ctx, func(ctx context.Context) (string, error) {
+				out, err := r.Run(ctx, "gh", "api", "graphql", "-f",
+					"query=mutation($id:ID!){resolveReviewThread(input:{threadId:$id}){thread{isResolved}}}", "-f", "id="+a.Thread)
+				return string(out), err
+			})
+			//nolint:tagliatelle // field names are fixed by GitHub's GraphQL schema
+			var res struct {
+				Data struct {
+					ResolveReviewThread struct {
+						Thread struct {
+							IsResolved bool `json:"isResolved"`
+						} `json:"thread"`
+					} `json:"resolveReviewThread"`
+				} `json:"data"`
 			}
-			if a.Resolve {
-				raw, err := bounded(ctx, func(ctx context.Context) (string, error) {
-					out, err := r.Run(ctx, "gh", "api", "graphql", "-f",
-						"query=mutation($id:ID!){resolveReviewThread(input:{threadId:$id}){thread{isResolved}}}", "-f", "id="+a.Thread)
-					return string(out), err
-				})
-				//nolint:tagliatelle // field names are fixed by GitHub's GraphQL schema
-				var res struct {
-					Data struct {
-						ResolveReviewThread struct {
-							Thread struct {
-								IsResolved bool `json:"isResolved"`
-							} `json:"thread"`
-						} `json:"resolveReviewThread"`
-					} `json:"data"`
-				}
-				switch {
-				case err != nil:
-					o.Err = fmt.Errorf("resolving the thread: %w", err)
-				case json.Unmarshal([]byte(raw), &res) != nil || !res.Data.ResolveReviewThread.Thread.IsResolved:
-					err = errNotResolved
-					o.Err = err
-				}
-				o.Resolved = err == nil
+			switch {
+			case err != nil:
+				out[i].Err = fmt.Errorf("resolving the thread: %w", err)
+			case json.Unmarshal([]byte(raw), &res) != nil || !res.Data.ResolveReviewThread.Thread.IsResolved:
+				out[i].Err = errNotResolved
+			default:
+				out[i].Resolved = true
 			}
-			out[i] = o
 		})
 	}
 	wg.Wait()

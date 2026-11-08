@@ -116,6 +116,16 @@ func TestRecordPost_NothingKnownIsLostWhileItsThreadIsOpen(t *testing.T) {
 	require.Contains(t, rec.Findings, review.RecordFinding{Path: "b.go", Line: 9, Blocking: true}, "a new finding at the same place never hides an earlier blocker")
 }
 
+func TestMergeRecord_AnUnjudgedRoundKeepsTheTimeAndDecisionOfItsBaseline(t *testing.T) {
+	then := time.Date(2026, 11, 8, 10, 0, 0, 0, time.UTC)
+	old := review.Record{Head: "old", At: then, Decision: review.DecisionRequestChanges}
+	rec := review.Record{Head: "new", At: then.Add(time.Hour), Decision: review.DecisionApprove}
+	got := mergeRecord(rec, old, true, nil, activeFollowUp(t), false)
+	require.Equal(t, "old", got.Head)
+	require.Equal(t, then, got.At, "a review left by hand after the baseline still counts next round")
+	require.Equal(t, review.DecisionRequestChanges, got.Decision, "the decision that went with that commit")
+}
+
 func TestMergeRecord_AStaleRoundNeverLowersABlocker(t *testing.T) {
 	stale := followUpWith(t, review.Record{Findings: []review.RecordFinding{{Path: "a.go", Line: 1}}}) // T1 read as non-blocking
 	require.False(t, stale.Threads()[0].Blocking)

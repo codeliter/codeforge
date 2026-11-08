@@ -276,7 +276,7 @@ func reviewArgs(ctx context.Context, bin string, rc config.ReviewConfig, judges 
 		case err != nil && followUp:
 			return nil, fmt.Errorf("looking for your earlier review of PR %s: %w", number, err)
 		case err != nil:
-			fmt.Fprintln(os.Stderr, "codeforge: could not check for your earlier review, so this is a full review:", err)
+			fmt.Fprintln(os.Stderr, "codeforge: could not check for your earlier review, so this is a full review (--follow-up stops instead):", err)
 		case found:
 			review.FollowUpOf(ctx).Set(fu)
 			round = fu.PromptFollowUp()

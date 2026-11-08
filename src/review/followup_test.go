@@ -3,6 +3,7 @@ package review
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -223,6 +224,36 @@ func (notFound) Run(context.Context, string, ...string) ([]byte, error) {
 }
 
 var errGhNotFound = errors.New("gh: Not Found (HTTP 404)")
+
+func TestLoadFollowUp_AHandReviewInTheRecordedSecondCounts(t *testing.T) {
+	// GitHub times reviews to the second: one the user left by hand in the same second the recorded round began is
+	// newer than the record, while the round's own review (501) is known by its id.
+	reviews := `[[{"id":501,"user":{"login":"me"},"state":"COMMENTED","commit_id":"rec999","submitted_at":"2026-11-08T13:00:00Z"},
+{"id":777,"user":{"login":"me"},"state":"CHANGES_REQUESTED","commit_id":"hand1","submitted_at":"2026-11-08T13:00:00Z"}]]`
+	r := followUpRunner(reviews, prComments)
+	r.out["gh api repos/acme/w/compare/hand1...new222 --jq .status"] = "identical\n"
+	rec := Record{Head: "rec999", Decision: DecisionComment, Posted: []int64{501}, At: time.Date(2026, 11, 8, 13, 0, 0, 0, time.UTC)}
+	fu, _, err := LoadFollowUp(t.Context(), r, "acme/w", "42", "new222", rec, true)
+	require.NoError(t, err)
+	require.Equal(t, "hand1", fu.Since())
+}
+
+func TestParseFollowUp_ThePreviousRoundsExactInputs(t *testing.T) {
+	fu, _, err := LoadFollowUp(t.Context(), followUpRunner(myReview, prComments), "acme/w", "42", "new222", Record{}, false)
+	require.NoError(t, err)
+	_, _, err = fu.ParseFollowUp("Good.\n\nDecision: Approve\n\n```json\n" +
+		`{"threads":[{"thread":"T1","verdict":"fixed","reply":"x","note":"issue (blocking): a.go:1 — Drops data."},{"thread":"T2","verdict":"fixed"}]}` + "\n```")
+	require.ErrorIs(t, err, ErrNoAnswers, "an entry-level key after the Decision line, with open threads")
+
+	empty := followUpRunner(`[[]]`, `[[]]`)
+	empty.out["gh api graphql"] = `{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":false},"nodes":[]}}}}}`
+	none, _, err := LoadFollowUp(t.Context(), empty, "acme/w", "42", "new222", Record{Head: "x", At: time.Now()}, true)
+	require.NoError(t, err)
+	in := "Good.\n\n```" + verdictsTag + "\n" + `{"threads":[{"thread":"X","note":"issue (blocking): a.go:1 — Drops data."}]}` + "\n```"
+	got, _, err := none.ParseFollowUp(in)
+	require.ErrorIs(t, err, ErrNoAnswers, "an entry-level key in the verdicts' fence, with no threads")
+	require.Equal(t, in, got, "and the block's text is shown")
+}
 
 func TestLoadFollowUp_TheLatestSubmittedReviewWins(t *testing.T) {
 	reviews := `[[{"user":{"login":"me"},"state":"APPROVED","commit_id":"late","submitted_at":"2026-11-08T12:00:00Z"},
@@ -460,6 +491,45 @@ func TestPostFollowUp_AResolveGitHubDoesNotConfirmIsNoResolve(t *testing.T) {
 	got := fu.PostFollowUp(t.Context(), r, []ThreadAnswer{{Thread: "T1", Verdict: "fixed", Resolve: true}})
 	require.False(t, got[0].Resolved)
 	require.ErrorIs(t, got[0].Err, errNotResolved)
+}
+
+func TestPostFollowUp_TheHeadIsReadOnceAfterTheReplies(t *testing.T) {
+	fu, _, err := LoadFollowUp(t.Context(), followUpRunner(myReview, prComments), "acme/w", "42", "new222", Record{}, false)
+	require.NoError(t, err)
+	answers := []ThreadAnswer{{Thread: "T1", Verdict: "fixed", Reply: "Thanks.", Resolve: true}, {Thread: "T2", Verdict: "agreed", Reply: "Ok.", Resolve: true}}
+	r := &fakeRunner{out: map[string]string{
+		"gh api --method POST": `{"html_url":"https://github.com/acme/w/pull/42#discussion_r9"}`,
+		"gh api graphql":       `{"data":{"resolveReviewThread":{"thread":{"isResolved":true}}}}`,
+		"gh pr view 42":        "new222\n",
+	}}
+	got := fu.PostFollowUp(t.Context(), r, answers)
+	require.True(t, got[0].Resolved && got[1].Resolved)
+	views, last := 0, -1
+	for i, c := range r.calls {
+		if strings.HasPrefix(c, "gh pr view") {
+			views++
+		}
+		if strings.HasPrefix(c, "gh api --method POST") {
+			last = i
+		}
+	}
+	require.Equal(t, 1, views, "one head check for every thread")
+	require.Less(t, last, slices.IndexFunc(r.calls, func(c string) bool { return strings.HasPrefix(c, "gh pr view") }), "after every reply went up")
+
+	// A reply that fails leaves its thread open; a resolve-only answer beside it still goes through.
+	failing := &fakeRunner{out: r.out, fail: map[string]bool{"gh api --method POST": true}}
+	got = fu.PostFollowUp(t.Context(), failing, []ThreadAnswer{{Thread: "T1", Verdict: "fixed", Reply: "Thanks.", Resolve: true}, {Thread: "T2", Verdict: "agreed", Resolve: true}})
+	require.Error(t, got[0].Err)
+	require.False(t, got[0].Resolved, "a thread whose reply failed is never resolved")
+	require.True(t, got[1].Resolved)
+	require.Equal(t, 1, slices.IndexFunc(failing.calls, func(c string) bool { return strings.HasPrefix(c, "gh pr view") })-
+		slices.IndexFunc(failing.calls, func(c string) bool { return strings.HasPrefix(c, "gh api --method POST") }), "one head check, after the reply")
+
+	r.out["gh pr view 42"] = "newer\n"
+	got = fu.PostFollowUp(t.Context(), r, answers)
+	require.True(t, got[0].Moved && got[1].Moved, "a push while the replies went up resolves nothing")
+	require.False(t, got[0].Resolved || got[1].Resolved)
+	require.NotEmpty(t, got[0].URL, "the replies are up")
 }
 
 func TestLoadFollowUp_ARewrittenHistoryIsNoDelta(t *testing.T) {

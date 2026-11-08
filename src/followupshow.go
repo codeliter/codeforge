@@ -167,8 +167,14 @@ func mergeRecord(rec, old review.Record, hadOld bool, outcomes []review.ThreadOu
 		rec.Head, rec.At, rec.Decision = old.Head, old.At, old.Decision
 	case judged:
 	case fu.Active():
-		// The earlier threads were not all judged: the next round starts from the same commit and looks at them again.
+		// The earlier threads were not all judged: the next round starts from the same commit and looks at them again,
+		// with the time and decision of the record that commit came from, when there is one. A review the user leaves by
+		// hand after that time still counts; this round's own is known by its id. With no record yet, the round's own
+		// time is the only one known, so it stays.
 		rec.Head = fu.Since()
+		if hadOld {
+			rec.At, rec.Decision = old.At, old.Decision
+		}
 	default:
 		// Only part of the review went up: the next round starts from the review before it, or from scratch.
 		rec.Head, rec.At, rec.Decision = old.Head, old.At, old.Decision

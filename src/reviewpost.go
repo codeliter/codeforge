@@ -242,7 +242,15 @@ func runShownReview(ctx context.Context, argv, env []string, limit time.Time, st
 		fcancel()
 	}
 	recordPost(ctx, me, post, posted, postedAs(posted, decision), text, outcomes, fu, judged)
-	return ferr
+	if ferr != nil {
+		// The review is up and recorded; only some replies or resolves failed, and the error says that much.
+		where := "the review is on the PR"
+		if posted.URL != "" {
+			where += " (" + posted.URL + ")"
+		}
+		return fmt.Errorf("%s, but %w", where, ferr)
+	}
+	return nil
 }
 
 // postedAs is the decision that actually went up: a review GitHub refused that went up as one plain comment is no
