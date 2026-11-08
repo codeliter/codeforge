@@ -34,7 +34,9 @@ Follow the review-reply section of `codeforge-persona`; where it is silent, use 
 - Pushing back: one or two sentences with the evidence and, if useful, `path:line`.
 - Question: the answer, plainly.
 
-## 5. Post only with approval
-Show the verdict table, the commits and every draft reply. Post nothing until the user says so. Then push and post each reply in its thread:
+## 5. Hand the answers to codeforge
+Push nothing and post nothing. End the first pass with the verdicts, fix commits and draft replies in the json block the brief describes. Codeforge shows the user each thread with its code, your verdict and your reply, and pushes and posts only when they press `p`. Code in backticks exactly as written, so the view can mark it.
+
+Later in the chat, when the user asks you to change a reply or post one yourself, show the exact text first, then post it in its thread:
 `gh api repos/{owner}/{repo}/pulls/<PR>/comments/<comment id>/replies -f body='<reply>'`
 Never resolve threads yourself: the reviewer resolves them.

@@ -66,6 +66,13 @@ an approval, with each finding as an inline comment on its line. The model itsel
 session you can just ask for a review; no second terminal is needed. Review sessions are read-only, enforced by a tool
 guard and a sandbox (macOS for now).
 
+## Answering reviews
+
+`codeforge respond` works through the open review threads on your branch's PR: it judges each comment on evidence,
+commits the fixes that hold, and drafts a reply in your voice. It then shows the threads in the same view, by file:
+the code the reviewer commented on, their comment, the verdict, the fix's diff and the draft reply. `p` pushes the
+fixes and posts the replies, `c` continues in a chat to change any of them, and `q` leaves with nothing pushed or posted.
+
 ## It learns
 
 - **How to check your work:** the test, lint and build commands that pass here are suggested to the agent next time.

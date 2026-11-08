@@ -39,10 +39,12 @@ type Summary struct {
 }
 
 type Feedback struct {
-	Number  int
-	URL     string
-	Title   string
-	Me      string
+	Number int
+	URL    string
+	Title  string
+	Me     string
+	// HeadSHA is the PR head the reviewers saw, so their threads' code is shown as they read it.
+	HeadSHA string
 	Threads []Thread
 	Reviews []Summary
 }
@@ -67,8 +69,9 @@ func LoadFeedback(ctx context.Context, r Runner, number string) (Feedback, error
 		HeadRefName string `json:"headRefName"`
 		CrossRepo   bool   `json:"isCrossRepository"`
 		State       string `json:"state"`
+		HeadRefOid  string `json:"headRefOid"`
 	}
-	const fields = "number,url,title,headRefName,isCrossRepository,state"
+	const fields = "number,url,title,headRefName,isCrossRepository,state,headRefOid"
 	view := []string{"pr", "view", "--json", fields}
 	if number != "" {
 		view = []string{"pr", "view", number, "--json", fields}
@@ -96,7 +99,7 @@ func LoadFeedback(ctx context.Context, r Runner, number string) (Feedback, error
 		return Feedback{}, fmt.Errorf("reading GitHub user: %w", err)
 	}
 
-	fb := Feedback{Number: pr.Number, URL: pr.URL, Title: pr.Title, Me: strings.TrimSpace(string(me))}
+	fb := Feedback{Number: pr.Number, URL: pr.URL, Title: pr.Title, Me: strings.TrimSpace(string(me)), HeadSHA: pr.HeadRefOid}
 
 	// Every review, paginated, so a request older than the latest reviews is never dropped.
 	reviews, err := r.Run(ctx, "gh", "api", "--paginate", "--slurp", fmt.Sprintf("repos/{owner}/{repo}/pulls/%d/reviews", pr.Number))
@@ -237,7 +240,8 @@ func PromptFeedback(fb Feedback) string {
 		}
 		s.WriteString("\n")
 	}
-	s.WriteString("</feedback>\n")
+	s.WriteString("</feedback>\n\n")
+	s.WriteString(AnswersNote)
 	return s.String()
 }
 

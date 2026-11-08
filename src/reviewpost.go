@@ -46,6 +46,9 @@ var (
 // chat reports whether the follow-up chat should open: always outside review mode, where the chat is the point, and in
 // review mode only when the user pressed c in the review.
 func runReviewEngine(ctx context.Context, argv, env []string, limit time.Time) (chat bool, err error) {
+	if fb := review.RespondOf(ctx); fb != nil && !hasFlag(argv, "--json") && stdoutStyled() {
+		return runShownRespond(ctx, argv, env, limit, fb)
+	}
 	post := review.PostOf(ctx)
 	inReview := review.DisplayOf(ctx) != nil
 	styled := inReview && !hasFlag(argv, "--json") && stdoutStyled()

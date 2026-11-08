@@ -28,10 +28,11 @@ func currentRepo(ctx context.Context) string {
 
 const watchInterval = 2 * time.Minute
 
-// respondArgs launches ticket mode on the open review feedback for the current branch's PR.
+// respondArgs prepares ticket mode on the open review feedback for the current branch's PR, and returns that feedback
+// so the first pass's answers can be shown against it.
 // --print writes the brief instead, for the agent to call from inside a session.
 // --watch polls until new feedback arrives, then launches.
-func respondArgs(ctx context.Context, args []string) ([]string, bool, error) {
+func respondArgs(ctx context.Context, args []string) ([]string, *review.Feedback, bool, error) {
 	printOnly := slices.Contains(args, "--print")
 	watch := slices.Contains(args, "--watch")
 	rest := slices.DeleteFunc(slices.Clone(args), func(a string) bool { return a == "--print" || a == "--watch" })
@@ -40,10 +41,10 @@ func respondArgs(ctx context.Context, args []string) ([]string, bool, error) {
 	if len(rest) > 0 && !strings.HasPrefix(rest[0], "-") {
 		n, err := review.ParseRef(rest[0])
 		if err != nil {
-			return nil, false, fmt.Errorf("usage: codeforge respond [PR number or URL] [--watch]: %w", err)
+			return nil, nil, false, fmt.Errorf("usage: codeforge respond [PR number or URL] [--watch]: %w", err)
 		}
 		if other := repoFromURL(rest[0]); other != "" && other != currentRepo(ctx) {
-			return nil, false, fmt.Errorf("%w: %s is not this repository; run respond inside its checkout", errOtherRepo, other)
+			return nil, nil, false, fmt.Errorf("%w: %s is not this repository; run respond inside its checkout", errOtherRepo, other)
 		}
 		number, rest = n, rest[1:]
 	}
@@ -54,29 +55,29 @@ func respondArgs(ctx context.Context, args []string) ([]string, bool, error) {
 		fmt.Fprintf(os.Stderr, "codeforge: no new review comments on PR #%d; checking again in %s (Ctrl-C to stop)\n", fb.Number, watchInterval)
 		select {
 		case <-ctx.Done():
-			return nil, false, fmt.Errorf("watch stopped: %w", ctx.Err())
+			return nil, nil, false, fmt.Errorf("watch stopped: %w", ctx.Err())
 		case <-time.After(watchInterval):
 		}
 		fb, err = review.LoadFeedback(ctx, review.ExecRunner{}, number)
 	}
 	if err != nil {
-		return nil, false, fmt.Errorf("loading reviews: %w", err)
+		return nil, nil, false, fmt.Errorf("loading reviews: %w", err)
 	}
 	if fb.Empty() {
-		return nil, false, fmt.Errorf("%w (PR #%d)", errNoFeedback, fb.Number)
+		return nil, nil, false, fmt.Errorf("%w (PR #%d)", errNoFeedback, fb.Number)
 	}
 
 	brief := review.PromptFeedback(fb)
 	if printOnly {
 		fmt.Print(brief)
-		return nil, true, nil
+		return nil, nil, true, nil
 	}
 
 	if err := checkEffort(rest); err != nil {
-		return nil, false, err
+		return nil, nil, false, err
 	}
 	if !hasEffort(rest) {
 		rest = append([]string{"--effort", "medium"}, rest...)
 	}
-	return append(rest, brief), false, nil
+	return append(rest, brief), &fb, false, nil
 }

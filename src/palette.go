@@ -25,7 +25,9 @@ type palette struct {
 	issue, suggestion, question, praise string
 	// Backgrounds of a code card: its body, its title row and the finding's line.
 	card, cardTitle, cardLine string
-	code                      *chroma.Style
+	// Added and removed lines of a diff.
+	added, removed string
+	code           *chroma.Style
 }
 
 func (palette) paint(code, s string) string { return code + s + ansiReset }
@@ -114,6 +116,8 @@ func buildPalette(c map[string]string) palette {
 		card:       bg(pick("bgElevated", "bgPopup")),
 		cardTitle:  bg(pick("bgBanner", "bgPopupHighlight")),
 		cardLine:   bg(pick("brandDim", "bgPopupHighlight")),
+		added:      fg(pick("diffAddedSign", "success")),
+		removed:    fg(pick("diffRemovedSign", "error")),
 	}
 	if p.dim == "" {
 		p.dim = "\x1b[2m"

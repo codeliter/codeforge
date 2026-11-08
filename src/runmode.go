@@ -113,14 +113,15 @@ func respondLaunch(ctx context.Context, home, bin string, cfg config.Config, arg
 		return errSessionArgs
 	}
 	acknowledgeTask(os.Stderr, "respond", args)
-	args, done, err := respondArgs(ctx, args)
+	args, fb, done, err := respondArgs(ctx, args)
 	if err != nil || done {
 		return err
 	}
 	if cfg.Model != "" && !hasFlag(args, "--model") {
 		args = append([]string{"--model", cfg.Model}, args...)
 	}
-	return launch(ctx, home, bin, modeTicket, args)
+	// The first pass's answers are shown against this feedback before anything is pushed or posted.
+	return launch(review.WithRespond(ctx, fb), home, bin, modeTicket, args)
 }
 
 // launchMode settles the mode (restored from a session, picked earlier, or asked for now), prepares its task and
