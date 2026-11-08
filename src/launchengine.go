@@ -2,7 +2,6 @@ package src
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"slices"
@@ -35,11 +34,8 @@ func launchWith(ctx context.Context, home, bin, mode string, args []string, afte
 	}
 	// A review has a hard limit that only a supervising parent can enforce, so it is never handed over with exec.
 	if mode == modeReview && review.HasDeadline(ctx) && hasFlag(args, "--headless") {
-		err := runReviewEngine(ctx, argv, append(env, noAskEnv+"=1"), review.AgentEnd(ctx))
+		_, err := runReviewEngine(ctx, argv, append(env, noAskEnv+"=1"), review.AgentEnd(ctx))
 		finishLeads(ctx, err)
-		if errors.Is(err, errReviewClosed) {
-			return nil
-		}
 		return err
 	}
 	if !hasFlag(args, "--headless") {
@@ -50,23 +46,25 @@ func launchWith(ctx context.Context, home, bin, mode string, args []string, afte
 		if !resume && promptOf(args) != "" {
 			// Empryo's TUI does not submit positional prompts. Submit every mode's
 			// initial task through its headless API, then reopen the saved conversation.
-			fmt.Fprintln(os.Stderr, "codeforge: context ready; waiting for the model. The TUI opens when the task finishes.")
+			if mode != modeReview {
+				fmt.Fprintln(os.Stderr, "codeforge: context ready; waiting for the model. The TUI opens when the task finishes.")
+			}
 			initial := append(append([]string(nil), argv...), "--headless", "--save-session")
 			var limit time.Time
 			if mode == modeReview && review.HasDeadline(ctx) {
 				limit = review.AgentEnd(ctx)
 			}
 			// This run is headless, so nobody can approve a call it asks about; the TUI that follows can.
-			err := runReviewEngine(ctx, initial, append(slices.Clone(env), noAskEnv+"=1"), limit)
+			chat, err := runReviewEngine(ctx, initial, append(slices.Clone(env), noAskEnv+"=1"), limit)
 			finishLeads(ctx, err)
 			id := flagValue(argv, "--session-id")
-			if errors.Is(err, errReviewClosed) {
-				// Ctrl+C in the review means done: no chat opens, and the session can still be picked up later.
-				fmt.Fprintf(os.Stderr, "codeforge: review closed, nothing posted. Ask about it later with: codeforge --resume %s\n", id)
-				return nil
-			}
 			if err != nil {
 				return err
+			}
+			if !chat {
+				// A review is done when its view closes; the chat opens only when asked for (c), and stays reachable.
+				fmt.Fprintf(os.Stderr, "codeforge: to ask about this review later: codeforge --resume %s\n", id)
+				return nil
 			}
 			if after != nil {
 				after(ctx, id)

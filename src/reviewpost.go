@@ -42,12 +42,24 @@ var (
 // then asks the user to confirm and only then posts it with gh. The model stays read-only and posts nothing; a failed
 // run is never posted. Posting without a person to ask needs --comment=yes. Output for a script (--json, or standard
 // output that is not a terminal) passes through untouched.
-func runReviewEngine(ctx context.Context, argv, env []string, limit time.Time) error {
+//
+// chat reports whether the follow-up chat should open: always outside review mode, where the chat is the point, and in
+// review mode only when the user pressed c in the review.
+func runReviewEngine(ctx context.Context, argv, env []string, limit time.Time) (chat bool, err error) {
 	post := review.PostOf(ctx)
-	styled := !hasFlag(argv, "--json") && stdoutStyled()
+	inReview := review.DisplayOf(ctx) != nil
+	styled := inReview && !hasFlag(argv, "--json") && stdoutStyled()
 	if !post.Enabled() && !styled {
-		return runEngine(ctx, argv, env, limit)
+		return true, runEngine(ctx, argv, env, limit)
 	}
+	err = runShownReview(ctx, argv, env, limit, styled, &chat)
+	return chat, err
+}
+
+// runShownReview runs a review whose result codeforge shows (styled, on a terminal) or posts, as runReviewEngine
+// describes; it sets *chat when the user asks for the follow-up chat.
+func runShownReview(ctx context.Context, argv, env []string, limit time.Time, styled bool, chat *bool) error {
+	post := review.PostOf(ctx)
 	if !hasFlag(argv, "--json") {
 		argv = append(slices.Clone(argv), "--json")
 	}
@@ -83,11 +95,10 @@ func runReviewEngine(ctx context.Context, argv, env []string, limit time.Time) e
 	}
 	asked, answer := false, false
 	if styled {
-		var closed bool
-		asked, answer, closed = showReview(ctx, text, leads, out.Bytes(), post.Enabled() && !post.Preapproved())
-		if closed {
-			return errReviewClosed
-		}
+		ask := post.Enabled() && !post.Preapproved()
+		key, shown := showReview(ctx, text, leads, out.Bytes(), ask)
+		*chat = key == keyChat
+		asked, answer = ask && shown, key == keyPost
 	} else {
 		fmt.Fprintln(os.Stdout, text)
 		if leads != "" {
@@ -129,14 +140,16 @@ func runReviewEngine(ctx context.Context, argv, env []string, limit time.Time) e
 	return nil
 }
 
-// errReviewClosed is returned when the user leaves the review with Ctrl+C: they are done, so nothing is posted and no
-// follow-up chat opens. It is not a failure.
-var errReviewClosed = errors.New("review closed")
+// The keys the review view offers besides moving around: post it on the PR, or chat about it.
+const (
+	keyPost = "p"
+	keyChat = "c"
+)
 
 // showReview shows a finished review on the terminal: as an accordion of its files when the forms helper is there,
-// else printed in full. ask offers posting inside the accordion (key p); asked reports whether that question was put,
-// post the answer, and closed whether the user left with Ctrl+C.
-func showReview(ctx context.Context, text, leads string, raw []byte, ask bool) (asked, post, closed bool) {
+// else printed in full. It offers c to chat about the review and, with ask, p to post it; key is the one pressed, ""
+// for q or Ctrl+C. shown reports whether the view ran, so the keys were offered.
+func showReview(ctx context.Context, text, leads string, raw []byte, ask bool) (key string, shown bool) {
 	st := codeStyleFor(ctx, os.Stdout)
 	code := reviewCode(ctx, st, text)
 	footer := runFooter(raw, st)
@@ -144,12 +157,13 @@ func showReview(ctx context.Context, text, leads string, raw []byte, ask bool) (
 		a := reviewAccordion(text, leads, st, code)
 		a.Outro = footer
 		if ask {
-			a.Confirm, a.ConfirmKey = "post on the PR", "p"
+			a.Keys = append(a.Keys, forms.Action{Key: keyPost, Label: "post on the PR"})
 		}
-		yes, err := showAccordion("review", a)
+		a.Keys = append(a.Keys, forms.Action{Key: keyChat, Label: "chat about it"})
+		key, err := showAccordion("review", a)
 		if err == nil || errors.Is(err, forms.ErrAborted) {
 			fmt.Fprint(os.Stdout, accordionRecap(a, st))
-			return ask, yes, err != nil
+			return key, true
 		}
 		fmt.Fprintln(os.Stderr, "codeforge: could not open the review view:", err)
 	}
@@ -161,7 +175,7 @@ func showReview(ctx context.Context, text, leads string, raw []byte, ask bool) (
 		full += "\n" + footer + "\n"
 	}
 	fmt.Fprint(os.Stdout, full)
-	return false, false, false
+	return "", false
 }
 
 // showAccordion runs the accordion through the forms helper, and accordionAvailable says whether there is one; tests

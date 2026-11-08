@@ -55,8 +55,8 @@ The job runs in your terminal; when it finishes, a chat screen opens for follow-
 ## Reviews
 
 `codeforge review` opens the finished review as a list of files. Press Enter to open one: each finding shows the code
-around it first (with the function it is in), then the comment. `a` opens all. `q` closes it and opens a chat for
-follow-up questions; Ctrl+C closes it and stops there.
+around it first (with the function it is in, and the lines the comment names marked), then the comment. `a` opens
+all, `q` quits, and `c` opens a chat to ask about the review. You can also ask later with `codeforge --resume ID`.
 
 To post it on the PR, add `--comment` and press `p` in the review. It goes up as one GitHub review in your voice, never
 an approval, with each finding as an inline comment on its line. The model itself can never post.

@@ -24,14 +24,14 @@ const (
 // accordion is the view of a forms.Accordion: a cursor over the sections, which are open or closed, scrolled so the
 // cursor's row stays on screen.
 type accordion struct {
-	a         forms.Accordion
-	open      []bool
-	cursor    int
-	offset    int
-	width     int
-	height    int
-	confirmed bool
-	aborted   bool
+	a       forms.Accordion
+	open    []bool
+	cursor  int
+	offset  int
+	width   int
+	height  int
+	pressed string // the Action key that closed the view
+	aborted bool
 }
 
 func newAccordion(a forms.Accordion) *accordion {
@@ -95,9 +95,11 @@ func (m *accordion) key(k string) tea.Cmd {
 	case "end", "G":
 		m.cursor = max(0, len(m.a.Items)-1)
 	default:
-		if m.a.ConfirmKey != "" && k == m.a.ConfirmKey {
-			m.confirmed = true
-			return tea.Quit
+		for _, act := range m.a.Keys {
+			if act.Key != "" && k == act.Key {
+				m.pressed = act.Key
+				return tea.Quit
+			}
 		}
 		return nil
 	}
@@ -173,15 +175,15 @@ func (m *accordion) View() string {
 	if len(lines) > visible {
 		keys = append(keys, fmt.Sprintf("%d%%", min(percent, percent*end/len(lines))))
 	}
-	if m.a.Confirm != "" && m.a.ConfirmKey != "" {
-		keys = append(keys, m.a.ConfirmKey+" "+m.a.Confirm)
+	for _, act := range m.a.Keys {
+		keys = append(keys, act.Key+" "+act.Label)
 	}
-	keys = append(keys, "⏎ open", "↑↓ move", "a all", "q done", "pgup/pgdn scroll")
+	keys = append(keys, "⏎ open", "↑↓ move", "a all", "q quit", "pgup/pgdn scroll")
 	help := strings.Join(keys, " · ")
 	return strings.Join(shown, "\n") + "\n\n" + ansi.Truncate(m.a.Dim+help+reset, m.width, "…")
 }
 
-// showAccordion runs the view on the alternate screen and answers whether its confirm key was pressed.
+// showAccordion runs the view on the alternate screen and answers with the Action key that closed it, if any.
 func showAccordion(a forms.Accordion) (forms.Answers, error) {
 	m := newAccordion(a)
 	if _, err := tea.NewProgram(m, tea.WithAltScreen()).Run(); err != nil {
@@ -190,5 +192,5 @@ func showAccordion(a forms.Accordion) (forms.Answers, error) {
 	if m.aborted {
 		return nil, huh.ErrUserAborted
 	}
-	return forms.Answers{forms.AccordionConfirm: {Yes: m.confirmed}}, nil
+	return forms.Answers{forms.AccordionKey: {Value: m.pressed}}, nil
 }

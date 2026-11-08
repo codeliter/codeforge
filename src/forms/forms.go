@@ -99,12 +99,17 @@ type Accordion struct {
 	Items []Section `json:"items"`
 	// Open opens every section at the start.
 	Open bool `json:"open,omitempty"`
-	// Confirm, when set, is offered as a key: pressing ConfirmKey answers AccordionConfirm with Yes, leaving answers No.
-	Confirm    string `json:"confirm,omitempty"`
-	ConfirmKey string `json:"confirm_key,omitempty"`
+	// Keys are actions offered besides moving and opening: pressing one closes the view and answers with its Key.
+	Keys []Action `json:"keys,omitempty"`
 	// Accent and Dim are the escapes for the cursor and the key help, so the view matches the caller's theme.
 	Accent string `json:"accent,omitempty"`
 	Dim    string `json:"dim,omitempty"`
+}
+
+// Action is a key an Accordion offers, shown in its key help as "Key Label".
+type Action struct {
+	Key   string `json:"key"`
+	Label string `json:"label"`
 }
 
 // Section is one row of an Accordion: its title and summary on the row, its body under it while it is open.
@@ -114,16 +119,16 @@ type Section struct {
 	Body    string `json:"body,omitempty"`
 }
 
-// AccordionConfirm is the answer key of an Accordion's Confirm.
-const AccordionConfirm = "confirm"
+// AccordionKey is the answer key that holds the Action key the user pressed, empty when they left with q.
+const AccordionKey = "key"
 
-// Show runs an accordion and reports whether its Confirm key was pressed.
-func Show(name string, a Accordion) (bool, error) {
+// Show runs an accordion and returns the Action key the user pressed to close it, or "" for q.
+func Show(name string, a Accordion) (string, error) {
 	answers, err := Run(Form{Name: name, Accordion: &a})
 	if err != nil {
-		return false, err
+		return "", err
 	}
-	return answers.Bool(AccordionConfirm), nil
+	return answers.String(AccordionKey), nil
 }
 
 // Answer is what the user gave for one field.

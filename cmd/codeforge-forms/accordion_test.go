@@ -13,13 +13,10 @@ import (
 
 func testAccordion() *accordion {
 	m := newAccordion(forms.Accordion{
-		Intro:      "Intro line.",
-		Items:      []forms.Section{{Title: "a.go", Summary: "1 issue", Body: "issue body"}, {Title: "b.go", Summary: "2 suggestions", Body: strings.Repeat("line\n", 40)}},
-		Outro:      "3 steps",
-		Confirm:    "post on the PR",
-		ConfirmKey: "p",
-		Accent:     "",
-		Dim:        "",
+		Intro: "Intro line.",
+		Items: []forms.Section{{Title: "a.go", Summary: "1 issue", Body: "issue body"}, {Title: "b.go", Summary: "2 suggestions", Body: strings.Repeat("line\n", 40)}},
+		Outro: "3 steps",
+		Keys:  []forms.Action{{Key: "p", Label: "post on the PR"}, {Key: "c", Label: "chat"}},
 	})
 	m.Update(tea.WindowSizeMsg{Width: 60, Height: 12})
 	return m
@@ -35,7 +32,7 @@ func TestAccordion_StartsClosedAndOpensOnEnter(t *testing.T) {
 	require.Contains(t, v, "▸ a.go")
 	require.Contains(t, v, "1 issue")
 	require.NotContains(t, v, "issue body", "sections start closed")
-	require.Contains(t, v, "p post on the PR")
+	require.Contains(t, v, "p post on the PR · c chat")
 
 	m.key("enter")
 	require.Contains(t, view(m), "▾ a.go")
@@ -65,17 +62,19 @@ func TestAccordion_MovesScrollsAndOpensAll(t *testing.T) {
 func TestAccordion_KeysThatEnd(t *testing.T) {
 	m := testAccordion()
 	require.NotNil(t, m.key("q"))
-	require.False(t, m.confirmed)
-	m = testAccordion()
-	require.NotNil(t, m.key("p"))
-	require.True(t, m.confirmed)
+	require.Empty(t, m.pressed)
+	for _, k := range []string{"p", "c"} {
+		m = testAccordion()
+		require.NotNil(t, m.key(k))
+		require.Equal(t, k, m.pressed)
+	}
 	m = testAccordion()
 	require.NotNil(t, m.key("ctrl+c"))
 	require.True(t, m.aborted)
 	require.Nil(t, testAccordion().key("x"), "other keys do nothing")
 }
 
-func TestAccordion_NoConfirmKeyWithoutConfirm(t *testing.T) {
+func TestAccordion_NoActionKeysWithoutKeys(t *testing.T) {
 	m := newAccordion(forms.Accordion{Items: []forms.Section{{Title: "a"}}})
 	require.NotContains(t, view(m), "post")
 	require.Nil(t, m.key("p"))

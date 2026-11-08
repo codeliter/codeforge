@@ -33,6 +33,12 @@ func newPostFixture(t *testing.T, engineBody string, ghExit int) postFixture {
 	return f
 }
 
+// runReview runs runReviewEngine for tests that only check what it printed or posted.
+func runReview(ctx context.Context, argv, env []string, limit time.Time) error {
+	_, err := runReviewEngine(ctx, argv, env, limit)
+	return err
+}
+
 func reviewContext(t *testing.T, comment bool) context.Context {
 	t.Helper()
 	post := &review.PostRequest{}
@@ -40,13 +46,13 @@ func reviewContext(t *testing.T, comment bool) context.Context {
 		post.Target("acme/w", "42")
 		post.Preapprove()
 	}
-	ctx := review.WithPost(review.WithDeadline(t.Context(), time.Now().Add(time.Minute)), post)
+	ctx := review.WithDisplay(review.WithPost(review.WithDeadline(t.Context(), time.Now().Add(time.Minute)), post), &review.Display{})
 	return ctx
 }
 
 func TestRunReviewEngine_PostsTheReviewWhenAskedTo(t *testing.T) {
 	f := newPostFixture(t, "printf '%s' '{\"output\":\"Request changes.\\n- issue: a.go:3 drops data\"}'", 0)
-	require.NoError(t, runReviewEngine(reviewContext(t, true), []string{f.engine, "the prompt"}, os.Environ(), time.Now().Add(10*time.Second)))
+	require.NoError(t, runReview(reviewContext(t, true), []string{f.engine, "the prompt"}, os.Environ(), time.Now().Add(10*time.Second)))
 
 	args, err := os.ReadFile(f.engineArgs)
 	require.NoError(t, err)
@@ -60,37 +66,37 @@ func TestRunReviewEngine_PostsTheReviewWhenAskedTo(t *testing.T) {
 
 func TestRunReviewEngine_PostsNothingUnlessAsked(t *testing.T) {
 	f := newPostFixture(t, "echo plain output", 0)
-	require.NoError(t, runReviewEngine(reviewContext(t, false), []string{f.engine}, os.Environ(), time.Now().Add(10*time.Second)))
+	require.NoError(t, runReview(reviewContext(t, false), []string{f.engine}, os.Environ(), time.Now().Add(10*time.Second)))
 	require.NoFileExists(t, f.ghArgs)
 	args, err := os.ReadFile(f.engineArgs)
 	require.NoError(t, err)
 	require.NotContains(t, string(args), "--json", "without --comment the run is untouched")
 
-	require.NoError(t, runReviewEngine(t.Context(), []string{f.engine}, os.Environ(), time.Time{}), "outside a review there is no request at all")
+	require.NoError(t, runReview(t.Context(), []string{f.engine}, os.Environ(), time.Time{}), "outside a review there is no request at all")
 	require.NoFileExists(t, f.ghArgs)
 }
 
 func TestRunReviewEngine_NeverPostsAFailedOrEmptyRun(t *testing.T) {
 	failed := newPostFixture(t, "printf '%s' '{\"output\":\"half a review\"}'\nexit 1", 0)
-	err := runReviewEngine(reviewContext(t, true), []string{failed.engine}, os.Environ(), time.Now().Add(10*time.Second))
+	err := runReview(reviewContext(t, true), []string{failed.engine}, os.Environ(), time.Now().Add(10*time.Second))
 	var exit *EngineExitError
 	require.ErrorAs(t, err, &exit, "the engine's own failure comes back unchanged")
 	require.NoFileExists(t, failed.ghArgs)
 
 	empty := newPostFixture(t, "printf '%s' '{\"output\":\"  \"}'", 0)
-	err = runReviewEngine(reviewContext(t, true), []string{empty.engine}, os.Environ(), time.Now().Add(10*time.Second))
+	err = runReview(reviewContext(t, true), []string{empty.engine}, os.Environ(), time.Now().Add(10*time.Second))
 	require.ErrorIs(t, err, review.ErrNoReviewText)
 	require.NoFileExists(t, empty.ghArgs)
 
 	timedOut := newPostFixture(t, "printf '%s' '{\"output\":\"\",\"error\":\"Timeout after 2m 54s\"}'", 0)
-	err = runReviewEngine(reviewContext(t, true), []string{timedOut.engine}, os.Environ(), time.Now().Add(10*time.Second))
+	err = runReview(reviewContext(t, true), []string{timedOut.engine}, os.Environ(), time.Now().Add(10*time.Second))
 	require.ErrorContains(t, err, "Timeout after 2m 54s")
 	require.NoFileExists(t, timedOut.ghArgs)
 }
 
 func TestRunReviewEngine_ReportsAFailedPost(t *testing.T) {
 	f := newPostFixture(t, "printf '%s' '{\"output\":\"Approve.\"}'", 1)
-	err := runReviewEngine(reviewContext(t, true), []string{f.engine}, os.Environ(), time.Now().Add(10*time.Second))
+	err := runReview(reviewContext(t, true), []string{f.engine}, os.Environ(), time.Now().Add(10*time.Second))
 	require.ErrorContains(t, err, "the review above was not posted")
 }
 
@@ -114,20 +120,20 @@ func askingContext(t *testing.T) context.Context {
 	t.Helper()
 	post := &review.PostRequest{}
 	post.Target("acme/w", "42")
-	return review.WithPost(review.WithDeadline(t.Context(), time.Now().Add(time.Minute)), post)
+	return review.WithDisplay(review.WithPost(review.WithDeadline(t.Context(), time.Now().Add(time.Minute)), post), &review.Display{})
 }
 
 func TestRunReviewEngine_PostsOnlyAfterTheUserSaysYes(t *testing.T) {
 	for _, answer := range []string{"y\n", "YES\n", " yes \n"} {
 		f := newPostFixture(t, "printf '%s' '{\"output\":\"Approve.\"}'", 0)
 		asked(t, true, answer)
-		require.NoError(t, runReviewEngine(askingContext(t), []string{f.engine}, os.Environ(), time.Now().Add(10*time.Second)))
+		require.NoError(t, runReview(askingContext(t), []string{f.engine}, os.Environ(), time.Now().Add(10*time.Second)))
 		require.FileExists(t, f.ghArgs, "answered "+answer)
 	}
 	for _, answer := range []string{"\n", "n\n", "no\n", "yep\n", "post it\n", ""} {
 		f := newPostFixture(t, "printf '%s' '{\"output\":\"Approve.\"}'", 0)
 		asked(t, true, answer)
-		require.NoError(t, runReviewEngine(askingContext(t), []string{f.engine}, os.Environ(), time.Now().Add(10*time.Second)), "declining is not a failure")
+		require.NoError(t, runReview(askingContext(t), []string{f.engine}, os.Environ(), time.Now().Add(10*time.Second)), "declining is not a failure")
 		require.NoFileExists(t, f.ghArgs, "answered "+answer)
 	}
 }
@@ -146,7 +152,7 @@ func TestRunReviewEngine_CancellingTheQuestionPostsNothing(t *testing.T) {
 		cancel()
 	}()
 	start := time.Now()
-	require.NoError(t, runReviewEngine(ctx, []string{f.engine}, os.Environ(), time.Now().Add(10*time.Second)))
+	require.NoError(t, runReview(ctx, []string{f.engine}, os.Environ(), time.Now().Add(10*time.Second)))
 	require.Less(t, time.Since(start), 5*time.Second, "an unanswered question ends when the command is cancelled")
 	require.NoFileExists(t, f.ghArgs)
 }
@@ -171,7 +177,7 @@ func TestConfirmed_ALateYesAfterCancellationIsNotAYes(t *testing.T) {
 func TestRunReviewEngine_WithNobodyToAskItDoesNotPost(t *testing.T) {
 	f := newPostFixture(t, "printf '%s' '{\"output\":\"Approve.\"}'", 0)
 	asked(t, false, "y\n")
-	require.NoError(t, runReviewEngine(askingContext(t), []string{f.engine}, os.Environ(), time.Now().Add(10*time.Second)))
+	require.NoError(t, runReview(askingContext(t), []string{f.engine}, os.Environ(), time.Now().Add(10*time.Second)))
 	require.NoFileExists(t, f.ghArgs, "a script cannot answer for the user: use --comment=yes")
 }
 
@@ -180,7 +186,7 @@ func TestRunReviewEngine_PostsTheSecondOpinionWithTheReview(t *testing.T) {
 	pipe := &review.Pipeline{}
 	pipe.Start(t.Context(), "", "brief", []review.Reviewer{blockingJuror{}}, nil)
 	ctx := review.WithPipeline(reviewContext(t, true), pipe)
-	require.NoError(t, runReviewEngine(ctx, []string{f.engine}, os.Environ(), time.Now().Add(10*time.Second)))
+	require.NoError(t, runReview(ctx, []string{f.engine}, os.Environ(), time.Now().Add(10*time.Second)))
 	posted, err := os.ReadFile(f.ghArgs)
 	require.NoError(t, err)
 	require.Contains(t, string(posted), "Approve.")

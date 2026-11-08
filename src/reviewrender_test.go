@@ -105,7 +105,7 @@ func TestRunReviewEngine_PrintsTheStyledReviewWithoutTheHelper(t *testing.T) {
 	f := newPostFixture(t, styledEngine, 0)
 	onTerminal(t, false)
 	out, stderr, err := captured(t, func() error {
-		return runReviewEngine(reviewContext(t, false), []string{f.engine, "the prompt"}, os.Environ(), time.Now().Add(10*time.Second))
+		return runReview(reviewContext(t, false), []string{f.engine, "the prompt"}, os.Environ(), time.Now().Add(10*time.Second))
 	})
 	require.NoError(t, err)
 	require.NotContains(t, stderr, "memory.embedder", "the engine's warnings are held back when the run succeeds")
@@ -118,47 +118,84 @@ func TestRunReviewEngine_PrintsTheStyledReviewWithoutTheHelper(t *testing.T) {
 	require.NoFileExists(t, f.ghArgs, "showing a review never posts it")
 }
 
+// pressing makes the review view answer as if the user pressed key (err for Ctrl+C), and records what it showed.
+func pressing(t *testing.T, key string, err error) *forms.Accordion {
+	t.Helper()
+	shown := &forms.Accordion{}
+	old := showAccordion
+	showAccordion = func(_ string, a forms.Accordion) (string, error) { *shown = a; return key, err }
+	t.Cleanup(func() { showAccordion = old })
+	return shown
+}
+
+// postingContext is a review that may post on acme/w#42 after asking.
+func postingContext(t *testing.T) context.Context {
+	t.Helper()
+	post := &review.PostRequest{}
+	post.Target("acme/w", "42")
+	return review.WithDisplay(review.WithPost(review.WithDeadline(t.Context(), time.Now().Add(time.Minute)), post), &review.Display{})
+}
+
 func TestRunReviewEngine_ShowsAnAccordionAndPostsOnP(t *testing.T) {
 	f := newPostFixture(t, styledEngine, 0)
 	onTerminal(t, true)
-	var shown forms.Accordion
-	old := showAccordion
-	showAccordion = func(_ string, a forms.Accordion) (bool, error) { shown = a; return true, nil }
-	t.Cleanup(func() { showAccordion = old })
-
-	post := &review.PostRequest{}
-	post.Target("acme/w", "42")
-	ctx := review.WithPost(review.WithDeadline(t.Context(), time.Now().Add(time.Minute)), post)
+	shown := pressing(t, keyPost, nil)
+	var chat bool
 	out, _, err := captured(t, func() error {
-		return runReviewEngine(ctx, []string{f.engine, "the prompt"}, os.Environ(), time.Now().Add(10*time.Second))
+		var err error
+		chat, err = runReviewEngine(postingContext(t), []string{f.engine, "the prompt"}, os.Environ(), time.Now().Add(10*time.Second))
+		return err
 	})
 	require.NoError(t, err)
+	require.False(t, chat, "posting does not open the chat")
 	require.Equal(t, "Fine.", shown.Intro)
 	require.Len(t, shown.Items, 1)
 	require.Equal(t, "a.go", shown.Items[0].Title)
 	require.Equal(t, "1 suggestion · 1 nitpick", shown.Items[0].Summary)
 	require.Contains(t, shown.Items[0].Body, "- suggestion: a.go:1 use x")
-	require.Equal(t, "p", shown.ConfirmKey, "posting is offered in the view")
+	require.Equal(t, []forms.Action{{Key: "p", Label: "post on the PR"}, {Key: "c", Label: "chat about it"}}, shown.Keys)
 	require.Contains(t, out, "Fine.\n\n  a.go  1 suggestion · 1 nitpick\n", "a recap stays in the terminal")
 	require.FileExists(t, f.ghArgs, "p posts without a second question")
 }
 
-func TestRunReviewEngine_CtrlCInTheReviewClosesItWithoutPosting(t *testing.T) {
-	f := newPostFixture(t, styledEngine, 0)
-	onTerminal(t, true)
-	old := showAccordion
-	showAccordion = func(string, forms.Accordion) (bool, error) { return false, forms.ErrAborted }
-	t.Cleanup(func() { showAccordion = old })
+func TestRunReviewEngine_OnlyCOpensTheChat(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		key  string
+		err  error
+		chat bool
+	}{
+		{"c", keyChat, nil, true},
+		{"q", "", nil, false},
+		{"ctrl+c", "", forms.ErrAborted, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newPostFixture(t, styledEngine, 0)
+			onTerminal(t, true)
+			pressing(t, tc.key, tc.err)
+			var chat bool
+			out, _, err := captured(t, func() error {
+				var err error
+				chat, err = runReviewEngine(postingContext(t), []string{f.engine, "the prompt"}, os.Environ(), time.Now().Add(10*time.Second))
+				return err
+			})
+			require.NoError(t, err)
+			require.Equal(t, tc.chat, chat)
+			require.Contains(t, out, "a.go", "the recap stays in the terminal")
+			require.NoFileExists(t, f.ghArgs, "nothing is posted")
+		})
+	}
+}
 
-	post := &review.PostRequest{}
-	post.Target("acme/w", "42")
-	ctx := review.WithPost(review.WithDeadline(t.Context(), time.Now().Add(time.Minute)), post)
-	out, _, err := captured(t, func() error {
-		return runReviewEngine(ctx, []string{f.engine, "the prompt"}, os.Environ(), time.Now().Add(10*time.Second))
-	})
-	require.ErrorIs(t, err, errReviewClosed, "the caller opens no chat after Ctrl+C")
-	require.Contains(t, out, "a.go", "the recap still stays in the terminal")
-	require.NoFileExists(t, f.ghArgs, "nothing is posted")
+func TestRunReviewEngine_OtherModesPassThroughAndOpenTheChat(t *testing.T) {
+	f := newPostFixture(t, `printf '%s' 'task done'`, 0)
+	onTerminal(t, true)
+	chat, err := runReviewEngine(t.Context(), []string{f.engine}, os.Environ(), time.Time{})
+	require.NoError(t, err)
+	require.True(t, chat, "chat, work and ticket always continue in the chat")
+	args, err := os.ReadFile(f.engineArgs)
+	require.NoError(t, err)
+	require.NotContains(t, string(args), "--json", "a task outside review mode is never laid out as a review")
 }
 
 func TestReviewAccordion_SplitsAtHeadingsAndCountsFindings(t *testing.T) {
