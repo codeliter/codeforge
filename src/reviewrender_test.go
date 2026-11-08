@@ -37,8 +37,8 @@ func TestRenderReview_Plain(t *testing.T) {
 	require.NotContains(t, got, "\x1b[", "no colour without a colour terminal")
 	require.NotContains(t, got, "\n\n\n")
 	require.Contains(t, got, "\nsearch/serper/main.go\n")
-	require.Contains(t, got, "- suggestion: search/serper/main.go:108\n  kit.InstrumentHTTPClient sends baggage to the vendor.\n")
-	require.Contains(t, got, "  Drop propagation for vendor clients.\n    CODE search/serper/main.go:\n", "the code follows the finding and its continuation")
+	require.Contains(t, got, "\n    CODE search/serper/main.go:\n\n  suggestion: kit.InstrumentHTTPClient sends baggage to the\n  vendor.\n  Drop propagation for vendor clients.\n",
+		"the code comes first, then the comment without repeating the place")
 	require.Contains(t, got, "- nitpick (non-blocking): search/serper/main.go:72 Nit:\n  remove the commented-out code.\n\n    | // gprclogging.PayloadReceived,\n",
 		"a finding that quotes its code gets no second copy")
 	require.Equal(t, 1, strings.Count(got, "CODE "))
@@ -212,7 +212,7 @@ func TestReviewCode_ReadsAPRFromAnotherCheckoutOnGitHub(t *testing.T) {
 	d := &review.Display{}
 	d.PR("", "ecosia/core", "abc123")
 	code := reviewCode(review.WithDisplay(t.Context(), d), codeStyle{width: 80}, pathsReview)
-	require.Contains(t, code("a/b.go", 6), "> 6 | l6")
+	require.Contains(t, code("a/b.go", 6), ">  6 | l6")
 	require.Contains(t, code("dir/ü.go", 2), "> 2 | l2")
 	require.Empty(t, code("missing.go", 1), "a file GitHub does not have shows no code")
 	require.Empty(t, code("../escape.go", 1))

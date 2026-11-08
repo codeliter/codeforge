@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/require"
 
 	"github.com/codeliter/codeforge/src/config"
@@ -30,31 +31,66 @@ func TestReport_ShowsTheCodeAroundEachFindingByFile(t *testing.T) {
 	report(t.Context(), &out, repo, res)
 	got := out.String()
 	require.Contains(t, got, "Blocking:\n\n../outside.go\n- ../outside.go:1 escapes\n\nb.go\n- b.go:1 wrong package\n  > 1 | package b\n")
-	require.Contains(t, got, "pkg/a.go\n- pkg/a.go:4 nil deref when p is nil\n    2 | \n    3 | func F(p *T) int {\n  > 4 |     return p.n\n    5 | }\n")
+	require.Contains(t, got, "pkg/a.go\n- pkg/a.go:4 nil deref when p is nil\n    1 | package pkg\n    2 | \n    3 | func F(p *T) int {\n  > 4 |     return p.n\n    5 | }\n")
 	require.Contains(t, got, "Should:\n\npkg/a.go\n- pkg/a.go:1 add a doc comment\n  > 1 | package pkg\n")
 	require.Contains(t, got, "- pkg/a.go:99 made up\n")
 	require.NotContains(t, got, "99 |", "a dropped finding shows no code")
 	require.NotContains(t, got, "\x1b[", "no colour when the output is not a terminal")
 }
 
-func TestCodeAround_TrimsSharedIndentKeepsWidthAndHighlightsOnATerminal(t *testing.T) {
+// deepFile is a Go file whose line 25 sits deep inside func run, which starts at line 3.
+func deepFile(t *testing.T) string {
+	t.Helper()
 	repo := t.TempDir()
-	src := "package p\nfunc f() {\n\tfor {\n\t\tif x {\n\t\t\treturn \"" + strings.Repeat("y", 100) + "\"\n\t\t}\n\t}\n}\n"
-	require.NoError(t, os.WriteFile(filepath.Join(repo, "p.go"), []byte(src), 0o600))
+	var b strings.Builder
+	b.WriteString("package p\n\nfunc run(items []string) error {\n")
+	for i := 4; i < 22; i++ {
+		b.WriteString("\tstep()\n")
+	}
+	b.WriteString("\tfor _, it := range items {\n\t\tif it == \"\" {\n\t\t\tcontinue\n")                          // 22-24
+	b.WriteString("\t\t\treturn errors.New(\"" + strings.Repeat("y", 100) + "\")\n\t\t}\n\t}\n\treturn nil\n}\n") // 25-29
+	require.NoError(t, os.WriteFile(filepath.Join(repo, "p.go"), []byte(b.String()), 0o600))
+	return repo
+}
 
-	plain := codeAround(repo, "p.go", 5, codeStyle{width: 40})
-	require.Contains(t, plain, "    3 | for {\n    4 |     if x {\n", "the indentation the lines share is removed")
-	require.Contains(t, plain, "  > 5 |         return \"y")
+func TestCodeAround_ShowsTheEnclosingFunctionAndEnoughContext(t *testing.T) {
+	repo := deepFile(t)
+	plain := codeAround(repo, "p.go", 25, codeStyle{width: 60})
+	require.True(t, strings.HasPrefix(plain, "     3 | func run(items []string) error {\n       ⋮\n    19 |     step()\n"),
+		"the function the line is in heads the snippet, then a gap, then six lines before: %q", plain)
+	require.Contains(t, plain, "  > 25 |             return errors.New(\"y")
+	require.True(t, strings.HasSuffix(plain, "    29 | }\n"), "four lines after")
 	for _, l := range strings.Split(strings.TrimRight(plain, "\n"), "\n") {
-		require.LessOrEqual(t, len([]rune(l)), 40, "every line fits the width: %q", l)
+		require.LessOrEqual(t, len([]rune(l)), 60, "every line fits the width: %q", l)
 	}
 
+	near := codeAround(repo, "p.go", 6, codeStyle{width: 80})
+	require.True(t, strings.HasPrefix(near, "     1 | package p\n"), "a header inside the window needs no gap: %q", near)
+	require.NotContains(t, near, "⋮")
+}
+
+func TestEnclosingHeader(t *testing.T) {
+	py := strings.Split("class A:\n    def f(self):\n        x = 1\n        if x:\n            return x\n", "\n")
+	require.Equal(t, 2, enclosingHeader(py, 5), "the method, not the if")
+	tf := strings.Split("resource \"aws_s3_bucket\" \"b\" {\n  bucket = \"x\"\n  acl    = \"public-read\"\n}\n", "\n")
+	require.Equal(t, 1, enclosingHeader(tf, 3))
+	require.Equal(t, 0, enclosingHeader(strings.Split("a\nb\n", "\n"), 2), "top level has no header")
+}
+
+func TestCodeAround_DrawsACardOnATerminal(t *testing.T) {
+	repo := deepFile(t)
 	pal := paletteFor("dark")
-	colored := codeAround(repo, "p.go", 4, codeStyle{color: true, width: 120, pal: pal})
-	require.Contains(t, colored, "\x1b[1m\x1b[38;2;126;168;201mif", "keywords take the Steel brand colour #7ea8c9")
-	require.Contains(t, colored, pal.accent+"▶ 4", "the finding's line is marked in the Steel accent")
-	require.NotContains(t, colored, "\x1b[48;2;", "the terminal's background is left alone")
-	require.Equal(t, 5, strings.Count(colored, "\n"), "highlighting keeps one line per line")
+	card := codeAround(repo, "p.go", 25, codeStyle{color: true, width: 100, pal: pal})
+	lines := strings.Split(strings.TrimRight(card, "\n"), "\n")
+	require.Contains(t, lines[0], pal.cardTitle, "a title row on its own background")
+	require.Contains(t, lines[0], pal.accent+" p.go:25")
+	require.Contains(t, card, pal.cardLine+pal.accent+"▌25", "the finding's line is raised and marked")
+	require.Contains(t, card, "\x1b[1m\x1b[38;2;126;168;201mfunc", "code is highlighted in Steel")
+	for i, l := range lines {
+		require.Equal(t, 2+100-2, ansi.StringWidth(l), "every row of the card has the same width: row %d", i)
+		require.True(t, strings.HasSuffix(l, ansiReset), "the background ends with the row")
+	}
+	require.Len(t, lines, 1+2+11, "title, header and gap, and lines 19 to 29")
 }
 
 func TestCutColumns_CountsCharacters(t *testing.T) {

@@ -23,7 +23,9 @@ type palette struct {
 	inline string // `inline code` in a review
 	// Conventional Comment labels: blocking issues, suggestions, questions, praise.
 	issue, suggestion, question, praise string
-	code                                *chroma.Style
+	// Backgrounds of a code card: its body, its title row and the finding's line.
+	card, cardTitle, cardLine string
+	code                      *chroma.Style
 }
 
 func (palette) paint(code, s string) string { return code + s + ansiReset }
@@ -66,8 +68,19 @@ func themeColors(name string) map[string]string {
 	return out
 }
 
+// The SGR codes that set a true colour for the text and for the background.
+const (
+	sgrForeground = 38
+	sgrBackground = 48
+)
+
 // fg is the true-colour escape for a #rrggbb colour, or "" when it is missing or malformed.
-func fg(hex string) string {
+func fg(hex string) string { return trueColour(sgrForeground, hex) }
+
+// bg is fg for the background.
+func bg(hex string) string { return trueColour(sgrBackground, hex) }
+
+func trueColour(layer int, hex string) string {
 	if len(hex) != len("#rrggbb") {
 		return ""
 	}
@@ -76,7 +89,7 @@ func fg(hex string) string {
 		return ""
 	}
 	const red, green = 16, 8 // bit offsets of the channels in 0xrrggbb
-	return fmt.Sprintf("\x1b[38;2;%d;%d;%dm", byte(v>>red), byte(v>>green), byte(v))
+	return fmt.Sprintf("\x1b[%d;2;%d;%d;%dm", layer, byte(v>>red), byte(v>>green), byte(v))
 }
 
 func buildPalette(c map[string]string) palette {
@@ -98,6 +111,9 @@ func buildPalette(c map[string]string) palette {
 		suggestion: bold + fg(pick("info", "brand")),
 		question:   bold + fg(pick("warning")),
 		praise:     bold + fg(pick("success")),
+		card:       bg(pick("bgElevated", "bgPopup")),
+		cardTitle:  bg(pick("bgBanner", "bgPopupHighlight")),
+		cardLine:   bg(pick("brandDim", "bgPopupHighlight")),
 	}
 	if p.dim == "" {
 		p.dim = "\x1b[2m"

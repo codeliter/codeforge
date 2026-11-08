@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -12,16 +14,26 @@ import (
 	"github.com/alecthomas/chroma/v2"
 	"github.com/alecthomas/chroma/v2/formatters"
 	"github.com/alecthomas/chroma/v2/lexers"
+	"github.com/charmbracelet/x/ansi"
 	"golang.org/x/term"
 )
 
-// Around a finding the report shows contextLines lines on each side. Without a terminal to measure, a line is cut at
-// maxCodeLine bytes; a terminal narrower than minCodeWidth still gets that many.
+// Around a finding the report shows contextBefore lines before it and contextAfter after, plus the header of the
+// declaration it sits in when that starts within headerSearch lines; a header no more than headerJoin lines above the
+// window is joined to it. Without a terminal to measure, a line is cut at maxCodeLine bytes; a terminal narrower than
+// minCodeWidth still gets that many. A code card is at most maxCardWidth columns wide.
 const (
-	contextLines = 2
-	maxCodeLine  = 200
-	minCodeWidth = 20
-	tabWidth     = 4
+	contextBefore = 6
+	contextAfter  = 4
+	headerSearch  = 80
+	headerJoin    = 4
+	maxCodeLine   = 200
+	minCodeWidth  = 20
+	maxCardWidth  = 120
+	tabWidth      = 4
+	// gapRow stands for the left-out lines between a declaration's header and the window; headerRows is both.
+	gapRow     = 0
+	headerRows = 2
 )
 
 // codeStyle is how the report is drawn: the Codeforge Steel palette and highlighting only on a terminal that wants
@@ -78,7 +90,10 @@ func codeAround(repo, file string, line int, st codeStyle) string {
 	return codeSnippet(string(data), file, line, st)
 }
 
-// codeSnippet renders the lines of content, the text of file, around line, as codeAround describes.
+// codeSnippet renders the lines of content, the text of file, around line, as codeAround describes. The window is
+// contextBefore lines before the finding and contextAfter after it; when the declaration the line sits in (a function,
+// method, class or block header) starts above the window, its first line is shown at the top, with a gap marker when
+// lines are left out, so the reader knows where they are.
 func codeSnippet(content, file string, line int, st codeStyle) string {
 	if line < 1 {
 		return ""
@@ -87,37 +102,111 @@ func codeSnippet(content, file string, line int, st codeStyle) string {
 	if line > len(all) {
 		return ""
 	}
-	first, last := max(1, line-contextLines), min(len(all), line+contextLines)
-	numWidth := len(strconv.Itoa(last))
-	// "  > 12 | " before the code.
-	avail := max(minCodeWidth, st.width-(numWidth+len("  >  | ")))
-	code := make([]string, 0, last-first+1)
-	for _, l := range all[first-1 : last] {
-		code = append(code, strings.ReplaceAll(strings.TrimRight(l, "\r"), "\t", strings.Repeat(" ", tabWidth)))
+	for i, l := range all {
+		all[i] = strings.ReplaceAll(strings.TrimRight(l, "\r"), "\t", strings.Repeat(" ", tabWidth))
+	}
+	first, last := max(1, line-contextBefore), min(len(all), line+contextAfter)
+	header := enclosingHeader(all, line)
+	switch {
+	case header >= first:
+		header = 0 // already in the window
+	case header > 0 && first-header <= headerJoin:
+		first, header = header, 0 // close enough: show every line from the header down
+	}
+	nums := make([]int, 0, last-first+headerRows)
+	if header > 0 {
+		nums = append(nums, header, gapRow)
+	}
+	for n := first; n <= last; n++ {
+		nums = append(nums, n)
+	}
+	code := make([]string, len(nums))
+	for i, n := range nums {
+		if n > 0 {
+			code[i] = all[n-1]
+		}
 	}
 	code = trimSharedIndent(code)
-	for i, l := range code {
-		code[i] = cutColumns(l, avail)
-	}
-	shown := code
+	numWidth := len(strconv.Itoa(last))
 	if st.color {
-		shown = highlight(file, code, st.pal.code)
+		return codeCard(file, line, nums, code, numWidth, st)
 	}
+	// "  > 12 | " before the code.
+	avail := max(minCodeWidth, st.width-(numWidth+len("  >  | ")))
 	var s strings.Builder
-	for i, l := range shown {
-		n := first + i
-		switch {
-		case !st.color && n == line:
-			fmt.Fprintf(&s, "  > %*d | %s\n", numWidth, n, l)
-		case !st.color:
-			fmt.Fprintf(&s, "    %*d | %s\n", numWidth, n, l)
-		case n == line:
-			fmt.Fprintf(&s, "  %s %s %s\n", st.paint(st.pal.accent, fmt.Sprintf("▶ %*d", numWidth, n)), st.paint(st.pal.dim, "│"), l)
+	for i, n := range nums {
+		switch n {
+		case gapRow:
+			fmt.Fprintf(&s, "    %*s ⋮\n", numWidth, "")
+		case line:
+			fmt.Fprintf(&s, "  > %*d | %s\n", numWidth, n, cutColumns(code[i], avail))
 		default:
-			fmt.Fprintf(&s, "  %s %s\n", st.paint(st.pal.dim, fmt.Sprintf("  %*d │", numWidth, n)), l)
+			fmt.Fprintf(&s, "    %*d | %s\n", numWidth, n, cutColumns(code[i], avail))
 		}
 	}
 	return s.String()
+}
+
+// codeCard draws the snippet as a card that stands out from the review's prose: a title row with the place, then the
+// code on a raised background, the finding's line on a brighter one with an accent bar, and gaps as a dim marker.
+func codeCard(file string, line int, nums []int, code []string, numWidth int, st codeStyle) string {
+	const margin, pad, beforeCode = "  ", 1, "  "
+	width := min(maxCardWidth, max(minCodeWidth, st.width-len(margin)))
+	gutter := len("▌") + numWidth + len(beforeCode)
+	avail := max(minCodeWidth, width-gutter-pad)
+	for i := range code {
+		code[i] = cutColumns(code[i], avail)
+	}
+	shown := highlight(file, code, st.pal.code)
+	row := func(bg, text string) string {
+		// Every reset inside the highlighted text would also end the background; carry it across them.
+		text = strings.ReplaceAll(text, ansiReset, ansiReset+bg)
+		fill := max(0, width-ansi.StringWidth(text))
+		return margin + bg + text + strings.Repeat(" ", fill) + ansiReset + "\n"
+	}
+	var s strings.Builder
+	title := fmt.Sprintf(" %s:%d", file, line)
+	s.WriteString(row(st.pal.cardTitle, st.pal.accent+cutColumns(title, width)+ansiReset))
+	for i, n := range nums {
+		switch n {
+		case gapRow:
+			s.WriteString(row(st.pal.card, st.pal.dim+fmt.Sprintf(" %*s ⋮", numWidth, "")+ansiReset))
+		case line:
+			s.WriteString(row(st.pal.cardLine, st.pal.accent+"▌"+fmt.Sprintf("%*d", numWidth, n)+ansiReset+beforeCode+shown[i]))
+		default:
+			s.WriteString(row(st.pal.card, st.pal.dim+" "+fmt.Sprintf("%*d", numWidth, n)+ansiReset+beforeCode+shown[i]))
+		}
+	}
+	return s.String()
+}
+
+// declLine matches the first line of a declaration or block in common languages: Go, Python, JS/TS, Rust, Java,
+// Ruby, shell, Terraform and YAML keys.
+var declLine = regexp.MustCompile(`^\s*(func|def|class|function|fn|pub|impl|trait|interface|struct|enum|type|module|resource|data|locals|variable|describe|it|test|public|private|protected|static|async|export|const\s+\w+\s*=\s*(async\s*)?\(|[\w.]+\s*\(\)\s*\{|[\w.-]+:\s*$)`)
+
+// enclosingHeader returns the line number of the declaration (function, method, class, resource) that contains line,
+// found by walking up through ever less indented lines within headerSearch lines. Without one, the nearest enclosing
+// block opener ("if x {") is used; without that, 0.
+func enclosingHeader(all []string, line int) int {
+	target := indentOf(all[line-1])
+	if strings.TrimSpace(all[line-1]) == "" {
+		target = math.MaxInt
+	}
+	block := 0
+	for n := line - 1; n >= 1 && n >= line-headerSearch && target > 0; n-- {
+		l := all[n-1]
+		if strings.TrimSpace(l) == "" || indentOf(l) >= target {
+			continue
+		}
+		if declLine.MatchString(l) {
+			return n
+		}
+		if block == 0 && strings.HasSuffix(strings.TrimSpace(l), "{") {
+			block = n
+		}
+		target = indentOf(l) // an outer statement; keep looking for what contains it
+	}
+	return block
 }
 
 // cutColumns keeps s within width characters, ending a cut line with "…". It counts characters, not bytes, so a line

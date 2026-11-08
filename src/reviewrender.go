@@ -89,10 +89,24 @@ func renderLines(out *strings.Builder, lines []string, st codeStyle, code codeSo
 // that continue it, and then the code around it unless the finding quotes code itself.
 func renderFinding(f review.Labeled, more []string, st codeStyle, code codeSource, width int) string {
 	var b strings.Builder
-	spans := append([]span{{text: f.Label + ":", code: labelColor(f.Label, st)}, {text: fmt.Sprintf("%s:%d", f.Path, f.Line), code: st.pal.accent}},
-		inlineSpans(strings.TrimLeft(f.Text, "—–-: "), st)...)
-	b.WriteString("\n" + wrapFinding(st, width, spans...))
 	quoted := false
+	for _, l := range more {
+		quoted = quoted || mdFence.MatchString(l)
+	}
+	// The code comes first, so the comment is read with it in view; the card's title already names the place.
+	snippet := ""
+	if !quoted && code != nil {
+		snippet = code(f.Path, f.Line)
+	}
+	label := span{text: f.Label + ":", code: labelColor(f.Label, st)}
+	text := inlineSpans(strings.TrimLeft(f.Text, "—–-: "), st)
+	if snippet != "" {
+		b.WriteString("\n" + snippet + "\n")
+		b.WriteString(wrapSpans(st, width, findingIndent, findingIndent, append([]span{label}, text...)...))
+	} else {
+		place := span{text: fmt.Sprintf("%s:%d", f.Path, f.Line), code: st.pal.accent}
+		b.WriteString("\n" + wrapFinding(st, width, append([]span{label, place}, text...)...))
+	}
 	if len(more) > 0 {
 		var inner strings.Builder
 		sub := st
@@ -107,12 +121,6 @@ func renderFinding(f review.Labeled, more []string, st codeStyle, code codeSourc
 			}
 			b.WriteString(findingIndent + l + "\n")
 		}
-		for _, l := range more {
-			quoted = quoted || mdFence.MatchString(l)
-		}
-	}
-	if !quoted && code != nil {
-		b.WriteString(code(f.Path, f.Line))
 	}
 	return b.String()
 }
