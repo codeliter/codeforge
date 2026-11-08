@@ -76,6 +76,14 @@ decision. Enter or a click opens a file, `c` chats about it, `q` quits.
 On a PR you reviewed before, codeforge follows up: a verdict on each of your open threads, replies and resolves
 the settled ones (never a blocker on a promise), then reviews only the new commits. `--fresh` starts over.
 
+```sh
+codeforge review 98               # follow up on your earlier review of PR 98, after the author replied or pushed fixes
+codeforge review 98 --follow-up   # the same, but stop if you never reviewed it
+codeforge review 98 --fresh       # a full review again instead
+```
+
+A follow-up offers the decisions under `p` without `--comment`; nothing is posted until you pick one.
+
 Reviews are read-only and the model never posts; you do.
 
 ## Answering reviews
