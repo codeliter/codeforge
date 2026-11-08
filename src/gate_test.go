@@ -69,6 +69,50 @@ func TestCodeAround_ShowsTheEnclosingFunctionAndEnoughContext(t *testing.T) {
 	require.NotContains(t, near, "⋮")
 }
 
+// telemetrySrc is common/go/telemetry/telemetry.go from ecosia/core#32569, lines 186 to 198: the review cited 192
+// while its comment is about sdktrace.AlwaysSample() on 194.
+const telemetrySrc = `// noExportTraceProvider creates a tracer provider that generates W3C trace/span
+// IDs for log correlation without exporting spans. No span processor is attached;
+// AlwaysSample ensures IsRecording() == true.
+func noExportTraceProvider(serviceName string) (*sdktrace.TracerProvider, error) {
+	res := resource.NewSchemaless(semconv.ServiceName(serviceName))
+
+	provider := sdktrace.NewTracerProvider(
+		sdktrace.WithResource(res),
+		sdktrace.WithSampler(sdktrace.AlwaysSample()),
+	)
+
+	return provider, nil
+}`
+
+func telemetryLines() []string {
+	pad := strings.Repeat("\n", 185) // so the file's line numbers match the PR
+	return strings.Split(pad+telemetrySrc, "\n")
+}
+
+func TestMarkedLines_TheCodeTheCommentNamesIsMarked(t *testing.T) {
+	all := telemetryLines()
+	got := markedLines(all, focus{Line: 192, Hints: []string{"sdktrace.AlwaysSample()", "traceparent", "ParentBased(AlwaysSample())", "IsRecording() == true"}})
+	require.Equal(t, map[int]bool{192: true, 194: true, 188: true}, got,
+		"the cited line, the AlwaysSample call, and the doc line that says IsRecording() == true; names that are not in the code mark nothing")
+
+	require.Equal(t, map[int]bool{192: true, 193: true, 194: true, 195: true}, markedLines(all, focus{Line: 192, End: 195}), "a cited range is marked whole")
+	require.Equal(t, map[int]bool{192: true}, markedLines(all, focus{Line: 192, Hints: []string{"err", "sdk", "a"}}), "short names say nothing")
+	require.Equal(t, map[int]bool{192: true}, markedLines(all, focus{Line: 192, Hints: []string{"sdktrace"}}), "a name on more than three lines says nothing")
+}
+
+func TestCodeSnippetFocus_ShowsAndMarksTheNamedCall(t *testing.T) {
+	content := strings.Join(telemetryLines(), "\n")
+	got := codeSnippetFocus(content, "telemetry.go", focus{Line: 192, Hints: []string{"sdktrace.AlwaysSample()"}}, codeStyle{width: 100})
+	require.Contains(t, got, "  > 192 |     provider := sdktrace.NewTracerProvider(\n")
+	require.Contains(t, got, "  > 194 |         sdktrace.WithSampler(sdktrace.AlwaysSample()),\n")
+	require.Contains(t, got, "    193 |         sdktrace.WithResource(res),\n", "lines between stay unmarked")
+
+	card := codeSnippetFocus(content, "telemetry.go", focus{Line: 192, End: 195}, codeStyle{color: true, width: 100, pal: paletteFor("dark")})
+	require.Contains(t, card, " telemetry.go:192-195", "the title names the cited range")
+	require.Equal(t, 4, strings.Count(card, "▌"), "every cited line has the accent bar")
+}
+
 func TestEnclosingHeader(t *testing.T) {
 	py := strings.Split("class A:\n    def f(self):\n        x = 1\n        if x:\n            return x\n", "\n")
 	require.Equal(t, 2, enclosingHeader(py, 5), "the method, not the if")

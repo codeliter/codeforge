@@ -25,7 +25,8 @@ const sampleReview = "Moves tracing behind one seam.\n\n" +
 	"### Across files\n\n" +
 	"- Split the unrelated `go.mod` bumps into their own PR.\n"
 
-func fakeCode(file string, line int) string {
+func fakeCode(file string, fc focus) string {
+	line := fc.Line
 	return "    CODE " + file + ":" + strings.Repeat("|", line%3) + "\n"
 }
 
@@ -220,7 +221,7 @@ func TestReviewCode_ReadsAFetchedHeadWithGit(t *testing.T) {
 	d := &review.Display{}
 	d.PR("refs/codeforge/pr-1", "acme/core", "abc123")
 	code := reviewCode(review.WithDisplay(t.Context(), d), codeStyle{width: 80}, pathsReview)
-	require.Contains(t, code("a/b.go", 5), "> 5 | l5")
+	require.Contains(t, code("a/b.go", focus{Line: 5}), "> 5 | l5")
 	require.Contains(t, calls.calls, "git show refs/codeforge/pr-1:a/b.go")
 	require.Len(t, calls.calls, 3, "each file once (a/b.go, dir/ü.go, missing.go), never a path outside the repository")
 }
@@ -230,10 +231,10 @@ func TestReviewCode_ReadsAPRFromAnotherCheckoutOnGitHub(t *testing.T) {
 	d := &review.Display{}
 	d.PR("", "ecosia/core", "abc123")
 	code := reviewCode(review.WithDisplay(t.Context(), d), codeStyle{width: 80}, pathsReview)
-	require.Contains(t, code("a/b.go", 6), ">  6 | l6")
-	require.Contains(t, code("dir/ü.go", 2), "> 2 | l2")
-	require.Empty(t, code("missing.go", 1), "a file GitHub does not have shows no code")
-	require.Empty(t, code("../escape.go", 1))
+	require.Contains(t, code("a/b.go", focus{Line: 6}), ">  6 | l6")
+	require.Contains(t, code("dir/ü.go", focus{Line: 2}), "> 2 | l2")
+	require.Empty(t, code("missing.go", focus{Line: 1}), "a file GitHub does not have shows no code")
+	require.Empty(t, code("../escape.go", focus{Line: 1}))
 	require.Contains(t, calls.calls, "gh api -H Accept: application/vnd.github.raw repos/ecosia/core/contents/a/b.go?ref=abc123")
 	require.Contains(t, calls.calls, "gh api -H Accept: application/vnd.github.raw repos/ecosia/core/contents/dir/%C3%BC.go?ref=abc123")
 

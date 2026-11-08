@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/alecthomas/chroma/v2"
@@ -34,6 +35,12 @@ const (
 	// gapRow stands for the left-out lines between a declaration's header and the window; headerRows is both.
 	gapRow     = 0
 	headerRows = 2
+	// How the code a comment names marks lines: within hintReach lines of the cited ones, names of at least minHintLen
+	// characters found on at most hintMax lines, and never more than maxMarkedSpan lines apart.
+	hintReach     = 12
+	minHintLen    = 4
+	hintMax       = 3
+	maxMarkedSpan = 16
 )
 
 // codeStyle is how the report is drawn: the Codeforge Steel palette and highlighting only on a terminal that wants
@@ -74,7 +81,12 @@ func (st codeStyle) paint(code, s string) string {
 // highlighted for its language. It is empty when the path leaves the repository, the file cannot be read or the line
 // is not in it: the finding is still shown, only without code.
 func codeAround(repo, file string, line int, st codeStyle) string {
-	if line < 1 {
+	return codeAroundFocus(repo, file, focus{Line: line}, st)
+}
+
+// codeAroundFocus is codeAround for a finding with a focus; see codeSnippetFocus.
+func codeAroundFocus(repo, file string, fc focus, st codeStyle) string {
+	if fc.Line < 1 {
 		return ""
 	}
 	// os.Root refuses a path, or a symlink, that leads out of the repository.
@@ -87,14 +99,24 @@ func codeAround(repo, file string, line int, st codeStyle) string {
 	if err != nil {
 		return ""
 	}
-	return codeSnippet(string(data), file, line, st)
+	return codeSnippetFocus(string(data), file, fc, st)
 }
 
-// codeSnippet renders the lines of content, the text of file, around line, as codeAround describes. The window is
-// contextBefore lines before the finding and contextAfter after it; when the declaration the line sits in (a function,
-// method, class or block header) starts above the window, its first line is shown at the top, with a gap marker when
-// lines are left out, so the reader knows where they are.
-func codeSnippet(content, file string, line int, st codeStyle) string {
+// focus is what a snippet is about: the lines a finding cites (Line to End) and the code it names in backticks
+// (Hints), which marks the lines nearby that contain it. A model often cites the first line of a statement while the
+// comment is about a call three lines down; the hints find that call.
+type focus struct {
+	Line, End int
+	Hints     []string
+}
+
+// codeSnippetFocus renders the lines of content, the text of file, around a finding, as codeAround describes. Every
+// line the finding is about is marked: the cited ones and those near them that contain code the comment names. The
+// window runs from contextBefore lines above the first marked line to contextAfter below the last; when the
+// declaration the code sits in (a function, method, class or block header) starts above the window, its first line is
+// shown at the top, with a gap marker when lines are left out, so the reader knows where they are.
+func codeSnippetFocus(content, file string, fc focus, st codeStyle) string {
+	line := fc.Line
 	if line < 1 {
 		return ""
 	}
@@ -105,8 +127,13 @@ func codeSnippet(content, file string, line int, st codeStyle) string {
 	for i, l := range all {
 		all[i] = strings.ReplaceAll(strings.TrimRight(l, "\r"), "\t", strings.Repeat(" ", tabWidth))
 	}
-	first, last := max(1, line-contextBefore), min(len(all), line+contextAfter)
-	header := enclosingHeader(all, line)
+	marked := markedLines(all, fc)
+	lo, hi := line, line
+	for n := range marked {
+		lo, hi = min(lo, n), max(hi, n)
+	}
+	first, last := max(1, lo-contextBefore), min(len(all), hi+contextAfter)
+	header := enclosingHeader(all, lo)
 	switch {
 	case header >= first:
 		header = 0 // already in the window
@@ -128,17 +155,21 @@ func codeSnippet(content, file string, line int, st codeStyle) string {
 	}
 	code = trimSharedIndent(code)
 	numWidth := len(strconv.Itoa(last))
+	place := fmt.Sprintf("%s:%d", file, line)
+	if fc.End > line {
+		place += fmt.Sprintf("-%d", fc.End)
+	}
 	if st.color {
-		return codeCard(file, line, nums, code, numWidth, st)
+		return codeCard(place, file, marked, nums, code, numWidth, st)
 	}
 	// "  > 12 | " before the code.
 	avail := max(minCodeWidth, st.width-(numWidth+len("  >  | ")))
 	var s strings.Builder
 	for i, n := range nums {
-		switch n {
-		case gapRow:
+		switch {
+		case n == gapRow:
 			fmt.Fprintf(&s, "    %*s ⋮\n", numWidth, "")
-		case line:
+		case marked[n]:
 			fmt.Fprintf(&s, "  > %*d | %s\n", numWidth, n, cutColumns(code[i], avail))
 		default:
 			fmt.Fprintf(&s, "    %*d | %s\n", numWidth, n, cutColumns(code[i], avail))
@@ -147,9 +178,65 @@ func codeSnippet(content, file string, line int, st codeStyle) string {
 	return s.String()
 }
 
+// markedLines returns the lines a finding is about: the cited range, plus the lines within hintReach of it that
+// contain code its comment names. A name found on more than hintMax lines says nothing about where to look and is
+// ignored, and marked lines never span more than maxMarkedSpan lines.
+func markedLines(all []string, fc focus) map[int]bool {
+	end := min(len(all), max(fc.End, fc.Line))
+	marked := map[int]bool{}
+	for n := fc.Line; n <= end && n-fc.Line < maxMarkedSpan; n++ {
+		marked[n] = true
+	}
+	lo, hi := max(1, fc.Line-hintReach), min(len(all), end+hintReach)
+	for _, h := range fc.Hints {
+		var found []int
+		for _, needle := range hintNeedles(h) {
+			for n := lo; n <= hi; n++ {
+				if strings.Contains(all[n-1], needle) {
+					found = append(found, n)
+				}
+			}
+			if len(found) > 0 {
+				break // the full name matched; its shorter form would only add noise
+			}
+		}
+		if len(found) == 0 || len(found) > hintMax {
+			continue
+		}
+		for _, n := range found {
+			if abs(n-fc.Line) < maxMarkedSpan && abs(n-end) < maxMarkedSpan {
+				marked[n] = true
+			}
+		}
+	}
+	return marked
+}
+
+// hintNeedles turns a name from the comment into what to look for in the code: as written, then without a trailing
+// call ("sdktrace.AlwaysSample()" → "sdktrace.AlwaysSample"). Names too short or with no letters say nothing.
+func hintNeedles(h string) []string {
+	h = strings.TrimSpace(h)
+	if len(h) < minHintLen || !strings.ContainsFunc(h, unicode.IsLetter) || strings.ContainsAny(h, "\n") {
+		return nil
+	}
+	out := []string{h}
+	if i := strings.Index(h, "("); i >= minHintLen {
+		out = append(out, h[:i])
+	}
+	return out
+}
+
+func abs(n int) int {
+	if n < 0 {
+		return -n
+	}
+	return n
+}
+
 // codeCard draws the snippet as a card that stands out from the review's prose: a title row with the place, then the
-// code on a raised background, the finding's line on a brighter one with an accent bar, and gaps as a dim marker.
-func codeCard(file string, line int, nums []int, code []string, numWidth int, st codeStyle) string {
+// code on a raised background, the lines the finding is about on a brighter one with an accent bar, and gaps as a dim
+// marker.
+func codeCard(place, file string, marked map[int]bool, nums []int, code []string, numWidth int, st codeStyle) string {
 	const margin, pad, beforeCode = "  ", 1, "  "
 	width := min(maxCardWidth, max(minCodeWidth, st.width-len(margin)))
 	gutter := len("▌") + numWidth + len(beforeCode)
@@ -165,13 +252,12 @@ func codeCard(file string, line int, nums []int, code []string, numWidth int, st
 		return margin + bg + text + strings.Repeat(" ", fill) + ansiReset + "\n"
 	}
 	var s strings.Builder
-	title := fmt.Sprintf(" %s:%d", file, line)
-	s.WriteString(row(st.pal.cardTitle, st.pal.accent+cutColumns(title, width)+ansiReset))
+	s.WriteString(row(st.pal.cardTitle, st.pal.accent+cutColumns(" "+place, width)+ansiReset))
 	for i, n := range nums {
-		switch n {
-		case gapRow:
+		switch {
+		case n == gapRow:
 			s.WriteString(row(st.pal.card, st.pal.dim+fmt.Sprintf(" %*s ⋮", numWidth, "")+ansiReset))
-		case line:
+		case marked[n]:
 			s.WriteString(row(st.pal.cardLine, st.pal.accent+"▌"+fmt.Sprintf("%*d", numWidth, n)+ansiReset+beforeCode+shown[i]))
 		default:
 			s.WriteString(row(st.pal.card, st.pal.dim+" "+fmt.Sprintf("%*d", numWidth, n)+ansiReset+beforeCode+shown[i]))

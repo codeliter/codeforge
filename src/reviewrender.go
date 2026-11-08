@@ -30,8 +30,23 @@ var (
 // findingIndent puts the lines that continue a finding under its text.
 const findingIndent = "  "
 
-// codeSource returns the code around line of file as codeSnippet renders it, or "" when it cannot be read.
-type codeSource func(file string, line int) string
+// codeSource returns the code of file around a finding's focus as codeSnippetFocus renders it, or "" when it cannot be
+// read.
+type codeSource func(file string, fc focus) string
+
+// inlineCode finds the `code` a comment names.
+var inlineCode = regexp.MustCompile("`([^`\n]+)`")
+
+// findingFocus is what a finding is about: its cited lines and every name it puts in backticks.
+func findingFocus(f review.Labeled, more []string) focus {
+	fc := focus{Line: f.Line, End: f.End}
+	for _, l := range append([]string{f.Text}, more...) {
+		for _, m := range inlineCode.FindAllStringSubmatch(l, -1) {
+			fc.Hints = append(fc.Hints, m[1])
+		}
+	}
+	return fc
+}
 
 // renderReview lays out a review written in Markdown the way the gate report looks: Codeforge Steel colours, headings
 // and Conventional Comment labels picked out, `code` and **bold** without their markers, fenced code highlighted, prose
@@ -96,7 +111,7 @@ func renderFinding(f review.Labeled, more []string, st codeStyle, code codeSourc
 	// The code comes first, so the comment is read with it in view; the card's title already names the place.
 	snippet := ""
 	if !quoted && code != nil {
-		snippet = code(f.Path, f.Line)
+		snippet = code(f.Path, findingFocus(f, more))
 	}
 	label := span{text: f.Label + ":", code: labelColor(f.Label, st)}
 	text := inlineSpans(strings.TrimLeft(f.Text, "—–-: "), st)
@@ -285,7 +300,7 @@ func reviewCode(ctx context.Context, st codeStyle, text string) codeSource {
 		if err != nil {
 			return nil
 		}
-		return func(file string, line int) string { return codeAround(root, file, line, st) }
+		return func(file string, fc focus) string { return codeAroundFocus(root, file, fc, st) }
 	case src.HeadRef != "":
 		read = func(ctx context.Context, file string) ([]byte, error) {
 			return codeRunner.Run(ctx, "git", "show", src.HeadRef+":"+file)
@@ -301,12 +316,12 @@ func reviewCode(ctx context.Context, st codeStyle, text string) codeSource {
 		return nil
 	}
 	files := prefetch(ctx, findingPaths(text), read)
-	return func(file string, line int) string {
+	return func(file string, fc focus) string {
 		content, ok := files[strings.TrimPrefix(file, "./")]
 		if !ok {
 			return ""
 		}
-		return codeSnippet(content, file, line, st)
+		return codeSnippetFocus(content, file, fc, st)
 	}
 }
 

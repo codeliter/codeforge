@@ -19,7 +19,7 @@ var (
 	// list marker, bold label, decoration and backticks around the place.
 	findingStart = regexp.MustCompile("(?i)^\\s*(?:[-*]\\s+|\\d+\\.\\s+)?(?:\\*\\*)?" +
 		`((?:issue|suggestion|question|nitpick|nit|optional|fyi|praise|todo|chore|note|thought)(?:\s*\([^)]*\))?)` +
-		"(?:\\*\\*)?:(?:\\*\\*)?\\s*`?([^\\s:`]+):(\\d+)(?:-\\d+)?`?\\s*(?:—|–|-|:)?\\s*(.*)$")
+		"(?:\\*\\*)?:(?:\\*\\*)?\\s*`?([^\\s:`]+):(\\d+)(?:[-–](\\d+))?`?\\s*(?:—|–|-|:)?\\s*(.*)$")
 	verdictLead = regexp.MustCompile(`(?i)^\s*(?:\d\.\s*)?(?:\*\*)?verdict(?:\*\*)?\s*:?\s*(?:\*\*)?\s*(?:approve|comment|request changes)\b\.?(?:\*\*)?\s*[:.—–-]?\s*`)
 	headingLine = regexp.MustCompile("^\\s*(?:#{1,6}\\s+.*|\\*\\*[^*]+\\*\\*:?|`?[\\w.@+-]+(?:/[\\w.@+-]+)*\\.\\w+`?:?)\\s*$")
 )
@@ -103,7 +103,7 @@ func SplitFindings(review, diff string) (string, []InlineComment) {
 			i = end - 1
 			continue
 		}
-		body := []string{strings.TrimSpace(m[1]) + ": " + strings.TrimSpace(m[4])}
+		body := []string{strings.TrimSpace(m[1]) + ": " + strings.TrimSpace(m[5])}
 		for _, c := range src[i+1 : end] {
 			body = append(body, strings.TrimRight(c, " \t"))
 		}
@@ -118,7 +118,9 @@ type Labeled struct {
 	Label string // "suggestion", "issue (blocking)", ...
 	Path  string
 	Line  int
-	Text  string // what follows the place on that line
+	// End is the last line of a range ("a.go:192-195"), or Line for one line.
+	End  int
+	Text string // what follows the place on that line
 }
 
 // ParseLabeled reads a finding from the first line of one ("suggestion: a.go:12 — text", with the same list markers,
@@ -132,7 +134,11 @@ func ParseLabeled(line string) (Labeled, bool) {
 	if err != nil {
 		return Labeled{}, false
 	}
-	return Labeled{Label: strings.TrimSpace(m[1]), Path: strings.TrimPrefix(m[2], "./"), Line: n, Text: strings.TrimSpace(m[4])}, true
+	end := n
+	if e, err := strconv.Atoi(m[4]); err == nil && e >= n {
+		end = e
+	}
+	return Labeled{Label: strings.TrimSpace(m[1]), Path: strings.TrimPrefix(m[2], "./"), Line: n, End: end, Text: strings.TrimSpace(m[5])}, true
 }
 
 // LabeledEnd returns the index just past the finding whose first line is src[i]; see findingEnd.
