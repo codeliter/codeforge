@@ -13,6 +13,9 @@ const (
 	DecisionComment        Decision = "COMMENT"
 	DecisionApprove        Decision = "APPROVE"
 	DecisionRequestChanges Decision = "REQUEST_CHANGES"
+	// DecisionPlain posts no GitHub review at all: the whole review goes up as one ordinary PR comment, which its
+	// author can edit or delete like any other. A review never suggests it; only the user picks it.
+	DecisionPlain Decision = "PLAIN"
 )
 
 // Label is the decision as the user says it.
@@ -22,6 +25,8 @@ func (d Decision) Label() string {
 		return "Approve"
 	case DecisionRequestChanges:
 		return "Request changes"
+	case DecisionPlain:
+		return "plain PR comment"
 	}
 	return "Comment"
 }

@@ -125,7 +125,11 @@ func runShownReview(ctx context.Context, argv, env []string, limit time.Time, st
 			answer = confirmed(ctx, os.Stderr, "Post this review on the PR as "+decision.Label()+"?")
 		}
 		if !answer {
-			fmt.Fprintln(os.Stderr, "codeforge: not posted. Pick a decision in the review (1, 2 or 3) to post it, or run with --comment=yes to post the suggested one without asking.")
+			how := "Answer yes when asked"
+			if asked {
+				how = "Pick how to post it in the review (1 to 4)"
+			}
+			fmt.Fprintln(os.Stderr, "codeforge: not posted. "+how+", or run with --comment=yes to post the suggested one without asking.")
 			return nil
 		}
 	}
@@ -140,6 +144,8 @@ func runShownReview(ctx context.Context, argv, env []string, limit time.Time, st
 		return fmt.Errorf("the review above was not posted: %w", err)
 	}
 	switch {
+	case posted.Decision == review.DecisionPlain:
+		fmt.Fprintf(os.Stderr, "codeforge: posted the review as a plain PR comment %s\n", posted.URL)
 	case posted.Fallback != nil:
 		fmt.Fprintf(os.Stderr, "codeforge: GitHub refused the review (%v); posted it as one plain comment, without its %s decision %s\n", posted.Fallback, decision.Label(), posted.URL)
 	case posted.Downgraded != nil:
@@ -152,20 +158,21 @@ func runShownReview(ctx context.Context, argv, env []string, limit time.Time, st
 }
 
 // The keys the review view offers besides moving around: post the review as one of the three decisions, or chat about
-// it. The user decides; the review's own decision is only marked as the suggestion.
+// it, or as a plain PR comment that is no review at all. The user decides; the review's own decision is only marked as
+// the suggestion.
 const keyChat = "c"
 
 var (
-	decisionOrder = []string{"1", "2", "3"}
+	decisionOrder = []string{"1", "2", "3", "4"}
 	decisionKeys  = map[string]review.Decision{
-		"1": review.DecisionApprove, "2": review.DecisionComment, "3": review.DecisionRequestChanges,
+		"1": review.DecisionApprove, "2": review.DecisionComment, "3": review.DecisionRequestChanges, "4": review.DecisionPlain,
 	}
 )
 
 // showReview shows a finished review on the terminal: as an accordion of its files when the forms helper is there,
 // else printed in full. The suggested decision sits on the final comment's row. It offers c to chat about the review
-// and, with ask, 1, 2 and 3 to post it as Approve, Comment or Request changes; key is the one pressed, "" for q or
-// Ctrl+C. shown reports whether the view ran, so the keys were offered.
+// and, with ask, 1, 2 and 3 to post it as Approve, Comment or Request changes, and 4 as a plain PR comment; key is
+// the one pressed, "" for q or Ctrl+C. shown reports whether the view ran, so the keys were offered.
 func showReview(ctx context.Context, text string, decision review.Decision, leads string, raw []byte, ask bool) (key string, shown bool) {
 	st := codeStyleFor(ctx, os.Stdout)
 	code := reviewCode(ctx, st, text)

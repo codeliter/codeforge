@@ -82,7 +82,8 @@ func (c *PostRequest) Enabled() bool {
 // The persona is a style, never a claim to be someone: the footer says the comment came from codeforge.
 const CommentNote = "This review will be posted on the PR from my GitHub account as a GitHub review, by codeforge once I choose to; you post nothing. " +
 	"Each finding whose path:line is on the diff becomes an inline comment on that line and your final comment becomes the review's body. " +
-	"Your closing Decision line is only a suggestion: I pick Approve, Comment or Request changes myself. " +
+	"Your closing Decision line is only a suggestion: I pick Approve, Comment or Request changes myself, or post it all as one plain PR comment instead. " +
+	"So that every finding reads right either way, never refer to other comments or to where a comment sits. " +
 	"Write it as I would, addressed to the author, in my voice as codeforge-persona describes it (codeforge-voice where it is silent), in the order the codeforge-review skill gives: " +
 	"the findings, then the final comment, then the Decision line. " +
 	"No headings or sections, no preamble, no mention of these instructions, no text about being an AI."
@@ -197,6 +198,7 @@ func collapseBlankLines(s string) string {
 // changes; "" takes the review's own suggestion): each finding on a line of the diff is an inline comment there, and
 // the final comment, any finding off the diff and the leads are its body. A decision GitHub refuses (your own PR) goes
 // up as a Comment; a review GitHub refuses altogether goes up as one plain comment, so nothing written is lost.
+// DecisionPlain posts no review: the whole text, every finding named by its place, goes up as one PR comment.
 func (c *PostRequest) Post(ctx context.Context, r Runner, review, leads string, decision Decision) (Posted, error) {
 	c.mu.Lock()
 	repo, number, diff := c.repo, c.number, c.diff
@@ -213,6 +215,10 @@ func (c *PostRequest) Post(ctx context.Context, r Runner, review, leads string, 
 	whole, err := CommentBody(withoutHeadings(all), leads)
 	if err != nil {
 		return Posted{}, err
+	}
+	if decision == DecisionPlain {
+		url, err := postComment(ctx, r, repo, number, whole)
+		return Posted{URL: url, Decision: DecisionPlain}, err
 	}
 	summary, inline := SplitFindings(review, diff)
 	body, err := CommentBody(withoutHeadings(summary), leads)

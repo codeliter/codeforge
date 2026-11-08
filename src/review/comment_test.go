@@ -261,6 +261,23 @@ func TestStripVerdict(t *testing.T) {
 	require.Equal(t, "The verdict is pending.", StripVerdict("The verdict is pending."))
 }
 
+func TestPostRequest_PlainPostsOneOrdinaryCommentAndNoReview(t *testing.T) {
+	var c PostRequest
+	c.Target("acme/w", "42")
+	c.SetDiff(inlineDiff)
+	run := &recordingRunner{out: "https://github.com/acme/w/pull/42#issuecomment-7\n"}
+	got, err := c.Post(t.Context(), run, inlineReview, "", DecisionPlain)
+	require.NoError(t, err)
+	require.Equal(t, Posted{URL: "https://github.com/acme/w/pull/42#issuecomment-7", Decision: DecisionPlain}, got)
+	require.Equal(t, "gh", run.name)
+	require.Equal(t, []string{"pr", "comment", "42", "--repo", "acme/w"}, run.args[:5], "an ordinary PR comment, not a review")
+	body := strings.TrimPrefix(run.args[5], "--body=")
+	require.Contains(t, body, "`search/serper/main.go:72`: Remove the commented-out code.", "every finding is in it, named by its place")
+	require.Contains(t, body, "`common/go/telemetry/telemetry.go:2`: Init has no tests.")
+	require.NotContains(t, body, "suggestion: search", "without its label")
+	require.NotContains(t, body, "###", "without headings")
+}
+
 func TestPostRequest_PostsInlineCommentsAsOneReview(t *testing.T) {
 	var c PostRequest
 	c.Target("acme/w", "42")

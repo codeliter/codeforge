@@ -160,7 +160,7 @@ func TestRunReviewEngine_TheUserPicksTheDecisionThatIsPosted(t *testing.T) {
 	require.True(t, shown.Items[1].Open, "the final comment is open at the start")
 	require.Contains(t, shown.Items[1].Body, "Adds x as the description says.")
 	require.Equal(t, []forms.Action{
-		{Key: "1", Label: "post as Approve (suggested)"}, {Key: "2", Label: "post as Comment"}, {Key: "3", Label: "post as Request changes"},
+		{Key: "1", Label: "post as Approve (suggested)"}, {Key: "2", Label: "post as Comment"}, {Key: "3", Label: "post as Request changes"}, {Key: "4", Label: "post as plain PR comment"},
 		{Key: "c", Label: "chat about it"},
 	}, shown.Keys)
 	require.Contains(t, out, "  a.go  1 suggestion · 1 nitpick\n", "a recap stays in the terminal")
@@ -168,6 +168,25 @@ func TestRunReviewEngine_TheUserPicksTheDecisionThatIsPosted(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(posted), `"event":"REQUEST_CHANGES"`, "the user's pick is posted, not the suggestion")
 	require.Contains(t, string(posted), "Adds x as the description says.")
+}
+
+func TestRunReviewEngine_FourPostsOnePlainCommentAndNoReview(t *testing.T) {
+	f := newPostFixture(t, styledEngine, 0)
+	onTerminal(t, true)
+	pressing(t, "4", nil)
+	_, stderr, err := captured(t, func() error {
+		_, err := runReviewEngine(postingContext(t), []string{f.engine, "the prompt"}, os.Environ(), time.Now().Add(10*time.Second))
+		return err
+	})
+	require.NoError(t, err)
+	posted, err := os.ReadFile(f.ghArgs)
+	require.NoError(t, err)
+	require.True(t, strings.HasPrefix(string(posted), "pr comment 42 --repo acme/w "), "an ordinary PR comment: %s", posted)
+	require.NotContains(t, string(posted), "--input", "no review request is sent")
+	require.NotContains(t, string(posted), "/reviews")
+	require.Contains(t, string(posted), "Adds x as the description says.")
+	require.Contains(t, string(posted), "`a.go:1`: use x", "findings are named by their place, without labels")
+	require.Contains(t, stderr, "posted the review as a plain PR comment")
 }
 
 func TestRunReviewEngine_OnlyCOpensTheChat(t *testing.T) {

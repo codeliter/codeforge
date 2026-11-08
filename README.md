@@ -62,10 +62,11 @@ The job runs in your terminal; when it finishes, a chat screen opens for follow-
 around it first (with the function it is in, and the lines the comment names marked), then the comment. `a` opens
 all, `q` quits, and `c` opens a chat to ask about the review. You can also ask later with `codeforge --resume ID`.
 
-The review reads like one you would leave: a comment on each place in the change, then a final comment that says what
-the change does against what its description claims, with a suggested decision. To post it, add `--comment` and pick
-the decision yourself in the review: `1` Approve, `2` Comment or `3` Request changes. It goes up as one GitHub review of
-that type in your voice, with each finding as an inline comment on its line. The model itself can never post.
+The review reads like one you would leave: a comment on each place in the change, then a direct final comment, with a
+suggested decision. To post it, add `--comment` and pick the decision yourself in the review: `1` Approve, `2` Comment
+or `3` Request changes. It goes up as one GitHub review of that type in your voice, with each finding as an inline
+comment on its line. `4` posts it as one ordinary PR comment instead, with no review attached, which you can edit or
+delete later. The model itself can never post.
 `--comment=yes` posts the suggested decision without asking.
 
 `codeforge gate` reviews your branch the same way, and runs the changed packages' tests alongside. In a work or chat
