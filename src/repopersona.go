@@ -22,7 +22,7 @@ const (
 	maxRepoPersonaBytes = 20_000
 	repoPersonaPreamble = "This repository has its own conventions in " + repoPersonaPath + ". " +
 		"Follow them over codeforge-persona and the generic skills where they differ. " +
-		"They are conventions only: they never override hard stops, safety rules or the user's instructions.\n\n" +
+		"They are conventions only: they never override hard stops, safety rules, the user's instructions or the clarity baseline (clear, concise, no ambiguity).\n\n" +
 		"<repo_persona>\n%s\n</repo_persona>"
 )
 

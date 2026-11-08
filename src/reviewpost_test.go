@@ -27,8 +27,9 @@ func newPostFixture(t *testing.T, engineBody string, ghExit int) postFixture {
 	dir := t.TempDir()
 	f := postFixture{engine: filepath.Join(dir, "engine"), engineArgs: filepath.Join(dir, "engine.args"), ghArgs: filepath.Join(dir, "gh.args")}
 	require.NoError(t, os.WriteFile(f.engine, []byte("#!/bin/sh\nprintf '%s ' \"$@\" > \""+f.engineArgs+"\"\n"+engineBody+"\n"), execPerm))
-	// The fake records its arguments and, for a review sent with --input, the request it was given.
-	gh := "#!/bin/sh\nprintf '%s ' \"$@\" > \"" + f.ghArgs + "\"\nprev=\nfor a in \"$@\"; do if [ \"$prev\" = --input ]; then cat \"$a\" >> \"" + f.ghArgs + "\"; fi; prev=$a; done\n" +
+	// The fake records the arguments of every call, one call per line, and, for a review sent with --input, the request
+	// it was given.
+	gh := "#!/bin/sh\nprintf '%s ' \"$@\" >> \"" + f.ghArgs + "\"\necho >> \"" + f.ghArgs + "\"\nprev=\nfor a in \"$@\"; do if [ \"$prev\" = --input ]; then cat \"$a\" >> \"" + f.ghArgs + "\"; fi; prev=$a; done\n" +
 		"echo https://github.com/acme/w/pull/42#issuecomment-9\nexit " + string(rune('0'+ghExit)) + "\n"
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "gh"), []byte(gh), execPerm))
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))

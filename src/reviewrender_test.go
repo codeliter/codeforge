@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -40,8 +41,8 @@ func TestRenderReview_Plain(t *testing.T) {
 	require.Contains(t, got, "\nsearch/serper/main.go\n")
 	require.Contains(t, got, "\n    CODE search/serper/main.go:\n\n  suggestion: kit.InstrumentHTTPClient sends baggage to the\n  vendor.\n  Drop propagation for vendor clients.\n",
 		"the code comes first, then the comment without repeating the place")
-	require.Contains(t, got, "- nitpick (non-blocking): search/serper/main.go:72 Nit:\n  remove the commented-out code.\n\n    | // gprclogging.PayloadReceived,\n",
-		"a finding that quotes its code gets no second copy")
+	require.Contains(t, got, "- nitpick (non-blocking): search/serper/main.go:72 Nit:\n  remove the commented-out code.\n\n      | // gprclogging.PayloadReceived,\n",
+		"a finding that quotes its code gets no second copy, and its code sits under it")
 	require.Equal(t, 1, strings.Count(got, "CODE "))
 	require.Contains(t, got, "- Split the unrelated go.mod bumps into their own PR.\n")
 	for _, l := range strings.Split(got, "\n") {
@@ -160,7 +161,7 @@ func TestRunReviewEngine_TheUserPicksTheDecisionThatIsPosted(t *testing.T) {
 	require.True(t, shown.Items[1].Open, "the final comment is open at the start")
 	require.Contains(t, shown.Items[1].Body, "Adds x as the description says.")
 	require.Equal(t, []forms.Action{
-		{Key: "1", Label: "post as Approve (suggested)"}, {Key: "2", Label: "post as Comment"}, {Key: "3", Label: "post as Request changes"}, {Key: "4", Label: "post as plain PR comment"},
+		{Key: "1", Label: "post as Approve (suggested)"}, {Key: "2", Label: "post as Comment"}, {Key: "3", Label: "post as Request changes"}, {Key: "4", Label: "post as plain PR comments"},
 		{Key: "c", Label: "chat about it"},
 	}, shown.Keys)
 	require.Contains(t, out, "  a.go  1 suggestion · 1 nitpick\n", "a recap stays in the terminal")
@@ -170,7 +171,28 @@ func TestRunReviewEngine_TheUserPicksTheDecisionThatIsPosted(t *testing.T) {
 	require.Contains(t, string(posted), "Adds x as the description says.")
 }
 
-func TestRunReviewEngine_FourPostsOnePlainCommentAndNoReview(t *testing.T) {
+func TestRunReviewEngine_APartialPlainPostSaysWhatIsOnThePR(t *testing.T) {
+	f := newPostFixture(t, styledEngine, 0)
+	// gh posts the first comment and fails on the next.
+	gh := "#!/bin/sh\nif [ -e \"" + f.ghArgs + "\" ]; then echo 'HTTP 502' >&2; exit 1; fi\ntouch \"" + f.ghArgs + "\"\necho https://github.com/acme/w/pull/42#issuecomment-1\n"
+	require.NoError(t, os.WriteFile(filepath.Join(filepath.Dir(f.ghArgs), "gh"), []byte(gh), execPerm))
+	onTerminal(t, true)
+	pressing(t, "4", nil)
+	_, _, err := captured(t, func() error {
+		_, err := runReviewEngine(postingContext(t), []string{f.engine, "the prompt"}, os.Environ(), time.Now().Add(10*time.Second))
+		return err
+	})
+	require.ErrorContains(t, err, "only part of the review was posted, up to https://github.com/acme/w/pull/42#issuecomment-1")
+	require.ErrorContains(t, err, "the final comment is not posted")
+	require.NotContains(t, err.Error(), "the review above was not posted")
+}
+
+func TestPostBound_PlainHasRoomForEveryComment(t *testing.T) {
+	require.Equal(t, postLimit, postBound(review.DecisionComment))
+	require.Equal(t, review.PostCallLimit*(review.MaxPlainFileComments+1), postBound(review.DecisionPlain))
+}
+
+func TestRunReviewEngine_FourPostsPlainCommentsAndNoReview(t *testing.T) {
 	f := newPostFixture(t, styledEngine, 0)
 	onTerminal(t, true)
 	pressing(t, "4", nil)
@@ -181,12 +203,13 @@ func TestRunReviewEngine_FourPostsOnePlainCommentAndNoReview(t *testing.T) {
 	require.NoError(t, err)
 	posted, err := os.ReadFile(f.ghArgs)
 	require.NoError(t, err)
-	require.True(t, strings.HasPrefix(string(posted), "pr comment 42 --repo acme/w "), "an ordinary PR comment: %s", posted)
+	calls := strings.Split(string(posted), "pr comment 42 --repo acme/w --body=")
+	require.Len(t, calls, 3, "two ordinary PR comments: %s", posted)
+	require.Equal(t, "`a.go:1`: use x\n\n`a.go:2`: tidy \n", calls[1], "the file's comment first, its findings named by their place, without labels")
+	require.True(t, strings.HasPrefix(calls[2], "Adds x as the description says."), "then the final comment")
 	require.NotContains(t, string(posted), "--input", "no review request is sent")
 	require.NotContains(t, string(posted), "/reviews")
-	require.Contains(t, string(posted), "Adds x as the description says.")
-	require.Contains(t, string(posted), "`a.go:1`: use x", "findings are named by their place, without labels")
-	require.Contains(t, stderr, "posted the review as a plain PR comment")
+	require.Contains(t, stderr, "posted the review as plain PR comments: 1 file comment and the final comment")
 }
 
 func TestRunReviewEngine_OnlyCOpensTheChat(t *testing.T) {

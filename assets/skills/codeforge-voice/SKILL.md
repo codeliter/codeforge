@@ -1,11 +1,13 @@
 ---
 name: codeforge-voice
-description: Default voice for commits, PRs, review replies and status updates. codeforge-persona overrides it. Use for any text that goes to people.
+description: Default voice for commits, PRs, review replies and status updates. codeforge-persona overrides its style, never its clarity. Use for any text that goes to people.
 ---
 
 # Voice
 
 Plain, specific, no ambiguity. Say what was wrong, what changes, and anything the reader must do. Nothing else.
+
+That first line is the baseline under every persona: a persona may change tone, format and wording, but no text is ever less clear, less concise or open to two readings because of it.
 
 ## Rules
 - Short sentences. Active voice. Present tense for what the change does ("Adds", "Uses", "Fixes").

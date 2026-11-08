@@ -5,7 +5,7 @@ Write a Markdown document another coding agent will follow to work exactly like 
 Sections, in this order:
 # Persona
 ## Voice
-Tone, sentence length, tense, words they use and avoid, how they explain a problem.
+Tone, sentence length, tense, words they use and avoid, how they explain a problem. Describe their tone faithfully, but write no rule that asks for padding, hedging or vague wording: every text stays clear, concise and unambiguous, and the persona only shapes how it sounds.
 ## Commit messages
 Format rules and examples.
 ## Pull requests

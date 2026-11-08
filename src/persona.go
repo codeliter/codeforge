@@ -25,8 +25,13 @@ const (
 	maxCorpusBytes = 300_000
 	maxDiffBytes   = 120_000
 	maxStderrBytes = 300
-	personaHeader  = "---\nname: codeforge-persona\ndescription: The user's own voice, PR format and code style, set by `codeforge init`. Overrides codeforge-voice and codeforge-code where they differ.\n---\n\n"
-	emptyPersona   = personaHeader + "No persona yet. Follow codeforge-voice and codeforge-code, and suggest running `codeforge init`.\n"
+	personaHeader  = "---\nname: codeforge-persona\ndescription: The user's own voice, PR format and code style, set by `codeforge init`. Overrides codeforge-voice and codeforge-code where they differ, except for the clarity baseline.\n---\n\n" + clarityBaseline + "\n\n"
+	// clarityBaseline is the floor under every persona, learned, starter or per repository: the persona decides tone,
+	// format and wording, never whether a text is clear.
+	clarityBaseline = "Baseline for every text, whatever the persona says: clear, concise and free of ambiguity. " +
+		"One meaning per sentence, no filler, no hedging, and every ask stated as an ask. " +
+		"The persona below sets tone, format and wording on top of this; it never lowers it."
+	emptyPersona = personaHeader + "No persona yet. Follow codeforge-voice and codeforge-code, and suggest running `codeforge init`.\n"
 )
 
 var (

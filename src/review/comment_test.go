@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/stretchr/testify/require"
@@ -241,6 +242,62 @@ func TestDiffLines_OnlyTheNewSideOfEachHunk(t *testing.T) {
 	require.Equal(t, map[int]bool{1: true, 2: true}, got["common/go/telemetry/telemetry.go"])
 }
 
+func TestFileComments_ACodeBlockStaysWithItsFinding(t *testing.T) {
+	in := "suggestion: search/serper/main.go:72 — Close the body on every path, as in:\n\n" +
+		"```go\n# not a heading\nsuggestion: x.go:1 — not a finding\ndefer resp.Body.Close()\n```\n\n" +
+		"suggestion: common/go/telemetry/telemetry.go:2 — Add a test for Init(ctx, nil).\n" +
+		"  ~~~sh\n  go test ./...\n  ~~~\n\n" +
+		"Ship it once the body is closed."
+	files, rest := FileComments(in)
+	require.Equal(t, []FileComment{
+		{Path: "search/serper/main.go", Body: "`search/serper/main.go:72`: Close the body on every path, as in:\n\n" +
+			"```go\n# not a heading\nsuggestion: x.go:1 — not a finding\ndefer resp.Body.Close()\n```"},
+		{Path: "common/go/telemetry/telemetry.go", Body: "`common/go/telemetry/telemetry.go:2`: Add a test for Init(ctx, nil).\n~~~sh\ngo test ./...\n~~~"},
+	}, files, "after a blank line or not, and whatever it holds, a code block is the finding's")
+	require.Equal(t, "Ship it once the body is closed.", rest)
+
+	files, rest = FileComments("nitpick: a.go:1 — Tidy:\n\n```\nnever closed\n\nShip it.")
+	require.Len(t, files, 1)
+	require.Contains(t, files[0].Body, "never closed\n\nShip it.", "an unclosed block runs to the end, as Markdown shows it")
+	require.Empty(t, rest)
+}
+
+func TestFileComments_InlineCodeAndCodeOutsideFindingsAreNoBlocks(t *testing.T) {
+	files, rest := FileComments("suggestion: a.go:1 — x\n```foo``` bar\n\nShip it.")
+	require.Equal(t, []FileComment{{Path: "a.go", Body: "`a.go:1`: x\n```foo``` bar"}}, files, "inline code opens no block")
+	require.Equal(t, "Ship it.", rest)
+
+	files, rest = FileComments("suggestion: a.go:1 — x\n\nShip it, as in:\n\n    ok\n\n```sh\n# keep this\nsuggestion: b.go:2 — not a finding\n```")
+	require.Len(t, files, 1, "a line in a code block of the final comment is no finding")
+	require.Contains(t, rest, "# keep this\nsuggestion: b.go:2 — not a finding")
+
+	files, _ = FileComments("suggestion: a.go:1 — Use:\n  - one\n  - two\n```go\nx()\n```")
+	require.Equal(t, "`a.go:1`: Use:\n- one\n- two\n```go\nx()\n```", files[0].Body, "the list and the block are dedented apart")
+
+	require.Equal(t, "Fine.\n```sh\n# a comment\n```", withoutHeadings("### Final comment\nFine.\n```sh\n# a comment\n```"),
+		"a # line in a code block is code, not a heading")
+
+	_, rest = FileComments("suggestion: a.go:1 — x\n\nRun:\n\n```sh\n# step one\n# step two\n\n\nmake\ngo.mod\ngo.sum\n```")
+	require.Equal(t, "Run:\n\n```sh\n# step one\n# step two\n\n\nmake\ngo.mod\ngo.sum\n```", rest,
+		"no line of a code block in the final comment is dropped as an empty heading, and its blank lines stay")
+}
+
+func TestCutAtLine_ClosesACodeBlockItCutsInto(t *testing.T) {
+	body := "See:\n```go\n" + strings.Repeat("x()\n", 50) + "```\nAfter."
+	got := cutAtLine(body, 40)
+	require.True(t, strings.HasSuffix(got, "\n```"+cutNote), "the block is closed before the note: %q", got)
+	require.Equal(t, "See:\n```go\n"+strings.Repeat("x()\n", 6)+"x()", strings.TrimSuffix(got, "\n```"+cutNote), "cut at the last line break within 40 bytes")
+	require.Equal(t, "One.\nTwo."+cutNote, cutAtLine("One.\nTwo.\nThree.", 12), "text with no block gets no fence")
+}
+
+func TestFileComments_ACodeBlockAfterTheLastFindingIsItsExample(t *testing.T) {
+	// Pinned: a block that directly follows a finding is that finding's, even when it is the last one; the final
+	// comment is plain text (codeforge-review skill, section 7).
+	files, rest := FileComments("suggestion: a.go:1 — Close it, as in:\n\n```go\ndefer f.Close()\n```\n\nShip it.")
+	require.Contains(t, files[0].Body, "defer f.Close()")
+	require.Equal(t, "Ship it.", rest)
+}
+
 func TestSplitFindings_PutsEachFindingOnItsLine(t *testing.T) {
 	summary, inline := SplitFindings(StripVerdict(inlineReview), inlineDiff)
 	require.Equal(t, []InlineComment{
@@ -261,21 +318,143 @@ func TestStripVerdict(t *testing.T) {
 	require.Equal(t, "The verdict is pending.", StripVerdict("The verdict is pending."))
 }
 
-func TestPostRequest_PlainPostsOneOrdinaryCommentAndNoReview(t *testing.T) {
+// commentsRunner records the body of every `gh pr comment` and answers each with the next comment URL.
+type commentsRunner struct {
+	bodies []string
+	failAt int // the 1-based call that fails, 0 for none
+}
+
+func (r *commentsRunner) Run(_ context.Context, _ string, args ...string) ([]byte, error) {
+	if len(args) < 6 || args[0] != "pr" || args[1] != "comment" {
+		return nil, fmt.Errorf("not a PR comment: %v", args)
+	}
+	if len(r.bodies)+1 == r.failAt {
+		return nil, errors.New("HTTP 502")
+	}
+	r.bodies = append(r.bodies, strings.TrimPrefix(args[5], "--body="))
+	return fmt.Appendf(nil, "https://github.com/acme/w/pull/42#issuecomment-%d\n", len(r.bodies)), nil
+}
+
+func TestPostRequest_PlainPostsACommentPerFileThenTheFinalOne(t *testing.T) {
 	var c PostRequest
 	c.Target("acme/w", "42")
 	c.SetDiff(inlineDiff)
-	run := &recordingRunner{out: "https://github.com/acme/w/pull/42#issuecomment-7\n"}
+	run := &commentsRunner{}
 	got, err := c.Post(t.Context(), run, inlineReview, "", DecisionPlain)
 	require.NoError(t, err)
-	require.Equal(t, Posted{URL: "https://github.com/acme/w/pull/42#issuecomment-7", Decision: DecisionPlain}, got)
-	require.Equal(t, "gh", run.name)
-	require.Equal(t, []string{"pr", "comment", "42", "--repo", "acme/w"}, run.args[:5], "an ordinary PR comment, not a review")
-	body := strings.TrimPrefix(run.args[5], "--body=")
-	require.Contains(t, body, "`search/serper/main.go:72`: Remove the commented-out code.", "every finding is in it, named by its place")
-	require.Contains(t, body, "`common/go/telemetry/telemetry.go:2`: Init has no tests.")
-	require.NotContains(t, body, "suggestion: search", "without its label")
-	require.NotContains(t, body, "###", "without headings")
+	require.Equal(t, Posted{URL: "https://github.com/acme/w/pull/42#issuecomment-3", Inline: 2, Decision: DecisionPlain, Final: true}, got)
+	require.Len(t, run.bodies, 3, "one comment per file, then the final comment")
+	require.Equal(t, "`search/serper/main.go:72`: Remove the commented-out code.\n\n`search/serper/main.go:300`: Off the diff, so it stays in the summary.",
+		run.bodies[0], "a file's findings, named by their place and without labels, on or off the diff")
+	require.Equal(t, "`common/go/telemetry/telemetry.go:2`: Init has no tests. Add focused tests for:\n- Init(ctx, nil)\n- the error path", run.bodies[1])
+	require.True(t, strings.HasPrefix(run.bodies[2], "Correlation-only"), "the final comment comes last: %q", run.bodies[2])
+	require.NotContains(t, run.bodies[2], "main.go:72", "findings are not repeated in it")
+	require.NotContains(t, run.bodies[2], "###", "without headings")
+	require.True(t, strings.HasSuffix(run.bodies[2], commentFooter))
+	require.NotContains(t, run.bodies[0], "Codeforge", "the footer is said once")
+}
+
+func TestPostRequest_PlainSaysHowFarItGot(t *testing.T) {
+	var c PostRequest
+	c.Target("acme/w", "42")
+	run := &commentsRunner{failAt: 2}
+	got, err := c.Post(t.Context(), run, inlineReview, "", DecisionPlain)
+	require.ErrorContains(t, err, "posted 1 of 2 file comments")
+	require.Equal(t, 1, got.Inline)
+	require.Equal(t, "https://github.com/acme/w/pull/42#issuecomment-1", got.URL, "what is already on the PR")
+
+	run = &commentsRunner{}
+	got, err = c.Post(t.Context(), run, "suggestion: a.go:1 — Use x.\n\nDecision: Comment", "", DecisionPlain)
+	require.NoError(t, err)
+	require.False(t, got.Final)
+	require.Equal(t, []string{"`a.go:1`: Use x." + commentFooter}, run.bodies, "with no final comment, the last file comment carries the footer")
+
+	run = &commentsRunner{}
+	_, err = c.Post(t.Context(), run, "Decision: Comment", "", DecisionPlain)
+	require.ErrorIs(t, err, ErrNoReviewText, "an empty review posts nothing, not a bare footer")
+	require.Empty(t, run.bodies)
+}
+
+func TestPostRequest_PlainFoldsFilesPastTheCapIntoTheFinalComment(t *testing.T) {
+	var c PostRequest
+	c.Target("acme/w", "42")
+	var review strings.Builder
+	for i := range MaxPlainFileComments + 2 {
+		fmt.Fprintf(&review, "suggestion: f%02d.go:1 — Fix f%02d.\n", i, i)
+	}
+	review.WriteString("\nShip it after the fixes.\n")
+	run := &commentsRunner{}
+	got, err := c.Post(t.Context(), run, review.String(), "", DecisionPlain)
+	require.NoError(t, err)
+	require.Equal(t, MaxPlainFileComments, got.Inline)
+	require.Len(t, run.bodies, MaxPlainFileComments+1)
+	last := run.bodies[MaxPlainFileComments]
+	require.True(t, strings.HasPrefix(last, "Ship it after the fixes.\n\n---\n\n`f10.go:1`: Fix f10.\n\n`f11.go:1`: Fix f11."+commentFooter),
+		"the files past the cap follow the reviewer's own words, which a cut never reaches first: %q", last)
+}
+
+func TestPostRequest_PlainSaysWhenTheFinalCommentFailed(t *testing.T) {
+	var c PostRequest
+	c.Target("acme/w", "42")
+	run := &commentsRunner{failAt: 3}
+	got, err := c.Post(t.Context(), run, inlineReview, LeadsHeader+"- `a.go:3` drops data\n", DecisionPlain)
+	require.ErrorContains(t, err, "posted 2 file comments; the final comment with the unconfirmed blocking leads is not posted")
+	require.Equal(t, Posted{URL: "https://github.com/acme/w/pull/42#issuecomment-2", Inline: 2, Decision: DecisionPlain}, got)
+
+	run = &commentsRunner{failAt: 2}
+	_, err = c.Post(t.Context(), run, inlineReview, "", DecisionPlain)
+	require.ErrorContains(t, err, "the comments on common/go/telemetry/telemetry.go and the final comment are not posted", "names what is still to post")
+}
+
+// deadlineRunner records how long each call had.
+type deadlineRunner struct{ left []time.Duration }
+
+func (r *deadlineRunner) Run(ctx context.Context, _ string, _ ...string) ([]byte, error) {
+	d, ok := ctx.Deadline()
+	if !ok {
+		return nil, errors.New("no deadline")
+	}
+	r.left = append(r.left, time.Until(d))
+	return []byte("https://github.com/acme/w/pull/42#issuecomment-1"), nil
+}
+
+// slowRunner fails like gh killed at its deadline.
+type slowRunner struct{}
+
+func (slowRunner) Run(ctx context.Context, _ string, _ ...string) ([]byte, error) {
+	<-ctx.Done()
+	return nil, errors.New("signal: killed")
+}
+
+func TestPostRequest_PlainWarnsATimedOutCommentMayBeUp(t *testing.T) {
+	var c PostRequest
+	c.Target("acme/w", "42")
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Millisecond)
+	defer cancel()
+	_, err := c.Post(ctx, slowRunner{}, inlineReview, "", DecisionPlain)
+	require.ErrorIs(t, err, ErrMayBePosted)
+}
+
+func TestPostRequest_PlainPostsNothingWhenTheLeadsDoNotFit(t *testing.T) {
+	var c PostRequest
+	c.Target("acme/w", "42")
+	run := &commentsRunner{}
+	_, err := c.Post(t.Context(), run, inlineReview, LeadsHeader+strings.Repeat("- `a.go:3` drops data\n", maxCommentBytes/20), DecisionPlain)
+	require.ErrorIs(t, err, ErrNoRoom)
+	require.Empty(t, run.bodies, "nothing goes up when the leads cannot")
+}
+
+func TestPostRequest_PlainGivesEveryCommentItsOwnTime(t *testing.T) {
+	var c PostRequest
+	c.Target("acme/w", "42")
+	run := &deadlineRunner{}
+	_, err := c.Post(t.Context(), run, inlineReview, "", DecisionPlain)
+	require.NoError(t, err)
+	require.Len(t, run.left, 3)
+	for _, left := range run.left {
+		require.Greater(t, left, PostCallLimit-time.Second, "a call never shares its time with the ones before it")
+		require.LessOrEqual(t, left, PostCallLimit)
+	}
 }
 
 func TestPostRequest_PostsInlineCommentsAsOneReview(t *testing.T) {

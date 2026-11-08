@@ -30,6 +30,17 @@ var (
 // leaves the post without time.
 const postLimit = 20 * time.Second
 
+// postBound is the time a post of decision gets in all: plain comments are one gh call each, every call bounded by
+// review.PostCallLimit, so the whole post has room for all of them. For plain comments it is only a backstop; the
+// limit that applies is each call's own. Once the user has picked how to post, Ctrl+C no longer stops it: a post cut
+// off between comments would leave half a review on the PR.
+func postBound(decision review.Decision) time.Duration {
+	if decision == review.DecisionPlain {
+		return review.PostCallLimit * (review.MaxPlainFileComments + 1)
+	}
+	return postLimit
+}
+
 // Where the confirmation is read from and whether there is a person to ask; tests replace both.
 var (
 	confirmIn  io.Reader = os.Stdin
@@ -137,15 +148,29 @@ func runShownReview(ctx context.Context, argv, env []string, limit time.Time, st
 		fmt.Fprintln(os.Stderr, "codeforge: cancelled, so the review was not posted.")
 		return nil
 	}
-	pctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), postLimit)
+	pctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), postBound(decision))
 	defer cancel()
 	posted, err := post.Post(pctx, review.ExecRunner{}, text, leads, decision)
+	if err != nil && posted.URL != "" {
+		// Part of it is on the PR: say so, so a rerun does not post it twice.
+		return fmt.Errorf("only part of the review was posted, up to %s; post the rest by hand, since running again posts it all again: %w", posted.URL, err)
+	}
+	if errors.Is(err, review.ErrMayBePosted) {
+		return fmt.Errorf("the review above may not have been posted: %w", err)
+	}
 	if err != nil {
 		return fmt.Errorf("the review above was not posted: %w", err)
 	}
 	switch {
 	case posted.Decision == review.DecisionPlain:
-		fmt.Fprintf(os.Stderr, "codeforge: posted the review as a plain PR comment %s\n", posted.URL)
+		var parts []string
+		if posted.Inline > 0 {
+			parts = append(parts, review.CountFileComments(posted.Inline))
+		}
+		if posted.Final {
+			parts = append(parts, "the final comment")
+		}
+		fmt.Fprintf(os.Stderr, "codeforge: posted the review as plain PR comments: %s %s\n", strings.Join(parts, " and "), posted.URL)
 	case posted.Fallback != nil:
 		fmt.Fprintf(os.Stderr, "codeforge: GitHub refused the review (%v); posted it as one plain comment, without its %s decision %s\n", posted.Fallback, decision.Label(), posted.URL)
 	case posted.Downgraded != nil:
@@ -158,7 +183,7 @@ func runShownReview(ctx context.Context, argv, env []string, limit time.Time, st
 }
 
 // The keys the review view offers besides moving around: post the review as one of the three decisions, or chat about
-// it, or as a plain PR comment that is no review at all. The user decides; the review's own decision is only marked as
+// it, or as plain PR comments that are no review at all. The user decides; the review's own decision is only marked as
 // the suggestion.
 const keyChat = "c"
 
@@ -171,7 +196,7 @@ var (
 
 // showReview shows a finished review on the terminal: as an accordion of its files when the forms helper is there,
 // else printed in full. The suggested decision sits on the final comment's row. It offers c to chat about the review
-// and, with ask, 1, 2 and 3 to post it as Approve, Comment or Request changes, and 4 as a plain PR comment; key is
+// and, with ask, 1, 2 and 3 to post it as Approve, Comment or Request changes, and 4 as plain PR comments; key is
 // the one pressed, "" for q or Ctrl+C. shown reports whether the view ran, so the keys were offered.
 func showReview(ctx context.Context, text string, decision review.Decision, leads string, raw []byte, ask bool) (key string, shown bool) {
 	st := codeStyleFor(ctx, os.Stdout)

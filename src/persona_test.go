@@ -4,6 +4,7 @@ package src
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/codeliter/codeforge/src/config"
@@ -42,6 +43,8 @@ func TestInstallPersonaSkill(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(got), "name: codeforge-persona")
 	require.Contains(t, string(got), "Short sentences.")
+	require.Less(t, strings.Index(string(got), clarityBaseline), strings.Index(string(got), "Short sentences."),
+		"the clarity baseline comes before the persona, which builds on it")
 }
 
 func TestInstallPersonaSkillHandlesEmptyPersona(t *testing.T) {
