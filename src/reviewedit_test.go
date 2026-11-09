@@ -518,7 +518,7 @@ func TestReviewView_SaysWhyItCannotPost(t *testing.T) {
 	t.Cleanup(func() { reviewPostNote = old })
 	reviewPostNote = noPostNote(false, false)
 	a := reviewView(codeStyle{width: 80}, nil, editableReview, "", review.DecisionComment, reviewRound{}, nil, false)
-	require.Contains(t, a.Intro, "run codeforge review with --comment")
+	require.Contains(t, a.Intro, "only a review of a pull request can be posted")
 	a = reviewView(codeStyle{width: 80}, nil, editableReview, "", review.DecisionComment, reviewRound{}, nil, true)
 	require.NotContains(t, a.Intro, "Posting is off", "a view that can post says nothing")
 	require.Contains(t, noPostNote(true, true), "could not be read")

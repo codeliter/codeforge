@@ -410,7 +410,7 @@ func noPostNote(enabled, unreadable bool) string {
 	if enabled && unreadable {
 		return "Posting is off for this round: the reviewer's verdicts on your earlier threads could not be read. Run the review again to post it."
 	}
-	return "Posting is off: run codeforge review with --comment to post this review."
+	return "Posting is off: only a review of a pull request can be posted. Review your branch's PR by its number."
 }
 
 // decisionColor colours a decision like the labels it follows from: Request changes as an issue, Approve as praise.

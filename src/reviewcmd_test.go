@@ -74,3 +74,27 @@ func TestClampFlag(t *testing.T) {
 		})
 	}
 }
+
+func TestCanPickInView(t *testing.T) {
+	oldStyled, oldAvail := stdoutStyled, accordionAvailable
+	t.Cleanup(func() { stdoutStyled, accordionAvailable = oldStyled, oldAvail })
+	tests := []struct {
+		name           string
+		styled, helper bool
+		rest           []string
+		want           bool
+	}{
+		{name: "the view, nothing asked of the run", styled: true, helper: true, want: true},
+		{name: "a script asks for --json", styled: true, helper: true, rest: []string{"--json"}},
+		{name: "headless still shows the view", styled: true, helper: true, rest: []string{"--headless"}, want: true},
+		{name: "no styled terminal", helper: true},
+		{name: "no forms helper", styled: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stdoutStyled = func() bool { return tt.styled }
+			accordionAvailable = func() bool { return tt.helper }
+			require.Equal(t, tt.want, canPickInView(tt.rest))
+		})
+	}
+}

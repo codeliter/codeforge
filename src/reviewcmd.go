@@ -119,6 +119,13 @@ func clampFlag(args []string, name string, limit int) []string {
 	return append(out, name, strconv.Itoa(value))
 }
 
+// canPickInView reports whether the review will be shown in the view, where the user picks how to post it: a terminal
+// that shows it styled, the forms helper to show it, and no --json asking for the run as it is. These are the
+// conditions runReviewEngine shows the view under.
+func canPickInView(rest []string) bool {
+	return !hasFlag(rest, "--json") && stdoutStyled() && accordionAvailable()
+}
+
 // reviewArgs turns `codeforge review [pr] [--repo owner/name] [empryo flags]` into an Empryo launch.
 // With no PR it reviews the current branch and uncommitted work against the base branch.
 func reviewArgs(ctx context.Context, bin string, rc config.ReviewConfig, judges []review.Judge, jurors jurorFactory, args []string) ([]string, error) {
@@ -236,6 +243,11 @@ func reviewArgs(ctx context.Context, bin string, rc config.ReviewConfig, judges 
 	post := review.PostOf(ctx)
 	if comment && post == nil {
 		return nil, errCommentUnavailable
+	}
+	if !comment && post != nil && canPickInView(rest) {
+		// In the review view nothing goes up until the user picks a decision, so a PR review can always be posted from
+		// there: --comment only matters where there is no view to pick in.
+		comment = true
 	}
 	if comment {
 		post.Target(repo, number)

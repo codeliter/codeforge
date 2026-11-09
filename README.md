@@ -68,9 +68,10 @@ decision. Enter or a click opens a file, `c` chats about it, `q` quits.
 
 | To | Use |
 | --- | --- |
-| Post it as a GitHub review | `--comment`, then `1` Approve, `2` Comment or `3` Request changes |
-| Post comments you can delete later | `--comment`, then `4` |
+| Post it as a GitHub review | `p`, then `1` Approve, `2` Comment or `3` Request changes |
+| Post comments you can delete later | `p`, then `4` |
 | Post the suggested decision without asking | `--comment=yes` |
+| Post from a script or without the view | `--comment`, then answer the question |
 | Review your branch and run its tests | `codeforge gate` |
 
 On a PR you reviewed before, codeforge follows up: a verdict on each of your open threads, replies and resolves
