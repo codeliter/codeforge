@@ -72,6 +72,8 @@ func TestReviseReview_TheReviewerAnswersAndRevises(t *testing.T) {
 	require.Contains(t, prompt, "1. About `a.go:3` (issue (blocking): a.go:3 — AlwaysSample sends every span): Still blocking?")
 	require.Contains(t, prompt, "2. About the whole review: You missed the retry path.")
 	require.Contains(t, prompt, "do not bring back what they deleted")
+	require.Contains(t, prompt, "is not a problem and the explanation holds, drop that finding")
+	require.Contains(t, prompt, "suggest Approve")
 	require.NotContains(t, prompt, "rename h", "the reviewer sees the review with the user's changes")
 	require.NotContains(t, round.Text, "codeforge-answers", "the answers never become review text")
 	require.Equal(t, map[string]noteMark{

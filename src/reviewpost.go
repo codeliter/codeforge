@@ -177,9 +177,9 @@ func runShownReview(ctx context.Context, argv, env []string, limit time.Time, st
 		walk := walkthroughStarter(ctx, argv, env)
 		defer walk.stop()
 		key, changes, shown := showReview(ctx, display, decision, dropCoveredLeads(leads, text), out.Bytes(), ask, threads, round)
-		for key == forms.KeySend || key == keyWalk {
+		for key == forms.KeySend || key == keyWalk || key == keyPreview {
 			leads = withoutDeletedLeads(leads, changes) // a lead the user deleted stays deleted, round after round
-			if key == keyWalk {
+			if key == keyWalk || key == keyPreview {
 				// The walkthrough, then the review again. Rewrites and deletions marked so far are kept, as written.
 				if len(changes) > 0 {
 					text, _, _ = applyEdits(text, changes)
@@ -188,7 +188,11 @@ func runShownReview(ctx context.Context, argv, env []string, limit time.Time, st
 						decision = review.DecisionRequestChanges // never suggest approving past an open blocking thread
 					}
 				}
-				showWalkthrough(ctx, walk)
+				if key == keyWalk {
+					showWalkthrough(ctx, walk)
+				} else {
+					showPreview(ctx, post, text, dropCoveredLeads(leads, text), decision)
+				}
 				key, changes, shown = showReview(ctx, display, decision, dropCoveredLeads(leads, text), out.Bytes(), ask, threads, round)
 				continue
 			}
@@ -287,10 +291,13 @@ func runShownReview(ctx context.Context, argv, env []string, limit time.Time, st
 		if posted.Inline > 0 {
 			parts = append(parts, review.CountLineComments(posted.Inline))
 		}
+		if posted.OnFile > 0 {
+			parts = append(parts, plural(posted.OnFile, "comment")+" on files")
+		}
 		if posted.Final {
 			parts = append(parts, "the final comment")
 		}
-		fmt.Fprintf(os.Stderr, "codeforge: posted the review as separate comments you can delete one by one: %s %s\n", strings.Join(parts, " and "), posted.URL)
+		fmt.Fprintf(os.Stderr, "codeforge: posted the review as separate comments you can delete one by one: %s %s\n", strings.Join(parts, ", "), posted.URL)
 		if n := len(posted.Refused); n > 0 {
 			fmt.Fprintf(os.Stderr, "codeforge: GitHub would not put %s on its line (%v); they are in the final comment, named by their place\n",
 				review.CountLineComments(n), posted.Refused[0])
@@ -418,6 +425,9 @@ func reviewView(st codeStyle, code codeSource, text, leads string, decision revi
 			}
 			a.Keys = append(a.Keys, forms.Action{Key: k, Label: label, Group: group, Keeps: true})
 		}
+	}
+	if ask {
+		a.Keys = append(a.Keys, forms.Action{Key: keyPreview, Label: "preview", Group: other, Keeps: true, Footer: true})
 	}
 	a.Keys = append(a.Keys, forms.Action{Key: keyChat, Label: "chat about it", Group: other},
 		// Keeps: the user's rewrites and deletions stay with the review while they read the walkthrough.

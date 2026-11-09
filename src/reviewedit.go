@@ -501,7 +501,10 @@ func revisionPrompt(text string, questions []question, userChanged bool) string 
 	b.WriteString("Before posting, the user read your review and asks you the questions below. Answer each one plainly, " +
 		"as their colleague. Then revise the review wherever an answer changes it: reword a finding, change its label " +
 		"(for example from issue (blocking) to suggestion when it does not block), drop it, or add a new finding with its " +
-		"place. Leave everything else exactly as it is, and keep the Decision line true to the findings that remain.\n")
+		"place. When the user explains why a non-blocking finding (a suggestion, nit, optional or fyi) is not a problem and " +
+		"the explanation holds, drop that finding. Leave everything else exactly as it is, and keep the Decision line true " +
+		"to the findings that remain: when nothing blocking is left and what remains is only non-blocking, suggest Approve, " +
+		"and say in the final comment that you left non-blocking comments.\n")
 	if userChanged {
 		b.WriteString("The user has already rewritten or deleted some findings; the review below has their changes. " +
 			"Those are final: keep their wording and do not bring back what they deleted.\n")

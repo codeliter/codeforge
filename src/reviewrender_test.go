@@ -171,7 +171,7 @@ func TestRunReviewEngine_TheUserPicksTheDecisionThatIsPosted(t *testing.T) {
 	require.Equal(t, []forms.Action{
 		{Key: "1", Label: "post as Approve (suggested)", Group: "Post as", Keeps: true}, {Key: "2", Label: "post as Comment", Group: "Post as", Keeps: true},
 		{Key: "3", Label: "post as Request changes", Group: "Post as", Keeps: true}, {Key: "4", Label: "post as separate comments (deletable)", Group: "Or", Keeps: true},
-		{Key: "c", Label: "chat about it", Group: "Or"}, {Key: "w", Label: "walkthrough", Group: "Or", Keeps: true, Footer: true},
+		{Key: "v", Label: "preview", Group: "Or", Keeps: true, Footer: true}, {Key: "c", Label: "chat about it", Group: "Or"}, {Key: "w", Label: "walkthrough", Group: "Or", Keeps: true, Footer: true},
 	}, shown.Keys)
 	require.Contains(t, out, "  a.go  1 suggestion · 1 nitpick\n", "a recap stays in the terminal")
 	posted, err := os.ReadFile(f.ghArgs)
@@ -293,7 +293,7 @@ func TestRunReviewEngine_FourPostsDeletableLineCommentsAndNoReview(t *testing.T)
 	require.Contains(t, string(posted), `{"path":"a.go","line":2,"side":"RIGHT","body":"tidy","commit_id":"abc123"}`)
 	require.Contains(t, string(posted), "pr comment 42 --repo acme/w --body=Adds x as the description says.", "then the final comment")
 	require.NotContains(t, string(posted), "/reviews", "no review")
-	require.Contains(t, stderr, "posted the review as separate comments you can delete one by one: 2 line comments and the final comment")
+	require.Contains(t, stderr, "posted the review as separate comments you can delete one by one: 2 line comments, the final comment")
 }
 
 func TestRunReviewEngine_OnlyCOpensTheChat(t *testing.T) {

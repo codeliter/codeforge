@@ -514,17 +514,19 @@ func TestPostRequest_PlainPutsEachFindingOnItsLineThenTheFinalComment(t *testing
 	run := &plainRunner{}
 	got, err := plainRequest("abc123").Post(t.Context(), run, inlineReview, "", DecisionPlain)
 	require.NoError(t, err)
-	require.Equal(t, Posted{URL: "https://github.com/acme/w/pull/42#issuecomment-3", Inline: 2, Decision: DecisionPlain, Final: true}, got)
+	require.Equal(t, Posted{URL: "https://github.com/acme/w/pull/42#issuecomment-4", Inline: 2, OnFile: 1, Decision: DecisionPlain, Final: true}, got)
 	require.Zero(t, run.heads, "the head from the brief is used")
-	require.Len(t, run.calls, 3, "a comment on each finding's line, then the final comment")
+	require.Len(t, run.calls, 4, "a comment on each finding's line, one on the file for the finding off the diff, then the final comment")
+	require.Equal(t, "search/serper/main.go", run.calls[2].Path)
+	require.Equal(t, "Line 300: Off the diff, so it stays in the summary.", run.calls[2].Body, "off the diff in a changed file: on the file")
 	require.Equal(t, plainCall{Path: "search/serper/main.go", Line: 72, CommitID: "abc123", Side: "RIGHT", Body: "Remove the commented-out code."}, run.calls[0],
 		"a comment on its line, so GitHub shows the code above it, and without its label")
 	require.Equal(t, plainCall{Path: "common/go/telemetry/telemetry.go", Line: 2, CommitID: "abc123", Side: "RIGHT",
 		Body: "Init has no tests. Add focused tests for:\n- Init(ctx, nil)\n- the error path"}, run.calls[1])
-	final := run.calls[2]
+	final := run.calls[3]
 	require.Empty(t, final.Path, "the final comment is an ordinary PR comment")
 	require.True(t, strings.HasPrefix(final.Body, "Correlation-only"), "the final comment comes last: %q", final.Body)
-	require.Contains(t, final.Body, "`search/serper/main.go:300`: Off the diff, so it stays in the summary.", "a finding off the diff goes in it")
+	require.NotContains(t, final.Body, "main.go:300", "a finding on a changed file never goes in it")
 	require.NotContains(t, final.Body, "main.go:72", "findings on lines are not repeated in it")
 	require.NotContains(t, final.Body, "###", "without headings")
 	require.True(t, strings.HasSuffix(final.Body, commentFooter))
@@ -544,10 +546,11 @@ func TestPostRequest_PlainSaysHowFarItGot(t *testing.T) {
 	got, err := plainRequest("abc123").Post(t.Context(), run, inlineReview, "", DecisionPlain)
 	require.NoError(t, err)
 	require.Equal(t, 1, got.Inline)
-	require.Len(t, got.Refused, 1)
+	require.Equal(t, 2, got.OnFile)
+	require.Empty(t, got.Refused)
 	require.True(t, got.Final)
-	require.Contains(t, run.calls[len(run.calls)-1].Body, "---\n\n`common/go/telemetry/telemetry.go:2`: Init has no tests.",
-		"a finding GitHub will not put on its line joins the final comment, named by its place")
+	require.Contains(t, run.calls[2].Body, "Line 2: Init has no tests.", "a finding GitHub will not put on its line goes on its file")
+	require.NotContains(t, run.calls[len(run.calls)-1].Body, "telemetry.go:2", "not into the final comment")
 
 	run = &plainRunner{}
 	got, err = plainRequest("abc123").Post(t.Context(), run, "suggestion: search/serper/main.go:72 — Use x.\n\nDecision: Comment", "", DecisionPlain)
@@ -585,7 +588,7 @@ func TestPostRequest_PlainFoldsFindingsPastTheCapIntoTheFinalComment(t *testing.
 func TestPostRequest_PlainStopsOnAnErrorThatIsNoRefusal(t *testing.T) {
 	run := &plainRunner{failAt: 2, failWith: "HTTP 502"}
 	got, err := plainRequest("abc123").Post(t.Context(), run, inlineReview, "", DecisionPlain)
-	require.ErrorContains(t, err, "posted 1 line comment; the comments on common/go/telemetry/telemetry.go:2 and the final comment are not posted",
+	require.ErrorContains(t, err, "posted 1 line comment; the comments on common/go/telemetry/telemetry.go:2, search/serper/main.go:300 and the final comment are not posted",
 		"a 502 may have created the comment, so it is not posted again in the final one")
 	require.Empty(t, got.Refused)
 	require.Len(t, run.calls, 1)
@@ -615,10 +618,11 @@ func TestFitComment_ACutSuggestionIsNoLongerOne(t *testing.T) {
 }
 
 func TestPostRequest_PlainSaysWhenTheFinalCommentFailed(t *testing.T) {
-	run := &plainRunner{failAt: 3}
+	run := &plainRunner{failAt: 4}
 	got, err := plainRequest("abc123").Post(t.Context(), run, inlineReview, LeadsHeader+"- `a.go:3` drops data\n", DecisionPlain)
-	require.ErrorContains(t, err, "posted 2 line comments; the final comment with the unconfirmed blocking leads is not posted")
-	require.Equal(t, Posted{URL: "https://github.com/acme/w/pull/42#discussion_r2", Inline: 2, Decision: DecisionPlain}, got)
+	require.ErrorContains(t, err, "posted 2 line comments and 1 file comment; the final comment with the unconfirmed blocking leads is not posted")
+	require.Equal(t, Posted{URL: "https://github.com/acme/w/pull/42#discussion_r3", Inline: 2, OnFile: 1, Decision: DecisionPlain}, got,
+		"the last comment that went up, the one on the file")
 }
 
 // deadlineRunner records how long each call had.
@@ -659,7 +663,7 @@ func TestPostRequest_PlainGivesEveryCommentItsOwnTime(t *testing.T) {
 	run := &deadlineRunner{}
 	_, err := plainRequest("abc123").Post(t.Context(), run, inlineReview, "", DecisionPlain)
 	require.NoError(t, err)
-	require.Len(t, run.left, 3)
+	require.Len(t, run.left, 4)
 	for _, left := range run.left {
 		require.Greater(t, left, PostCallLimit-time.Second, "a call never shares its time with the ones before it")
 		require.LessOrEqual(t, left, PostCallLimit)
@@ -859,4 +863,14 @@ func (r *acceptingRunner) Run(_ context.Context, _ string, args ...string) ([]by
 		}
 	}
 	return []byte(`{"html_url":"https://github.com/o/r/pull/7#r1","id":9}`), nil
+}
+
+func TestPostRequest_PlainWithOnlyAFileCommentCarriesTheFooter(t *testing.T) {
+	run := &plainRunner{}
+	got, err := plainRequest("abc123").Post(t.Context(), run, "suggestion: search/serper/main.go:300 — X.\n\nDecision: Comment", "", DecisionPlain)
+	require.NoError(t, err)
+	require.Equal(t, 1, got.OnFile)
+	require.NotEmpty(t, got.URL, "what is up says where")
+	require.Len(t, run.calls, 1)
+	require.Equal(t, "Line 300: X."+commentFooter, run.calls[0].Body)
 }
