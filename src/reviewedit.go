@@ -563,15 +563,22 @@ func reviewTurn(argv, env []string) func(context.Context, string) (string, error
 		if id == "" || len(argv) == 0 {
 			return "", errSessionMissing
 		}
-		args := withoutPrompt(dropFlag(dropFlag(argv[1:], "--session-id"), "--session"))
-		reply, err := resumedTurn(ctx, append(append([]string{argv[0], "--session", id}, args...), prompt), env)
+		// A review runs inside the read-only sandbox (sandbox-exec -p PROFILE empryo ...): the turn keeps that wrapper
+		// and the engine behind it, and changes only the engine's own arguments.
+		wrapper, engine := sandboxPrefix(argv)
+		if len(engine) == 0 {
+			return "", errSessionMissing
+		}
+		bin := slices.Concat(wrapper, engine[:1])
+		args := withoutPrompt(dropFlag(dropFlag(engine[1:], "--session-id"), "--session"))
+		reply, err := resumedTurn(ctx, slices.Concat(bin, []string{"--session", id}, args, []string{prompt}), env)
 		var exit *EngineExitError
 		if err == nil || ctx.Err() != nil || !errors.As(err, &exit) || exit.Code != exitUsage {
 			return reply, err // done, stopped by the user, or failed for a reason a plainer call does not change
 		}
 		// A flag the review ran with may not suit a resumed turn: try once more with only what a turn needs, the
 		// review's profile, mode and model, so a question still gets its answer.
-		minimal := []string{argv[0], "--session", id, "--headless", "--json"}
+		minimal := slices.Concat(bin, []string{"--session", id, "--headless", "--json"})
 		for _, f := range []string{"--profile", "--mode", "--model"} {
 			if v := flagValue(argv, f); v != "" {
 				minimal = append(minimal, f, v)
@@ -582,6 +589,16 @@ func reviewTurn(argv, env []string) func(context.Context, string) (string, error
 		}
 		return "", err
 	}
+}
+
+// sandboxPrefix splits argv into the sandbox wrapper it runs under, if any (sandbox-exec -p PROFILE), and the command
+// the wrapper runs.
+func sandboxPrefix(argv []string) (wrapper, command []string) {
+	const wrapperArgs = 3 // sandbox-exec, -p, the profile
+	if len(argv) >= wrapperArgs && argv[0] == sandboxExec && argv[1] == "-p" {
+		return argv[:wrapperArgs], argv[wrapperArgs:]
+	}
+	return nil, argv
 }
 
 // exitUsage is the status an engine exits with when its command line is wrong (EX_USAGE): the one failure a turn with

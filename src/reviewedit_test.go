@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -588,4 +589,35 @@ func TestCompactLead_TheFixIsKeptHoweverItIsWritten(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.want, func(t *testing.T) { require.Equal(t, tt.want, compactLead(tt.in)) })
 	}
+}
+
+func TestSandboxPrefix(t *testing.T) {
+	wrapper, cmd := sandboxPrefix([]string{sandboxExec, "-p", "(version 1)", "empryo", "--session-id", "s1", "brief"})
+	require.Equal(t, []string{sandboxExec, "-p", "(version 1)"}, wrapper)
+	require.Equal(t, []string{"empryo", "--session-id", "s1", "brief"}, cmd)
+	wrapper, cmd = sandboxPrefix([]string{"empryo", "brief"})
+	require.Nil(t, wrapper)
+	require.Equal(t, []string{"empryo", "brief"}, cmd)
+}
+
+func TestReviewTurn_KeepsTheSandboxAroundTheEngine(t *testing.T) {
+	dir := t.TempDir()
+	engine := filepath.Join(dir, "engine")
+	got := filepath.Join(dir, "args")
+	require.NoError(t, os.WriteFile(engine, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > "+got+"\nprintf '%s' '{\"output\":\"ok\"}'\n"), 0o700))
+	// A stand-in for sandbox-exec: the engine is run as the wrapper would run it, after its own arguments.
+	turn := func(ctx context.Context, argv, env []string) (string, error) {
+		wrapper, cmd := sandboxPrefix(argv)
+		require.Equal(t, []string{sandboxExec, "-p", "(profile)"}, wrapper, "the wrapper comes first, untouched")
+		return resumedTurn(ctx, cmd, env)
+	}
+	argv := []string{sandboxExec, "-p", "(profile)", engine, "--profile", "codeforge-review", "--session-id", "rev-1", "brief"}
+	wrapper, cmd := sandboxPrefix(argv)
+	require.NotEmpty(t, wrapper)
+	reply, err := turn(t.Context(), slices.Concat(wrapper, cmd[:1], []string{"--session", "rev-1"}, withoutPrompt(dropFlag(cmd[1:], "--session-id")), []string{"q"}), os.Environ())
+	require.NoError(t, err)
+	require.Equal(t, "ok", reply)
+	args, err := os.ReadFile(got)
+	require.NoError(t, err)
+	require.Equal(t, "--session\nrev-1\n--profile\ncodeforge-review\nq\n", string(args))
 }
