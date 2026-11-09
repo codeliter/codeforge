@@ -1,20 +1,27 @@
 package src
 
 import (
+	"bytes"
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
+	"github.com/codeliter/codeforge/src/effort"
 	"github.com/codeliter/codeforge/src/forms"
+	"github.com/codeliter/codeforge/src/review"
 )
 
 // A walkthrough is the reviewer's tour of the change, for whoever reads the review and does not know the change yet:
 // a short overview, then the places to read in order, each with what that code does and how it fits. It comes from one
-// more turn of the review's own session, so it knows what the reviewer read, and is shown with the code of each stop.
+// more turn in a fork of the review's session, so it knows what the reviewer read; it is written in the background
+// while the user reads the review, and shown with the code of each stop.
 
 // keyWalk opens the walkthrough from the review view.
 const keyWalk = "w"
@@ -220,25 +227,107 @@ func walkthroughText(w walkthrough) string {
 	return b.String()
 }
 
-// showWalkthrough asks the reviewer for the walkthrough, once per review (cached in *w), and shows it. A failure is
-// said on the terminal and the review opens again as it was.
-func showWalkthrough(ctx context.Context, w **walkthrough, turn func(context.Context, string) (string, error)) {
-	if *w == nil {
-		fmt.Fprintln(os.Stderr, "codeforge: the reviewer is writing a walkthrough of the change...")
-		reply, err := turn(ctx, walkthroughPrompt())
-		if err == nil {
-			var got walkthrough
-			if got, err = parseWalkthrough(reply); err == nil {
-				*w = &got
-			}
+// walkJob is a walkthrough being written in the background while the user reads the review, so w opens it at once.
+type walkJob struct {
+	done   chan struct{}
+	w      walkthrough
+	err    error
+	cancel context.CancelFunc
+}
+
+// startWalkthrough has the reviewer write the walkthrough in the background, in a fork of the review's session: it
+// knows what the review read, and the review's own session stays free for the user's questions and the chat. It is
+// bounded by revisionLimit and stopped by stop.
+func startWalkthrough(ctx context.Context, argv, env []string) *walkJob {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), revisionLimit)
+	job := &walkJob{done: make(chan struct{}), cancel: cancel}
+	fork, err := forkArgv(argv, walkthroughPrompt())
+	if err != nil {
+		job.err = err
+		close(job.done)
+		return job
+	}
+	go func() {
+		defer close(job.done)
+		out, err := runFork(ctx, fork, env)
+		var exit *exec.ExitError
+		if errors.As(err, &exit) && exit.ExitCode() == exitUsage && ctx.Err() == nil {
+			// A flag the review ran with may not suit a fork: once more with only what a turn needs, as reviewTurn does.
+			out, err = runFork(ctx, minimalFork(argv, walkthroughPrompt()), env)
 		}
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "codeforge: no walkthrough: "+err.Error()+".")
+			job.err = fmt.Errorf("the reviewer could not write it: %w", err)
 			return
 		}
+		reply, err := review.EngineOutput(out)
+		if err == nil {
+			job.w, err = parseWalkthrough(reply)
+		}
+		job.err = err
+	}()
+	return job
+}
+
+// runFork runs one forked turn and returns what the engine printed; a failure ends with the engine's own reason.
+func runFork(ctx context.Context, argv, env []string) ([]byte, error) {
+	var stderr bytes.Buffer
+	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	cmd.Env, cmd.Stderr = env, &stderr
+	effort.Bound(cmd) // the engine and all it starts die together when the job stops
+	out, err := cmd.Output()
+	effort.Reap(cmd)
+	if err != nil {
+		return nil, fmt.Errorf("%w (%s)", err, lastLine(stderr.String()))
+	}
+	return out, nil
+}
+
+// minimalFork is a fork with only the flags a turn needs: the review's sandbox, profile, mode and model.
+func minimalFork(argv []string, prompt string) []string {
+	wrapper, engine := sandboxPrefix(argv)
+	out := slices.Concat(wrapper, engine[:1], []string{"--fork", cmp.Or(flagValue(argv, "--session-id"), flagValue(argv, "--session")), "--headless", "--json"})
+	for _, f := range []string{"--profile", "--mode", "--model"} {
+		if v := flagValue(argv, f); v != "" {
+			out = append(out, f, v)
+		}
+	}
+	return append(out, prompt)
+}
+
+// walkthroughStarter starts the walkthrough for a review; tests whose engines record each call replace it.
+var walkthroughStarter = startWalkthrough
+
+// stop ends the background turn if it is still running.
+func (j *walkJob) stop() { j.cancel() }
+
+// forkArgv is the review's command line turned into a turn in a fork of its session: the sandbox it ran in and its
+// flags kept, its session named with --fork, and prompt in place of the review's own.
+func forkArgv(argv []string, prompt string) ([]string, error) {
+	id := cmp.Or(flagValue(argv, "--session-id"), flagValue(argv, "--session"))
+	wrapper, engine := sandboxPrefix(argv)
+	if id == "" || len(engine) == 0 {
+		return nil, errSessionMissing
+	}
+	args := withoutPrompt(dropFlag(dropFlag(engine[1:], "--session-id"), "--session"))
+	args = slices.DeleteFunc(args, func(a string) bool { return a == "--save-session" }) // the fork is thrown away
+	return slices.Concat(wrapper, engine[:1], []string{"--fork", id}, args, []string{prompt}), nil
+}
+
+// showWalkthrough shows the walkthrough job writes, waiting for it when it is not done yet. A failure is said on the
+// terminal, and the review opens again as it was.
+func showWalkthrough(ctx context.Context, job *walkJob) {
+	select {
+	case <-job.done:
+	default:
+		fmt.Fprintln(os.Stderr, "codeforge: the reviewer is finishing the walkthrough...")
+		<-job.done
+	}
+	if job.err != nil {
+		fmt.Fprintln(os.Stderr, "codeforge: no walkthrough: "+job.err.Error()+".")
+		return
 	}
 	st := codeStyleFor(ctx, os.Stdout)
-	a := walkthroughView(**w, st, reviewCode(ctx, st, walkthroughText(**w)))
+	a := walkthroughView(job.w, st, reviewCode(ctx, st, walkthroughText(job.w)))
 	if _, _, err := showAccordion("walkthrough", a); err != nil && !errors.Is(err, forms.ErrAborted) {
 		fmt.Fprintln(os.Stderr, "codeforge: could not open the walkthrough:", err)
 	}

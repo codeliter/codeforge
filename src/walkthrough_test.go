@@ -1,10 +1,12 @@
 package src
 
 import (
-	"context"
-	"errors"
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -49,32 +51,50 @@ func TestWalkthroughView(t *testing.T) {
 	require.Equal(t, []string{"app/Games/Ludo/Support/LudoBoard.php", "app/Games/Ludo/LudoHandler.php", "resources/js/Components/Session/Stage/LudoStage.vue"}, findingPaths(walkthroughText(w)))
 }
 
-func TestShowWalkthrough_AsksOnceAndSaysWhenItFails(t *testing.T) {
+func TestStartWalkthrough_WritesItInAForkInTheBackground(t *testing.T) {
+	dir := t.TempDir()
+	engine, got := filepath.Join(dir, "engine"), filepath.Join(dir, "args")
+	reply, err := json.Marshal(map[string]string{"output": walkReply})
+	require.NoError(t, err)
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + got + "\nprintf '%s' '" + strings.ReplaceAll(string(reply), "'", "'\\''") + "'\n"
+	require.NoError(t, os.WriteFile(engine, []byte(script), 0o700))
+	job := startWalkthrough(t.Context(), []string{engine, "--profile", "codeforge-review", "--session-id", "rev-1", "--save-session", "--headless", "brief"}, os.Environ())
+	defer job.stop()
+	<-job.done
+	require.NoError(t, job.err)
+	require.Len(t, job.w.Stops, 3)
+	args, err := os.ReadFile(got)
+	require.NoError(t, err)
+	require.Equal(t, "--fork\nrev-1\n--profile\ncodeforge-review\n--headless\n"+walkthroughPrompt()+"\n", string(args),
+		"a fork of the review's session, so the session itself stays free for questions and the chat")
+
 	old := showAccordion
 	t.Cleanup(func() { showAccordion = old })
 	shown := 0
 	showAccordion = func(string, forms.Accordion) (string, []forms.Change, error) { shown++; return "", nil, nil }
-	turns := 0
-	turn := func(_ context.Context, p string) (string, error) {
-		turns++
-		require.Contains(t, p, "not the review")
-		return walkReply, nil
-	}
-	var w *walkthrough
-	showWalkthrough(t.Context(), &w, turn)
-	showWalkthrough(t.Context(), &w, turn)
-	require.Equal(t, 1, turns, "the walkthrough is written once per review")
-	require.Equal(t, 2, shown)
+	showWalkthrough(t.Context(), job)
+	showWalkthrough(t.Context(), job)
+	require.Equal(t, 2, shown, "once written, it opens at once, as often as asked")
+}
 
-	var none *walkthrough
-	_, stderr, err := captured(t, func() error {
-		showWalkthrough(t.Context(), &none, func(context.Context, string) (string, error) { return "", errors.New("down") }) //nolint:err113 // a stand-in failure
-		return nil
-	})
+func TestStartWalkthrough_StopEndsTheTurnAndAFailureIsSaid(t *testing.T) {
+	dir := t.TempDir()
+	engine := filepath.Join(dir, "engine")
+	require.NoError(t, os.WriteFile(engine, []byte("#!/bin/sh\nsleep 30\n"), 0o700))
+	job := startWalkthrough(t.Context(), []string{engine, "--session-id", "rev-1", "brief"}, os.Environ())
+	start := time.Now()
+	job.stop()
+	<-job.done
+	require.Less(t, time.Since(start), 5*time.Second, "stopping kills the engine")
+	require.Error(t, job.err)
+
+	_, stderr, err := captured(t, func() error { showWalkthrough(t.Context(), job); return nil })
 	require.NoError(t, err)
-	require.Contains(t, stderr, "no walkthrough: down")
-	require.Nil(t, none)
-	require.True(t, strings.Contains(walkthroughPrompt(), "path:line"))
+	require.Contains(t, stderr, "no walkthrough:")
+
+	none := startWalkthrough(t.Context(), []string{engine, "brief"}, os.Environ())
+	<-none.done
+	require.ErrorIs(t, none.err, errSessionMissing, "with no session there is nothing to fork")
 }
 
 func TestParseWalkthrough_Requirements(t *testing.T) {

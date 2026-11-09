@@ -173,8 +173,10 @@ func runShownReview(ctx context.Context, argv, env []string, limit time.Time, st
 		var round reviewRound
 		// A lead the review makes as a blocking finding of its own is left out, against the review as it reads now: one
 		// the user's edits have left uncovered shows, and is posted, again.
+		// The walkthrough is written while the user reads the review, so w opens it at once.
+		walk := walkthroughStarter(ctx, argv, env)
+		defer walk.stop()
 		key, changes, shown := showReview(ctx, display, decision, dropCoveredLeads(leads, text), out.Bytes(), ask, threads, round)
-		var walk *walkthrough
 		for key == forms.KeySend || key == keyWalk {
 			if key == keyWalk {
 				// The walkthrough, then the review again. Rewrites and deletions marked so far are kept, as written.
@@ -185,7 +187,7 @@ func runShownReview(ctx context.Context, argv, env []string, limit time.Time, st
 						decision = review.DecisionRequestChanges // never suggest approving past an open blocking thread
 					}
 				}
-				showWalkthrough(ctx, &walk, reviewTurn(argv, env))
+				showWalkthrough(ctx, walk)
 				key, changes, shown = showReview(ctx, display, decision, dropCoveredLeads(leads, text), out.Bytes(), ask, threads, round)
 				continue
 			}

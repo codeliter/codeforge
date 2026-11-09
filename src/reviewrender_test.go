@@ -73,7 +73,14 @@ func onTerminal(t *testing.T, accordion bool) {
 	oldStyled, oldAvail := stdoutStyled, accordionAvailable
 	stdoutStyled = func() bool { return true }
 	accordionAvailable = func() bool { return accordion }
-	t.Cleanup(func() { stdoutStyled, accordionAvailable = oldStyled, oldAvail })
+	// The background walkthrough would be one more engine call beside the ones a test counts: it is never started here.
+	oldWalk := walkthroughStarter
+	walkthroughStarter = func(context.Context, []string, []string) *walkJob {
+		job := &walkJob{done: make(chan struct{}), err: errNoWalkthrough, cancel: func() {}}
+		close(job.done)
+		return job
+	}
+	t.Cleanup(func() { stdoutStyled, accordionAvailable, walkthroughStarter = oldStyled, oldAvail, oldWalk })
 }
 
 // captured runs fn with standard output and error going to pipes and returns what each received.
