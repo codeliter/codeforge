@@ -132,6 +132,8 @@ type Action struct {
 	// Keeps says the key takes the marked rewrites and deletions with it, to apply to what it posts. A key without it
 	// does nothing with them, so the view warns before it drops them.
 	Keeps bool `json:"keeps,omitempty"`
+	// Footer lists the key in the view's own key line too, not only among the ways to finish.
+	Footer bool `json:"footer,omitempty"`
 }
 
 // Section is one row of an Accordion: its title and summary on the row, its body under it while it is open.

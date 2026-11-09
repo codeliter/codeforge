@@ -56,6 +56,9 @@ type accordion struct {
 	// Enter starts a new line and ctrl+s keeps the text.
 	multiline bool
 	area      textarea.Model
+	// areaTop is the first line of the rewrite shown in the box: the textarea scrolls as its own view does, and keeps
+	// no way to ask, so a click can be placed on the line under it.
+	areaTop int
 	// notice is a line that asks for attention, and armed the key that, pressed again, goes ahead past it.
 	notice string
 	armed  string
@@ -127,9 +130,11 @@ func (m *accordion) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, m.key(msg.String())
 	case tea.MouseMsg:
-		if !m.typing {
-			m.mouse(msg)
+		if m.typing {
+			m.clickInput(msg)
+			return m, nil
 		}
+		m.mouse(msg)
 	}
 	return m, nil
 }
@@ -413,6 +418,7 @@ func (m *accordion) startTyping(target forms.Change, text string) {
 		m.area.SetHeight(min(areaMaxLines, max(areaMinLines, strings.Count(text, "\n")+areaSpareLines)))
 		m.area.Placeholder = "Write it as it should read"
 		m.area.Focus()
+		m.areaTop = 0
 		return
 	}
 	m.input.SetValue(text)
@@ -470,7 +476,89 @@ func (m *accordion) typeAreaKey(msg tea.KeyMsg) tea.Cmd {
 	}
 	var cmd tea.Cmd
 	m.area, cmd = m.area.Update(msg)
+	m.followArea()
 	return cmd
+}
+
+// areaRow is the row the textarea's cursor is on, counting the rows its long lines wrap onto.
+func (m *accordion) areaRow() int {
+	c := m.area // a copy: moving it leaves the real cursor where it is
+	row := 0
+	for range areaLimitFactor * inputLimit {
+		if c.Line() == 0 && c.LineInfo().RowOffset == 0 {
+			break
+		}
+		c.CursorUp()
+		row++
+	}
+	return row
+}
+
+// followArea scrolls areaTop as the textarea scrolls its own view: just far enough that the cursor's row shows.
+func (m *accordion) followArea() {
+	row, height := m.areaRow(), m.area.Height()
+	switch {
+	case row < m.areaTop:
+		m.areaTop = row
+	case row >= m.areaTop+height:
+		m.areaTop = row - height + 1
+	}
+}
+
+// clickInput puts the cursor where the text box was clicked; any other click while typing does nothing.
+func (m *accordion) clickInput(msg tea.MouseMsg) {
+	if msg.Action != tea.MouseActionPress || msg.Button != tea.MouseButtonLeft {
+		return
+	}
+	// The box sits under the view and a blank line: its top border, then its text rows, each opening with "│ ".
+	row, col := msg.Y-(m.visible()+1)-1, msg.X-boxSides
+	if m.multiline {
+		if row < 0 || row >= m.area.Height() || col < 0 {
+			return
+		}
+		target, now := m.areaTop+row, m.areaRow()
+		for ; now < target && m.area.Line() < m.area.LineCount(); now++ {
+			before, offset := m.area.Line(), m.area.LineInfo().RowOffset
+			m.area.CursorDown()
+			if m.area.Line() == before && m.area.LineInfo().RowOffset == offset {
+				break // the last row: a click below the text lands on it
+			}
+		}
+		for ; now > target; now-- {
+			m.area.CursorUp()
+		}
+		m.area.SetCursor(m.area.LineInfo().StartColumn + col)
+		m.area, _ = m.area.Update(nil)
+		m.followArea()
+		return
+	}
+	if row != 0 || col < 0 {
+		return
+	}
+	m.input.SetCursor(inputOffset(m.input.Value(), ansi.Strip(m.input.View()), m.input.Position()) + col)
+}
+
+// inputOffset is the index of the first rune of value the one-line input shows: where its visible text, as drawn, starts
+// in value, nearest the cursor at pos when it shows up more than once. A long value scrolls sideways under the cursor.
+func inputOffset(value, shown string, pos int) int {
+	runes, vis := []rune(value), []rune(strings.TrimRight(shown, " "))
+	if len(vis) == 0 || len(vis) > len(runes) {
+		return 0
+	}
+	best, bestGap := 0, -1
+	for o := 0; o+len(vis) <= len(runes); o++ {
+		if string(runes[o:o+len(vis)]) != string(vis) {
+			continue
+		}
+		gap := pos - o
+		if gap < 0 {
+			gap = -gap
+		}
+		if bestGap < 0 || gap < bestGap {
+			best, bestGap = o, gap
+		}
+	}
+	return best
 }
 
 // commit records what was typed: a rewrite replaces an earlier one of the same note, a question an earlier one about
@@ -815,6 +903,11 @@ func (m *accordion) footer(lay layout) []string {
 	}
 	// A question about the whole review can be asked from any row.
 	parts = append(parts, m.keyHelp("/", "ask about all"))
+	for _, act := range m.a.Keys {
+		if act.Footer {
+			parts = append(parts, m.keyHelp(act.Key, act.Label))
+		}
+	}
 	if len(m.a.Keys) > 0 {
 		parts = append(parts, m.keyHelp("p", "post"))
 	}

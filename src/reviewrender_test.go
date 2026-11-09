@@ -164,7 +164,7 @@ func TestRunReviewEngine_TheUserPicksTheDecisionThatIsPosted(t *testing.T) {
 	require.Equal(t, []forms.Action{
 		{Key: "1", Label: "post as Approve (suggested)", Group: "Post as", Keeps: true}, {Key: "2", Label: "post as Comment", Group: "Post as", Keeps: true},
 		{Key: "3", Label: "post as Request changes", Group: "Post as", Keeps: true}, {Key: "4", Label: "post as separate comments (deletable)", Group: "Or", Keeps: true},
-		{Key: "c", Label: "chat about it", Group: "Or"},
+		{Key: "c", Label: "chat about it", Group: "Or"}, {Key: "w", Label: "walkthrough", Group: "Or", Keeps: true, Footer: true},
 	}, shown.Keys)
 	require.Contains(t, out, "  a.go  1 suggestion · 1 nitpick\n", "a recap stays in the terminal")
 	posted, err := os.ReadFile(f.ghArgs)

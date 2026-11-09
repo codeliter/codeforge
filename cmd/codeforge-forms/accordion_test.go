@@ -366,3 +366,49 @@ func TestAccordion_ANoteOfSeveralLinesIsRewrittenWhole(t *testing.T) {
 	require.Contains(t, view(m), "→ Fine.")
 	require.Contains(t, view(m), "  - Ship it.   edited by you ")
 }
+
+// clickAt presses the left button on screen cell (x, y).
+func clickAt(m *accordion, x, y int) {
+	m.Update(tea.MouseMsg{X: x, Y: y, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
+}
+
+func TestAccordion_AClickInTheBoxMovesTheCursor(t *testing.T) {
+	m := editAccordion()
+	m.key("?")
+	typeKeysInput(m, "the retry path drops the body")
+	top := m.visible() + 1 // the box's top border
+	clickAt(m, boxSides+4, top+1)
+	require.Equal(t, 4, m.input.Position(), "the cursor goes under the click")
+	clickAt(m, boxSides+2, top+5)
+	require.Equal(t, 4, m.input.Position(), "a click off the text changes nothing")
+	require.True(t, m.typing)
+
+	m = newAccordion(forms.Accordion{Edits: true, Items: []forms.Section{{Title: "Final comment", Open: true, Notes: []forms.Note{
+		{ID: "final", Body: "x", Raw: "first line\nsecond line\nthird line", Label: "the final comment"},
+	}}}})
+	m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	m.key("e")
+	top = m.visible() + 1
+	clickAt(m, boxSides+3, top+2)
+	require.Equal(t, 1, m.area.Line(), "the second row")
+	require.Equal(t, 3, m.area.LineInfo().ColumnOffset)
+	clickAt(m, boxSides+0, top+1)
+	require.Equal(t, 0, m.area.Line())
+	require.Equal(t, 0, m.area.LineInfo().ColumnOffset)
+}
+
+func typeKeysInput(m *accordion, s string) {
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)})
+}
+
+func TestInputOffset(t *testing.T) {
+	require.Equal(t, 0, inputOffset("short", "short ", 5))
+	require.Equal(t, 6, inputOffset("aaaaa bbbbb ccc", "bbbbb ccc ", 15), "a long value scrolled to its end")
+	require.Equal(t, 0, inputOffset("", "Type your question", 0))
+}
+
+func TestAccordion_AFooterKeyIsListed(t *testing.T) {
+	m := editAccordion()
+	m.a.Keys = append(m.a.Keys, forms.Action{Key: "w", Label: "walkthrough", Footer: true, Keeps: true})
+	require.Contains(t, view(m), "w walkthrough")
+}

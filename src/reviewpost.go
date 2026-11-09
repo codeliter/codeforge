@@ -174,7 +174,21 @@ func runShownReview(ctx context.Context, argv, env []string, limit time.Time, st
 		// A lead the review makes as a blocking finding of its own is left out, against the review as it reads now: one
 		// the user's edits have left uncovered shows, and is posted, again.
 		key, changes, shown := showReview(ctx, display, decision, dropCoveredLeads(leads, text), out.Bytes(), ask, threads, round)
-		for key == forms.KeySend {
+		var walk *walkthrough
+		for key == forms.KeySend || key == keyWalk {
+			if key == keyWalk {
+				// The walkthrough, then the review again. Rewrites and deletions marked so far are kept, as written.
+				if len(changes) > 0 {
+					text, _, _ = applyEdits(text, changes)
+					decision, display = review.ParseDecision(text)
+					if fu.Active() && decision == review.DecisionApprove && fu.Unsettled(answers) {
+						decision = review.DecisionRequestChanges // never suggest approving past an open blocking thread
+					}
+				}
+				showWalkthrough(ctx, &walk, reviewTurn(argv, env))
+				key, changes, shown = showReview(ctx, display, decision, dropCoveredLeads(leads, text), out.Bytes(), ask, threads, round)
+				continue
+			}
 			if n := countQuestions(changes); n > 0 {
 				fmt.Fprintf(os.Stderr, "codeforge: asking the reviewer %s (up to %d minutes); the review opens again with the answers.\n",
 					plural(n, "question"), int(revisionLimit.Minutes()))
@@ -398,7 +412,9 @@ func reviewView(st codeStyle, code codeSource, text, leads string, decision revi
 			a.Keys = append(a.Keys, forms.Action{Key: k, Label: label, Group: group, Keeps: true})
 		}
 	}
-	a.Keys = append(a.Keys, forms.Action{Key: keyChat, Label: "chat about it", Group: other})
+	a.Keys = append(a.Keys, forms.Action{Key: keyChat, Label: "chat about it", Group: other},
+		// Keeps: the user's rewrites and deletions stay with the review while they read the walkthrough.
+		forms.Action{Key: keyWalk, Label: "walkthrough", Group: other, Keeps: true, Footer: true})
 	return a
 }
 
