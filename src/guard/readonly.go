@@ -54,7 +54,8 @@ func printsOnlyCodeforge(w []string) bool {
 	case "doctor":
 		return len(args) == 1
 	case "persona":
-		return len(args) == 1 || len(args) == 2 && args[1] == "describe"
+		// Any mix of describe and --full, as runPersona takes them.
+		return !slices.ContainsFunc(args[1:], func(a string) bool { return a != "describe" && a != "--full" })
 	case "models":
 		return printsModels(args[1:])
 	case "provider", "providers":

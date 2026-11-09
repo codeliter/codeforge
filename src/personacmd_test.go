@@ -37,7 +37,12 @@ func TestRunPersona_ShowsEachPersonaAndWhereItCameFrom(t *testing.T) {
 	require.Contains(t, out.String(), "Source: learned from your history in ~/work/api")
 	require.Contains(t, out.String(), "Repository persona: "+filepath.Join(repo, repoPersonaPath))
 	require.Contains(t, out.String(), "not in use: new or changed since you approved it")
-	require.Contains(t, out.String(), "Use tabs.")
+	require.Contains(t, out.String(), "Use tabs.", "a persona with no sections is summarised by its opening")
+	require.NotContains(t, out.String(), "## Code style", "the summary names the sections, it does not print them")
+	require.Contains(t, out.String(), "Covers: ")
+	out.Reset()
+	require.NoError(t, runPersona(t.Context(), home, []string{"describe", "--full"}, &out))
+	require.Contains(t, out.String(), "## Code style", "--full prints the whole persona")
 
 	require.NoError(t, config.Trust(home, filepath.Join(repo, repoPersonaPath), "# Team\nUse tabs."))
 	out.Reset()
@@ -45,4 +50,9 @@ func TestRunPersona_ShowsEachPersonaAndWhereItCameFrom(t *testing.T) {
 	require.Contains(t, out.String(), "in use: it overrides the global persona where they differ")
 
 	require.ErrorIs(t, runPersona(t.Context(), home, []string{"show"}, &out), errPersonaUsage)
+}
+
+func TestPersonaSummary(t *testing.T) {
+	text := "# Persona\n\nA homelab engineer who ships small changes.\n\n## Voice\n- Plain.\n\n## Commits\n- Imperative."
+	require.Equal(t, "A homelab engineer who ships small changes.\nCovers: Voice, Commits.", personaSummary(text))
 }

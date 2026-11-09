@@ -19,7 +19,7 @@ import (
 // built-in starter, or learned from the user's history in some repositories), and this repository's own, which
 // overrides it where they differ. It only reads.
 
-var errPersonaUsage = errors.New("usage: codeforge persona [describe]")
+var errPersonaUsage = errors.New("usage: codeforge persona [describe] [--full]")
 
 // personaSourceFile records where the global persona came from, beside it.
 const personaSourceFile = "persona.source.json"
@@ -84,8 +84,21 @@ func (s personaSource) describe(known bool) string {
 
 // runPersona prints the personas in effect here and where each came from.
 func runPersona(ctx context.Context, home string, args []string, w io.Writer) error {
-	if len(args) > 1 || len(args) == 1 && args[0] != "describe" {
-		return errPersonaUsage
+	full := false
+	for _, a := range args {
+		switch a {
+		case "describe":
+		case "--full":
+			full = true
+		default:
+			return errPersonaUsage
+		}
+	}
+	show := func(text string) string {
+		if full {
+			return text
+		}
+		return personaSummary(text) + "\n(codeforge persona describe --full shows all of it)"
 	}
 	global := filepath.Join(config.Dir(home), "persona.md")
 	data, err := os.ReadFile(global)
@@ -100,7 +113,7 @@ func runPersona(ctx context.Context, home string, args []string, w io.Writer) er
 		if known && !src.At.IsZero() {
 			fmt.Fprintf(w, "Set: %s\n", src.At.UTC().Format("2 Jan 2006 15:04 UTC"))
 		}
-		fmt.Fprintf(w, "\n%s\n", strings.TrimSpace(string(data)))
+		fmt.Fprintf(w, "\n%s\n", show(strings.TrimSpace(string(data))))
 	}
 
 	root, err := repoRoot(ctx)
@@ -124,6 +137,43 @@ func runPersona(ctx context.Context, home string, args []string, w io.Writer) er
 	if ts[p] != config.Digest(repo) {
 		state = "not in use: new or changed since you approved it. Run codeforge trust to use it"
 	}
-	fmt.Fprintf(w, "\nRepository persona: %s\nSource: this repository (%s)\n\n%s\n", p, state, repo)
+	fmt.Fprintf(w, "\nRepository persona: %s\nSource: this repository (%s)\n\n%s\n", p, state, show(repo))
 	return nil
+}
+
+// maxSummaryWords bounds the opening a summary quotes.
+const maxSummaryWords = 60
+
+// personaSummary is a persona in brief: its opening paragraph, cut to maxSummaryWords, and the names of its sections.
+func personaSummary(text string) string {
+	var opening string
+	var sections []string
+	for _, para := range strings.Split(text, "\n\n") {
+		var prose []string
+		for _, l := range strings.Split(strings.TrimSpace(para), "\n") {
+			l = strings.TrimSpace(l)
+			if h, ok := strings.CutPrefix(l, "## "); ok {
+				sections = append(sections, strings.TrimSpace(h))
+			}
+			if l != "" && !strings.HasPrefix(l, "#") {
+				prose = append(prose, l)
+			}
+		}
+		// The opening is the first prose that is not a list: the persona's one-paragraph description of the user.
+		if opening == "" && len(prose) > 0 && !strings.HasPrefix(prose[0], "-") {
+			opening = strings.Join(strings.Fields(strings.Join(prose, " ")), " ")
+		}
+	}
+	if words := strings.Fields(opening); len(words) > maxSummaryWords {
+		opening = strings.Join(words[:maxSummaryWords], " ") + "…"
+	}
+	var b strings.Builder
+	b.WriteString(opening)
+	if len(sections) > 0 {
+		if b.Len() > 0 {
+			b.WriteString("\n")
+		}
+		b.WriteString("Covers: " + strings.Join(sections, ", ") + ".")
+	}
+	return b.String()
 }
