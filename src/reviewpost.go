@@ -300,6 +300,9 @@ func runShownReview(ctx context.Context, argv, env []string, limit time.Time, st
 	case posted.Downgraded != nil:
 		fmt.Fprintf(os.Stderr, "codeforge: GitHub refused %s (%v; it does not allow it on your own PR); posted the review as Comment with %d inline comments %s\n",
 			decision.Label(), posted.Downgraded, posted.Inline, posted.URL)
+	case posted.OnFile > 0:
+		fmt.Fprintf(os.Stderr, "codeforge: posted the review as %s with %d comments on their lines and %d on their files (GitHub would not take those lines) %s\n",
+			posted.Decision.Label(), posted.Inline, posted.OnFile, posted.URL)
 	default:
 		fmt.Fprintf(os.Stderr, "codeforge: posted the review as %s with %d inline comments %s\n", posted.Decision.Label(), posted.Inline, posted.URL)
 	}

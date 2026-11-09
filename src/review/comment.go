@@ -220,6 +220,8 @@ type Posted struct {
 	Downgraded error
 	// Fallback is why GitHub refused the review, when it went up as one plain comment instead.
 	Fallback error
+	// OnFile counts the findings posted on their file because GitHub would not take their line.
+	OnFile int
 	// Final reports, for plain comments, whether the final comment went up as a comment of its own.
 	Final bool
 	// Refused holds, for plain comments, why GitHub refused each finding it would not put on its line; those findings
@@ -321,22 +323,138 @@ func (c *PostRequest) Post(ctx context.Context, r Runner, review, leads string, 
 	if err != nil {
 		return Posted{}, err
 	}
-	summary, inline := SplitFindings(review, diff)
+	summary, inline, onFile := SplitFindingsByFile(review, diff)
 	body, err := CommentBody(withoutHeadings(summary), leads)
 	if err != nil {
 		return Posted{}, err
 	}
+	// A finding on a line the change does not touch, in a file it does, goes on that file after the review: never into
+	// the final comment.
+	withFiles := func(p Posted) (Posted, error) {
+		return p, sideComments(ctx, r, repo, number, head, onFile, 0, &p)
+	}
 	url, id, rerr := postReview(ctx, r, repo, number, head, decision, body, inline)
 	if rerr == nil {
-		return Posted{URL: url, ReviewID: id, Inline: len(inline), Decision: decision}, nil
+		return withFiles(Posted{URL: url, ReviewID: id, Inline: len(inline), Decision: decision})
 	}
 	if decision != DecisionComment {
 		if curl, cid, err := postReview(ctx, r, repo, number, head, DecisionComment, body, inline); err == nil {
-			return Posted{URL: curl, ReviewID: cid, Inline: len(inline), Decision: DecisionComment, Downgraded: rerr}, nil
+			return withFiles(Posted{URL: curl, ReviewID: cid, Inline: len(inline), Decision: DecisionComment, Downgraded: rerr})
+		}
+	}
+	// GitHub refuses a whole review over one line comment it will not place (the line left the diff, the head moved).
+	// Then the review goes up without them and each finding follows on its own, on its line or else on its file, so no
+	// finding is ever run together with the final comment.
+	if len(inline) > 0 {
+		// One pass after the review: the line comments first, then those that belong on their files, so a failure
+		// part way names every comment that is not on the PR.
+		if posted, ok, err := postApart(ctx, r, repo, number, head, decision, body, append(slices.Clone(inline), onFile...), len(inline)); ok {
+			return posted, err
 		}
 	}
 	url, err = postComment(ctx, r, repo, number, whole)
 	return Posted{URL: url, Fallback: rerr}, err
+}
+
+// postApart posts the review without its line comments, as decision or else as a Comment, then each comment on its
+// own (see sideComments). ok is false when not even the review went up.
+// The first lines of comments go on their lines where GitHub takes them; the rest go on their files.
+func postApart(ctx context.Context, r Runner, repo, number, head string, decision Decision, body string, comments []InlineComment, lines int) (Posted, bool, error) {
+	url, id, err := postReview(ctx, r, repo, number, head, decision, body, nil)
+	posted := Posted{Decision: decision}
+	if err != nil {
+		var derr error
+		if url, id, derr = postReview(ctx, r, repo, number, head, DecisionComment, body, nil); derr != nil {
+			return Posted{}, false, nil //nolint:nilerr // not even a bare review went up: the caller posts one plain comment
+		}
+		posted.Decision, posted.Downgraded = DecisionComment, err
+	}
+	posted.URL, posted.ReviewID = url, id
+	err = sideComments(ctx, r, repo, number, head, comments, lines, &posted)
+	return posted, true, err
+}
+
+// sideComments posts each comment after the review has gone up: the first lines of them on their line, or on their file when GitHub will
+// not take the line, and those it takes on neither together in one PR comment, named by their places. Only GitHub's
+// refusal (a 422, which creates nothing) moves a comment on; any other failure may have posted it, so it stops there
+// with an error that names what is not on the PR. posted counts what went up.
+func sideComments(ctx context.Context, r Runner, repo, number, head string, comments []InlineComment, lines int, posted *Posted) error {
+	if len(comments) == 0 {
+		return nil
+	}
+	if head == "" {
+		head, _ = prHead(ctx, r, repo, number) //nolint:errcheck // without it GitHub refuses each comment, and they are named below
+	}
+	var leftover []string
+	notPosted := func(i int, err error) error {
+		var places []string
+		for _, ic := range comments[i:] {
+			places = append(places, ic.Place())
+		}
+		return fmt.Errorf("the review is on the PR, but the comments on %s are not: %w", strings.Join(append(leftoverPlaces(leftover), places...), ", "), err)
+	}
+	for i, ic := range comments {
+		if i < lines { // the first lines comments try their line first
+			_, err := bounded(ctx, func(ctx context.Context) (string, error) { return postLineComment(ctx, r, repo, number, head, ic) })
+			if err == nil {
+				posted.Inline++
+				continue
+			}
+			if !errors.Is(err, errRefused) {
+				return notPosted(i, err)
+			}
+		}
+		_, err := bounded(ctx, func(ctx context.Context) (string, error) { return "", postFileComment(ctx, r, repo, number, head, ic) })
+		if err == nil {
+			posted.OnFile++
+			continue
+		}
+		if !errors.Is(err, errRefused) {
+			return notPosted(i, err)
+		}
+		leftover = append(leftover, Named(ic.Place(), ic.Body))
+	}
+	if len(leftover) == 0 {
+		return nil
+	}
+	if _, err := bounded(ctx, func(ctx context.Context) (string, error) {
+		return postComment(ctx, r, repo, number, strings.Join(leftover, "\n\n")+commentFooter)
+	}); err != nil {
+		return fmt.Errorf("the review is on the PR, but the comments on %s are not: %w", strings.Join(leftoverPlaces(leftover), ", "), err)
+	}
+	posted.Refused = append(posted.Refused, fmt.Errorf("%w: %d comments posted together", errRefused, len(leftover)))
+	return nil
+}
+
+// leftoverPlaces names the places of comments written with Named.
+func leftoverPlaces(named []string) []string {
+	var out []string
+	for _, n := range named {
+		place, _, _ := strings.Cut(n, ":`")
+		if p, _, ok := strings.Cut(strings.TrimPrefix(n, "`"), "`"); ok {
+			place = p
+		}
+		out = append(out, place)
+	}
+	return out
+}
+
+// postFileComment posts a comment on a file of the pull request rather than a line, naming the line it is about: the
+// place a finding goes when GitHub will not take its line.
+func postFileComment(ctx context.Context, r Runner, repo, number, head string, ic InlineComment) error {
+	req := struct {
+		Path        string `json:"path"`
+		Body        string `json:"body"`
+		SubjectType string `json:"subject_type"` //nolint:tagliatelle // GitHub's REST field
+		CommitID    string `json:"commit_id"`    //nolint:tagliatelle // GitHub's REST field
+	}{ic.Path, fmt.Sprintf("Line %d: %s", ic.Line, ic.Body), "file", head}
+	if _, err := ghAPIPost(ctx, r, repoPath(repo)+"/pulls/"+number+"/comments", req); err != nil {
+		if strings.Contains(err.Error(), "(HTTP 422)") {
+			err = fmt.Errorf("%w: %w", errRefused, err)
+		}
+		return fmt.Errorf("posting the comment on %s: %w", ic.Path, err)
+	}
+	return nil
 }
 
 // MaxPlainLineComments caps the line comments a plain post makes: each one notifies everyone on the PR, and many in a

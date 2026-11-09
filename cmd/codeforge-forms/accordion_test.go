@@ -138,12 +138,12 @@ func typeText(m *accordion, s string) {
 func TestAccordion_TheCursorStopsOnEachFinding(t *testing.T) {
 	m := editAccordion()
 	require.Equal(t, 0, m.sub, "the cursor starts on the first finding, so e, x and ? work at once")
-	require.Contains(t, view(m), "e edit  ·  x delete  ·  ? ask  ·  / ask about all  ·  p post  ·  q quit")
+	require.Contains(t, view(m), "e edit  ·  x delete  ·  ? ask  ·  / ask about all  ·  p post  ·  y copy  ·  m select text  ·  q quit")
 	require.Contains(t, view(m), "  ▌ - issue (blocking): a.go:3", "the picked finding is marked")
 	m.key("up")
 	require.Equal(t, -1, m.sub)
 	require.Contains(t, view(m), "▌ ▾ a.go", "a file's row takes the same bar")
-	require.Contains(t, view(m), "⏎ close  ·  ? ask  ·  / ask about all  ·  p post  ·  q quit", "on a file's row")
+	require.Contains(t, view(m), "⏎ close  ·  ? ask  ·  / ask about all  ·  p post  ·  y copy  ·  m select text  ·  q quit", "on a file's row")
 	m.key("down")
 	m.key("down")
 	require.Equal(t, 1, m.sub)
@@ -411,4 +411,33 @@ func TestAccordion_AFooterKeyIsListed(t *testing.T) {
 	m := editAccordion()
 	m.a.Keys = append(m.a.Keys, forms.Action{Key: "w", Label: "walkthrough", Footer: true, Keeps: true})
 	require.Contains(t, view(m), "w walkthrough")
+}
+
+func TestAccordion_YCopiesTheTextUnderTheCursor(t *testing.T) {
+	var sys string
+	var term strings.Builder
+	oldW, oldT := writeClipboard, clipboardTerm
+	writeClipboard = func(s string) error { sys = s; return nil }
+	clipboardTerm = &term
+	t.Cleanup(func() { writeClipboard, clipboardTerm = oldW, oldT })
+
+	m := editAccordion()
+	m.key("y")
+	require.Equal(t, "- issue (blocking): a.go:3 samples everything", sys, "the note picked, without colours")
+	require.Contains(t, term.String(), "\x1b]52;c;", "and through the terminal, which reaches the clipboard over ssh")
+	require.Contains(t, view(m), "Copied a.go:3.")
+	m.key("up")
+	m.key("y")
+	require.True(t, strings.HasPrefix(sys, "a.go\n\n- issue (blocking)"), "on a file's row, the whole file: %q", sys)
+}
+
+func TestAccordion_MHandsTheMouseToTheTerminalForSelecting(t *testing.T) {
+	m := editAccordion()
+	require.Contains(t, view(m), "m select text")
+	require.NotNil(t, m.key("m"))
+	require.True(t, m.selecting)
+	require.Contains(t, view(m), "Drag to select text")
+	require.Contains(t, view(m), "m mouse back")
+	require.NotNil(t, m.key("m"))
+	require.False(t, m.selecting)
 }

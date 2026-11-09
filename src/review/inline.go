@@ -167,9 +167,20 @@ func StripVerdict(review string) string {
 // with the rest of the review as the summary. A finding off the diff stays in the summary, so nothing is lost when a
 // line cannot take a comment. Headings left with nothing under them are dropped.
 func SplitFindings(review, diff string) (string, []InlineComment) {
+	summary, inline, _ := splitReview(review, diff, false)
+	return summary, inline
+}
+
+// SplitFindingsByFile is SplitFindings, with a finding off the diff in a file the pull request changes taken out as a
+// comment on that file (onFile) rather than left in the summary: it is about code the change touches, so it goes on the
+// file, not into the final comment. A finding in a file the change does not touch stays in the summary.
+func SplitFindingsByFile(review, diff string) (summary string, inline, onFile []InlineComment) {
+	return splitReview(review, diff, true)
+}
+
+func splitReview(review, diff string, byFile bool) (summary string, inline, onFile []InlineComment) {
 	lines := diffLines(diff)
 	var kept []string
-	var inline []InlineComment
 	eachFinding(review, func(l string) { kept = append(kept, l) }, func(f postedFinding) {
 		shown := lines[f.path]
 		switch {
@@ -185,11 +196,16 @@ func SplitFindings(review, diff string) (string, []InlineComment) {
 			inline = append(inline, InlineComment{Path: f.path, Line: f.line, Body: f.text})
 			return
 		}
+		if _, changed := lines[f.path]; byFile && changed && f.line > 0 {
+			// A file comment says which line it means; a suggestion block there would apply to nothing, so it is code.
+			onFile = append(onFile, InlineComment{Path: f.path, Line: f.line, Body: plainCode(f.text)})
+			return
+		}
 		// Off the diff, or a suggestion for a range the diff does not show whole (on one line it would replace that
 		// line alone), it stays in the body, named by its place the way a person would.
 		kept = append(kept, Named(f.place, f.text), "")
 	})
-	return tidy(kept), inline
+	return tidy(kept), inline, onFile
 }
 
 // suggestionFence matches the opening line of a GitHub suggestion block.

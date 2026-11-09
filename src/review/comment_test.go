@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -669,12 +670,15 @@ func TestPostRequest_PostsInlineCommentsAsOneReview(t *testing.T) {
 	var c PostRequest
 	c.Target("acme/w", "42")
 	c.SetDiff(inlineDiff)
-	run := &inputRunner{out: `{"html_url":"https://github.com/acme/w/pull/42#pullrequestreview-1"}`}
+	c.SetHead("abc123")
+	run := &acceptingRunner{}
 	got, err := c.Post(t.Context(), run, inlineReview, LeadsHeader+"- `a.go:3` drops data\n", "")
 	require.NoError(t, err)
-	require.Equal(t, Posted{URL: "https://github.com/acme/w/pull/42#pullrequestreview-1", Inline: 2, Decision: DecisionComment}, got)
-	require.Equal(t, []string{"api", "--method", "POST", "repos/acme/w/pulls/42/reviews", "--input"}, run.args[:5])
-	require.NoFileExists(t, run.args[5], "the request file is removed after the call")
+	require.Equal(t, Posted{URL: "https://github.com/o/r/pull/7#r1", ReviewID: 9, Inline: 2, Decision: DecisionComment, OnFile: 1}, got,
+		"the finding on a changed file, off its lines, goes on the file")
+	require.Equal(t, []string{"api", "--method", "POST", "repos/acme/w/pulls/42/reviews", "--input"}, run.args[0][:5])
+	require.NoFileExists(t, run.args[0][5], "the request file is removed after the call")
+	run.input = []byte(run.inputs[0])
 
 	var req struct {
 		Event    string          `json:"event"`
@@ -712,27 +716,58 @@ func (r *inputRunner) Run(_ context.Context, _ string, args ...string) ([]byte, 
 	return []byte(r.out), nil
 }
 
-type failFirstRunner struct{ calls [][]string }
-
-func (r *failFirstRunner) Run(_ context.Context, _ string, args ...string) ([]byte, error) {
-	r.calls = append(r.calls, args)
-	if len(r.calls) == 1 {
-		return nil, errors.New("HTTP 422: Line could not be resolved")
-	}
-	return []byte("https://github.com/o/r/pull/7#issuecomment-2\n"), nil
+// refusingRunner is GitHub refusing any review with line comments, and the comments on lines in refused, while it
+// takes a review without them, comments on files and other lines.
+type refusingRunner struct {
+	calls   [][]string
+	inputs  []string
+	refused map[string]bool
 }
 
-func TestPostRequest_FallsBackToOneCommentWhenGitHubRefusesTheLines(t *testing.T) {
+func (r *refusingRunner) Run(_ context.Context, _ string, args ...string) ([]byte, error) {
+	r.calls = append(r.calls, args)
+	input := ""
+	for i, a := range args {
+		if a == "--input" && i+1 < len(args) {
+			data, err := os.ReadFile(args[i+1])
+			if err != nil {
+				return nil, fmt.Errorf("reading the request: %w", err)
+			}
+			input = string(data)
+		}
+	}
+	r.inputs = append(r.inputs, input)
+	if strings.HasSuffix(strings.Join(args, " "), "--jq .headRefOid") {
+		return []byte("abc123\n"), nil
+	}
+	var req struct {
+		Comments    []reviewComment `json:"comments"`
+		Line        int             `json:"line"`
+		SubjectType string          `json:"subject_type"`
+	}
+	_ = json.Unmarshal([]byte(input), &req) //nolint:errcheck // a call with no input decodes to nothing
+	if len(req.Comments) > 0 || req.SubjectType == "" && r.refused[strconv.Itoa(req.Line)] {
+		return nil, errors.New("HTTP 422: Line could not be resolved (HTTP 422)") //nolint:err113 // GitHub's answer
+	}
+	return []byte(`{"html_url":"https://github.com/o/r/pull/7#r1","id":9}`), nil
+}
+
+func TestPostRequest_ARefusedReviewKeepsEachFindingApart(t *testing.T) {
 	var c PostRequest
 	c.Target("", "7")
 	c.SetDiff(inlineDiff)
-	run := &failFirstRunner{}
+	run := &refusingRunner{refused: map[string]bool{"72": true}}
 	got, err := c.Post(t.Context(), run, inlineReview, "", "")
 	require.NoError(t, err)
-	require.ErrorContains(t, got.Fallback, "422")
-	require.Equal(t, "repos/{owner}/{repo}/pulls/7/reviews", run.calls[0][3])
-	require.Equal(t, []string{"pr", "comment", "7"}, run.calls[1][:3])
-	require.Contains(t, run.calls[1][3], "search/serper/main.go:72", "the fallback keeps every finding")
+	require.NoError(t, got.Fallback, "the review went up, without its line comments")
+	require.Equal(t, 2, got.OnFile, "the comment GitHub would not take on its line went on its file, beside the one off the diff")
+	require.Equal(t, 1, got.Inline)
+	all := strings.Join(run.inputs, "\n")
+	require.Contains(t, all, `"subject_type":"file"`)
+	require.Contains(t, all, "Line 72: Remove the commented-out code.")
+	for _, call := range run.calls {
+		require.NotEqual(t, "comment", call[1], "nothing is run together into one PR comment")
+	}
 }
 
 func TestShorten(t *testing.T) {
@@ -778,4 +813,50 @@ func TestLeadsHeader_NeverSaysHowTheReviewWasMade(t *testing.T) {
 	for _, word := range []string{"model", "second", "AI", "jur", "**", "#"} {
 		require.NotContains(t, LeadsHeader, word)
 	}
+}
+
+func TestPostRequest_AFindingOffTheDiffGoesOnItsFile(t *testing.T) {
+	var c PostRequest
+	c.Target("", "7")
+	c.SetDiff(inlineDiff)
+	c.SetHead("abc123")
+	run := &refusingRunner{}
+	review := "issue (blocking): search/serper/main.go:72 — Close the body.\n" +
+		"suggestion: search/serper/main.go:300 — The unchanged retry below now runs twice.\n" +
+		"suggestion: other/untouched.go:5 — Not in this PR.\n\nClose to ready."
+	got, err := c.Post(t.Context(), run, review, "", DecisionComment)
+	require.NoError(t, err, "a refused review goes up apart")
+	require.Equal(t, 1, got.Inline)
+	require.Equal(t, 1, got.OnFile)
+
+	run2 := &acceptingRunner{}
+	got, err = c.Post(t.Context(), run2, review, "", DecisionComment)
+	require.NoError(t, err)
+	require.Equal(t, 1, got.Inline)
+	require.Equal(t, 1, got.OnFile, "on a file the change touches, off its lines: on the file")
+	require.Contains(t, run2.inputs[0], "Not in this PR.", "a file the change does not touch stays in the review body")
+	require.NotContains(t, run2.inputs[0], "runs twice", "and the one on a changed file is not run into it")
+	require.Contains(t, run2.inputs[1], `"subject_type":"file"`)
+	require.Contains(t, run2.inputs[1], "Line 300: The unchanged retry below now runs twice.")
+}
+
+// acceptingRunner is GitHub taking every call, recording each request.
+type acceptingRunner struct {
+	inputs []string
+	args   [][]string
+	input  []byte
+}
+
+func (r *acceptingRunner) Run(_ context.Context, _ string, args ...string) ([]byte, error) {
+	r.args = append(r.args, args)
+	for i, a := range args {
+		if a == "--input" && i+1 < len(args) {
+			data, err := os.ReadFile(args[i+1])
+			if err != nil {
+				return nil, fmt.Errorf("reading the request: %w", err)
+			}
+			r.inputs = append(r.inputs, string(data))
+		}
+	}
+	return []byte(`{"html_url":"https://github.com/o/r/pull/7#r1","id":9}`), nil
 }

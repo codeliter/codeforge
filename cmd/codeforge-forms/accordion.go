@@ -1,11 +1,15 @@
 package main
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
+	"os"
 	"slices"
 	"strings"
 
+	"github.com/atotto/clipboard"
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -64,6 +68,8 @@ type accordion struct {
 	armed  string
 	// picking is true while the footer offers the ways to finish (p), so the rest of the time it stays one short line.
 	picking bool
+	// selecting is set while the mouse is left to the terminal, so text can be selected and copied by dragging.
+	selecting bool
 }
 
 func newAccordion(a forms.Accordion) *accordion {
@@ -239,6 +245,18 @@ func (m *accordion) key(k string) tea.Cmd {
 				m.sub = -1
 			}
 		}
+	case "y":
+		m.copyFocused()
+		return nil
+	case "m":
+		// The view takes the mouse for clicks and the wheel; handing it back lets the terminal select text by dragging.
+		m.selecting = !m.selecting
+		m.notice = "Mouse back on: click to open, wheel to scroll."
+		if m.selecting {
+			m.notice = "Drag to select text and copy it as usual; press m again for clicks and the wheel."
+			return tea.DisableMouse
+		}
+		return tea.EnableMouseCellMotion
 	case "a":
 		all := true
 		for _, o := range m.open {
@@ -309,6 +327,56 @@ func (m *accordion) unsavedOnQuit(k, armed string) bool {
 	m.armed = k
 	return true
 }
+
+// mouseHelp names what m does now.
+func (m *accordion) mouseHelp() string {
+	if m.selecting {
+		return "mouse back"
+	}
+	return "select text"
+}
+
+// focusedText is the text under the cursor as plain words: the note picked, or the section's title and all it holds.
+func (m *accordion) focusedText() (what, text string) {
+	if note, ok := m.note(); ok {
+		return cmpOr(note.Label, "this note"), ansi.Strip(note.Body)
+	}
+	if len(m.a.Items) == 0 {
+		return "", ""
+	}
+	s := m.a.Items[m.cursor]
+	parts := []string{ansi.Strip(s.Title)}
+	if strings.TrimSpace(s.Body) != "" {
+		parts = append(parts, ansi.Strip(s.Body))
+	}
+	for _, n := range s.Notes {
+		parts = append(parts, ansi.Strip(n.Body))
+	}
+	return ansi.Strip(s.Title), strings.Join(parts, "\n\n")
+}
+
+// copyFocused puts the text under the cursor on the clipboard: through the system clipboard where there is one, and
+// through the terminal (OSC 52) as well, which reaches the user's own clipboard over ssh.
+func (m *accordion) copyFocused() {
+	what, text := m.focusedText()
+	if strings.TrimSpace(text) == "" {
+		m.notice = "Nothing to copy here."
+		return
+	}
+	text = strings.TrimSpace(text)
+	sysErr := writeClipboard(text)
+	fmt.Fprint(clipboardTerm, "\x1b]52;c;"+base64.StdEncoding.EncodeToString([]byte(text))+"\x07")
+	m.notice = "Copied " + what + "."
+	if sysErr != nil {
+		m.notice = "Copied " + what + " through the terminal; the system clipboard said: " + sysErr.Error()
+	}
+}
+
+// writeClipboard and clipboardTerm are where copyFocused writes; tests replace them.
+var (
+	writeClipboard           = clipboard.WriteAll
+	clipboardTerm  io.Writer = os.Stdout
+)
 
 // questions counts the questions marked.
 func (m *accordion) questions() int {
@@ -911,7 +979,7 @@ func (m *accordion) footer(lay layout) []string {
 	if len(m.a.Keys) > 0 {
 		parts = append(parts, m.keyHelp("p", "post"))
 	}
-	parts = append(parts, m.keyHelp("q", "quit"), m.scrollPosition(lay))
+	parts = append(parts, m.keyHelp("y", "copy"), m.keyHelp("m", m.mouseHelp()), m.keyHelp("q", "quit"), m.scrollPosition(lay))
 	return append(lines, m.joinHelp(parts...))
 }
 
@@ -988,7 +1056,7 @@ func (m *accordion) plainHelp(lay layout) string {
 	for _, act := range m.a.Keys {
 		keys = append(keys, act.Key+" "+act.Label)
 	}
-	keys = append(keys, "click or ⏎ open", "↑↓ move", "a all", "q quit", "wheel or pgup/pgdn scroll")
+	keys = append(keys, "click or ⏎ open", "↑↓ move", "a all", "y copy", "m "+m.mouseHelp(), "q quit", "wheel or pgup/pgdn scroll")
 	return m.a.Dim + strings.Join(keys, " · ") + reset
 }
 
