@@ -40,3 +40,17 @@ func TestProviderPlanAliasesCannotDuplicateReviewers(t *testing.T) {
 	_, err = ResolvePlan(cfg, providerTestCatalog())
 	require.ErrorIs(t, err, ErrDuplicateModels)
 }
+
+func TestResolvePlan_TheLightReviewerGetsItsProvider(t *testing.T) {
+	cfg := Defaults(Config{}) // every role a full id
+	cfg.Providers = &ProviderPolicy{Primary: "copilot"}
+	cfg.Review.Light = "deepseek-v4.1-flash" // as Defaults writes it under a provider policy
+	require.True(t, NeedsCatalog(cfg))
+	plan, err := ResolvePlan(cfg, []string{"copilot/deepseek-v4.1-flash"})
+	require.NoError(t, err)
+	require.Equal(t, "copilot/deepseek-v4.1-flash", plan.Config.Review.Light)
+
+	plan, err = ResolvePlan(cfg, []string{"copilot/other"})
+	require.NoError(t, err, "a light reviewer that cannot be found never fails the plan")
+	require.Empty(t, plan.Config.Review.Light, "it is dropped, so the normal reviewer takes docs")
+}

@@ -308,6 +308,15 @@ func ResolvePlan(cfg Config, catalog []string) (ModelPlan, error) {
 		}
 		AssignRole(&plan.Config, role.Key, ids)
 	}
+	// The light reviewer is no role the user picks, but a bare name needs its provider like any other: one that cannot
+	// be found is dropped, so docs are reviewed by the normal reviewer rather than failing.
+	if ref := cfg.Review.Light; ref != "" && !ValidModelID(ref) {
+		plan.Config.Review.Light = ""
+		if route, err := ResolveModelReference("review.light", ref, cfg.Providers, catalog); err == nil {
+			plan.Config.Review.Light = route.Primary
+			plan.Routes = append(plan.Routes, route)
+		}
+	}
 	for job, ref := range cfg.Routing {
 		if ref == "" {
 			continue
@@ -335,7 +344,7 @@ func NeedsCatalog(cfg Config) bool {
 			return true
 		}
 	}
-	return false
+	return cfg.Review.Light != "" && !ValidModelID(cfg.Review.Light)
 }
 
 func (plan ModelPlan) FallbackChains() map[string][]string {

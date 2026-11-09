@@ -72,10 +72,13 @@ decision. Enter or a click opens a file, `c` chats about it, `q` quits.
 | Post comments you can delete later | `p`, then `4` |
 | Post the suggested decision without asking | `--comment=yes` |
 | Post from a script or without the view | `--comment`, then answer the question |
+| Follow up on your earlier review | `codeforge review 98`, or `--follow-up` to stop if there is none |
 | Review your branch and run its tests | `codeforge gate` |
 
 On a PR you reviewed before, codeforge follows up: a verdict on each of your open threads, replies and resolves
 the settled ones (never a blocker on a promise), then reviews only the new commits. `--fresh` starts over.
+When the author explains why a non-blocking point is not a problem and the reason holds, the reviewer agrees in your
+voice, resolves the thread, drops the point and suggests the decision that now fits, Approve when nothing blocks.
 
 ```sh
 codeforge review 98               # follow up on your earlier review of PR 98, after the author replied or pushed fixes
