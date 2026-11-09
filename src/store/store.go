@@ -132,7 +132,7 @@ func (s *Store) initialize(ctx context.Context, scripts fs.FS) (result error) {
 	if err != nil {
 		return fmt.Errorf("listing migrations: %w", err)
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginRetrying(ctx)
 	if err != nil {
 		return fmt.Errorf("starting migration: %w", err)
 	}
@@ -287,4 +287,26 @@ func repairReviewRecords(ctx context.Context, tx *sql.Tx, scripts fs.FS) error {
 		return fmt.Errorf("repairing review records: %w", err)
 	}
 	return nil
+}
+
+// migrationWait bounds how long opening waits for other processes migrating the same database at once.
+const migrationWait = 10 * time.Second
+
+// beginRetrying starts the migration's write transaction, waiting while another process holds the database: several
+// codeforge processes opening a new database at once each migrate in turn, and SQLite's busy timeout alone is shorter
+// than a migration.
+func (s *Store) beginRetrying(ctx context.Context) (*sql.Tx, error) {
+	deadline := time.Now().Add(migrationWait)
+	for {
+		tx, err := s.db.BeginTx(ctx, nil)
+		var se *sqlite.Error
+		if err == nil || !errors.As(err, &se) || se.Code()&0xff != sqliteBusy || time.Now().After(deadline) {
+			return tx, err //nolint:wrapcheck // the caller says what was being started
+		}
+		select {
+		case <-ctx.Done():
+			return nil, errors.Join(ctx.Err(), err)
+		case <-time.After(walRetry):
+		}
+	}
 }
