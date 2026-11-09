@@ -439,9 +439,16 @@ func reviewAccordion(text, extra string, st codeStyle, code codeSource, marks ma
 		})
 	}
 	if strings.TrimSpace(extra) != "" {
+		// Each lead is a note of its own, so the user can delete one (x) or ask about it before posting.
+		header, items := splitLeads(extra)
+		var notes []forms.Note
+		for _, l := range items {
+			notes = append(notes, forms.Note{ID: leadID(l), Body: strings.Trim(renderReview(l, body, nil), "\n"), Label: leadLabel(l)})
+		}
 		a.Items = append(a.Items, forms.Section{
 			Title: st.paint(st.pal.issue, "Unconfirmed blocking leads"),
-			Body:  strings.Trim(renderReview(extra, body, nil), "\n"),
+			Body:  strings.Trim(renderReview(header, body, nil), "\n"),
+			Notes: notes,
 		})
 	}
 	a.Accent, a.Dim, a.Warn = st.pal.accent, st.pal.dim, st.pal.question

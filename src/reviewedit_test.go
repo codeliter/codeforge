@@ -621,3 +621,20 @@ func TestReviewTurn_KeepsTheSandboxAroundTheEngine(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "--session\nrev-1\n--profile\ncodeforge-review\nq\n", string(args))
 }
+
+func TestLeads_DeletableInTheView(t *testing.T) {
+	leads := review.LeadsHeader + "- `a.go:3` the retry drops the body\n- `b.go:9` a loser can outrank the winner\n"
+	a := reviewAccordion(editableReview, leads, codeStyle{width: 100}, nil, nil)
+	sec := a.Items[len(a.Items)-1]
+	require.Len(t, sec.Notes, 2, "each lead is a note of its own")
+	require.Equal(t, "a.go:3", sec.Notes[0].Label)
+	require.Empty(t, sec.Notes[0].Raw, "a lead can be deleted or asked about, not rewritten")
+	require.Contains(t, sec.Body, "not confirmed them")
+
+	got := withoutDeletedLeads(leads, []forms.Change{{Kind: forms.ChangeDelete, Note: sec.Notes[0].ID}})
+	require.Equal(t, strings.TrimSpace(review.LeadsHeader)+"\n\n- `b.go:9` a loser can outrank the winner\n", got)
+	require.Empty(t, withoutDeletedLeads(leads, []forms.Change{{Kind: forms.ChangeDelete, Note: sec.Notes[0].ID}, {Kind: forms.ChangeDelete, Note: sec.Notes[1].ID}}),
+		"with every lead deleted, there are none")
+	require.Equal(t, leads, withoutDeletedLeads(leads, []forms.Change{{Kind: forms.ChangeDelete, Note: "f0"}}), "a finding's deletion leaves the leads alone")
+	require.Equal(t, sec.Notes[1].ID, leadID("- `b.go:9` a loser can outrank the winner"), "the same lead keeps its id")
+}

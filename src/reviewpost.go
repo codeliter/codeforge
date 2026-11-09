@@ -178,6 +178,7 @@ func runShownReview(ctx context.Context, argv, env []string, limit time.Time, st
 		defer walk.stop()
 		key, changes, shown := showReview(ctx, display, decision, dropCoveredLeads(leads, text), out.Bytes(), ask, threads, round)
 		for key == forms.KeySend || key == keyWalk {
+			leads = withoutDeletedLeads(leads, changes) // a lead the user deleted stays deleted, round after round
 			if key == keyWalk {
 				// The walkthrough, then the review again. Rewrites and deletions marked so far are kept, as written.
 				if len(changes) > 0 {
@@ -220,6 +221,7 @@ func runShownReview(ctx context.Context, argv, env []string, limit time.Time, st
 		asked, answer = ask && shown, picked
 		if picked {
 			decision = chosen
+			leads = withoutDeletedLeads(leads, changes)
 			if len(changes) > 0 {
 				// Rewrites and deletions marked but not sent go up as written: they need no reviewer.
 				text, _, _ = applyEdits(text, changes)

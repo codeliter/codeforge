@@ -360,7 +360,7 @@ func TestReviewAccordion_GroupsFindingsByFileAndKeepsTheRestAsTheFinalComment(t 
 	require.Contains(t, a.Items[2].Notes[0].Body, "Adds the retry the description promises")
 	require.NotContains(t, a.Items[2].Body, "heading", "headings are dropped")
 	require.True(t, a.Items[2].Open)
-	require.Contains(t, a.Items[3].Body, "x.go:1 drops data")
+	require.Contains(t, a.Items[3].Notes[0].Body, "x.go:1 drops data", "each lead is a note, so it can be deleted")
 
 	only := reviewAccordion("Just prose.", "", codeStyle{}, nil, nil)
 	require.Equal(t, "Final comment", only.Items[0].Title, "a review with no findings is its final comment")

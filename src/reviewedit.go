@@ -3,6 +3,8 @@ package src
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -993,4 +995,56 @@ func tightenPrompt(text string, long []longComment) string {
 		"the ask. Change nothing else: keep every finding, its label and its place, the other comments word for word, and " +
 		"the Decision line. Reply with the complete review in the same format and nothing else.\n\nThe review:\n\n" + text)
 	return b.String()
+}
+
+// leadIDPrefix opens the id the view knows a lead by.
+const leadIDPrefix = "lead:"
+
+// leadID names a lead by its text, so the same lead keeps its id however the list around it changes.
+func leadID(line string) string {
+	sum := sha256.Sum256([]byte(strings.TrimSpace(line)))
+	return leadIDPrefix + hex.EncodeToString(sum[:6])
+}
+
+// leadLabel names a lead by its place, for the view's key help and a question about it.
+func leadLabel(line string) string {
+	if m := leadLine.FindStringSubmatch(strings.TrimSpace(line)); m != nil {
+		return m[1]
+	}
+	return "this lead"
+}
+
+// splitLeads splits the leads into the words that open them and one line per lead.
+func splitLeads(leads string) (header string, items []string) {
+	var head []string
+	for _, l := range reviewLines(leads) {
+		switch t := strings.TrimSpace(l); {
+		case strings.HasPrefix(t, "- "):
+			items = append(items, t)
+		case len(items) == 0:
+			head = append(head, l)
+		case t != "":
+			items[len(items)-1] += " " + t // a lead that runs onto a second line
+		}
+	}
+	return strings.TrimSpace(strings.Join(head, "\n")), items
+}
+
+// withoutDeletedLeads drops the leads the user deleted in the view; with none left, there are no leads.
+func withoutDeletedLeads(leads string, changes []forms.Change) string {
+	gone := map[string]bool{}
+	for _, c := range changes {
+		if c.Kind == forms.ChangeDelete && strings.HasPrefix(c.Note, leadIDPrefix) {
+			gone[c.Note] = true
+		}
+	}
+	if len(gone) == 0 || strings.TrimSpace(leads) == "" {
+		return leads
+	}
+	header, items := splitLeads(leads)
+	kept := slices.DeleteFunc(items, func(l string) bool { return gone[leadID(l)] })
+	if len(kept) == 0 {
+		return ""
+	}
+	return header + "\n\n" + strings.Join(kept, "\n") + "\n"
 }
