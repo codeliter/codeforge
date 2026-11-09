@@ -129,6 +129,9 @@ type Action struct {
 	// Group heads the actions that share it in the list of ways to finish, such as "Post as" or "Or"; the first group
 	// is "Post as" when none is given.
 	Group string `json:"group,omitempty"`
+	// Keeps says the key takes the marked rewrites and deletions with it, to apply to what it posts. A key without it
+	// does nothing with them, so the view warns before it drops them.
+	Keeps bool `json:"keeps,omitempty"`
 }
 
 // Section is one row of an Accordion: its title and summary on the row, its body under it while it is open.
@@ -173,7 +176,8 @@ type Change struct {
 }
 
 // AccordionKey is the answer key that holds the Action key the user pressed, empty when they left with q, and
-// ChangesKey the one that holds the Changes, as JSON, when they pressed KeySend.
+// ChangesKey the one that holds the Changes, as JSON: all of them with KeySend, the rewrites and deletions with an
+// Action key that Keeps them, to be applied to what that key posts.
 const (
 	AccordionKey = "key"
 	ChangesKey   = "changes"
@@ -205,10 +209,10 @@ func Show(name string, a Accordion) (string, []Change, error) {
 }
 
 // Protocol is the version of what codeforge sends codeforge-forms: 2 added an Accordion's Notes, Edits and Changes,
-// 3 the Search field, 4 the rewrite of a note of several lines. The helper answers ProtocolFlag with its own, and one that cannot is 1.
+// 3 the Search field, 4 the rewrite of a note of several lines, 5 the Changes with any Action key, not only KeySend. The helper answers ProtocolFlag with its own, and one that cannot is 1.
 const (
-	Protocol       = 4
-	editsProtocol  = 4 // 4 rewrites a note of several lines, such as the final comment, keeping its lines
+	Protocol       = 5
+	editsProtocol  = 5 // 4 rewrites a note of several lines; 5 answers the rewrites and deletions with any key
 	searchProtocol = 3
 )
 

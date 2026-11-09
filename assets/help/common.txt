@@ -18,6 +18,7 @@ Everyday:
   doctor                             Check setup, sign-in, models, persona and trust; shows what to do next
   gate                               Review your branch: one reviewer for simple changes, the jury for
                                      complicated or high-risk ones. Voluntary; nothing waits for it
+  persona describe                   Show your global and repository personas, and where each came from
   sessions [--all] [--list]          Search this directory's sessions (--all: every project's, from its root) by
                                      when, mode, title, turns, cost or ID, and open one in its own mode; --list prints them
   --resume ID, --session ID, -s ID    Restore the original mode without new-task preparation

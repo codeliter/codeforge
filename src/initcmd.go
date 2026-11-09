@@ -89,6 +89,13 @@ func runInit(ctx context.Context, home, bin string, cfg config.Config, args []st
 	if err != nil {
 		return err
 	}
+	src := personaSource{Kind: sourceKindLearned, Repos: config.SplitList(ans.repos)}
+	if ans.source == sourceStarter {
+		src = personaSource{Kind: sourceKindStarter, Starter: ans.starter}
+	}
+	if err := savePersonaSource(home, src); err != nil {
+		return err
+	}
 
 	fmt.Fprintf(os.Stderr, "codeforge: global persona written to %s. It applies in every repository.\n", p)
 	return nil

@@ -219,7 +219,7 @@ func (m *accordion) key(k string) tea.Cmd {
 	}
 	switch k {
 	case "q", "esc":
-		if m.unsent(k, armed) {
+		if m.unsavedOnQuit(k, armed) {
 			return nil
 		}
 		return tea.Quit
@@ -257,33 +257,70 @@ func (m *accordion) key(k string) tea.Cmd {
 	return nil
 }
 
-// finish closes the view when k is one of the Action keys, unless changes are waiting (unsent) and the user has not
-// been told yet (warned); ok reports a match.
+// finish closes the view when k is one of the Action keys, unless questions are waiting (unsent) and the user has not
+// been told yet (warned); ok reports a match. Rewrites and deletions go with the key pressed, to be applied to what is
+// posted: they need no reviewer, so they are never sent first. Unsent questions are dropped.
 func (m *accordion) finish(k, armed string, warned bool) (cmd tea.Cmd, ok bool) {
 	for _, act := range m.a.Keys {
 		if act.Key == "" || k != act.Key {
 			continue
 		}
+		if !act.Keeps {
+			// A key that posts nothing takes no change with it: any change waits, as on leaving.
+			if !warned && m.unsavedOnQuit(k, armed) {
+				return nil, true
+			}
+			m.pressed, m.changes = act.Key, nil
+			return tea.Quit, true
+		}
 		if !warned && m.unsent(k, armed) {
 			return nil, true
 		}
 		m.pressed = act.Key
-		m.changes = nil // going ahead without them
+		m.changes = slices.DeleteFunc(m.changes, func(c forms.Change) bool { return c.Kind == forms.ChangeAsk })
 		return tea.Quit, true
 	}
 	return nil, false
 }
 
-// unsent reports whether key k must wait because changes are marked and not sent: the first press explains, a second
-// press of the same key (armed) goes ahead without them.
+// unsent reports whether key k must wait because questions are marked and not sent: the first press explains, a
+// second press of the same key (armed) goes ahead without them. Rewrites and deletions never wait: they go with k.
 func (m *accordion) unsent(k, armed string) bool {
+	n := m.questions()
+	if n == 0 || armed == k {
+		return false
+	}
+	m.notice = fmt.Sprintf("%s not sent yet. Press s to send, or %s again to go on without.", countQuestions(n), k)
+	m.armed = k
+	return true
+}
+
+// unsavedOnQuit is unsent for leaving without posting: then rewrites and deletions are lost too, so any change waits.
+func (m *accordion) unsavedOnQuit(k, armed string) bool {
 	if len(m.changes) == 0 || armed == k {
 		return false
 	}
-	m.notice = fmt.Sprintf("%s not sent yet. Press s to send, or %s again to go on without.",
-		countChanges(len(m.changes)), k)
+	m.notice = fmt.Sprintf("%s not posted or sent. Press s to send, or %s again to go on without them.", countChanges(len(m.changes)), k)
 	m.armed = k
 	return true
+}
+
+// questions counts the questions marked.
+func (m *accordion) questions() int {
+	n := 0
+	for _, c := range m.changes {
+		if c.Kind == forms.ChangeAsk {
+			n++
+		}
+	}
+	return n
+}
+
+func countQuestions(n int) string {
+	if n == 1 {
+		return "1 question"
+	}
+	return fmt.Sprintf("%d questions", n)
 }
 
 func countChanges(n int) string {
@@ -786,11 +823,20 @@ func (m *accordion) footer(lay layout) []string {
 }
 
 // pickLines lists the ways to finish, one per line so none is ever cut off at the edge, under the heads of their
-// groups. Changes not sent yet come first: picking a way to finish goes on without them.
+// groups. What happens to the marked changes comes first: rewrites and deletions go up with the pick, questions not
+// sent are dropped.
 func (m *accordion) pickLines() []string {
 	var lines []string
-	if n := len(m.changes); n > 0 {
-		lines = append(lines, m.a.Warn+countChanges(n)+" not sent: picking below drops them."+reset+"  "+m.keyHelp("s", "send them first"))
+	if n := len(m.changes) - m.questions(); n > 0 {
+		if slices.ContainsFunc(m.a.Keys, func(a forms.Action) bool { return a.Keeps }) {
+			lines = append(lines, m.a.Accent+countChanges(n)+" of yours go up with the review when you post it; any other pick drops them."+reset)
+		} else {
+			// Nothing here posts: every pick drops them, so the list says so and offers to send them instead.
+			lines = append(lines, m.a.Warn+countChanges(n)+" of yours: picking below drops them."+reset+"  "+m.keyHelp("s", "send them first"))
+		}
+	}
+	if n := m.questions(); n > 0 {
+		lines = append(lines, m.a.Warn+countQuestions(n)+" not sent: picking below drops them."+reset+"  "+m.keyHelp("s", "send them first"))
 	}
 	group := ""
 	for k, act := range m.a.Keys {
@@ -881,7 +927,7 @@ func showAccordion(a forms.Accordion) (forms.Answers, error) {
 		return nil, huh.ErrUserAborted
 	}
 	answers := forms.Answers{forms.AccordionKey: {Value: m.pressed}}
-	if m.pressed == forms.KeySend {
+	if m.pressed == forms.KeySend || len(m.changes) > 0 {
 		data, err := json.Marshal(m.changes)
 		if err != nil {
 			return nil, fmt.Errorf("accordion: encoding the changes: %w", err)

@@ -53,6 +53,8 @@ func printsOnlyCodeforge(w []string) bool {
 		return true
 	case "doctor":
 		return len(args) == 1
+	case "persona":
+		return len(args) == 1 || len(args) == 2 && args[1] == "describe"
 	case "models":
 		return printsModels(args[1:])
 	case "provider", "providers":

@@ -87,6 +87,11 @@ func Run(ctx context.Context, args []string) error {
 		return err
 	}
 
+	// persona only reads, like doctor below, so it runs before anything is repaired or prepared.
+	if first(args) == "persona" {
+		return runPersona(ctx, home, args[1:], os.Stdout)
+	}
+
 	// doctor only reads state, so it runs before automatic repair, project, config and Empryo preparation.
 	if first(args) == "doctor" {
 		if len(args) > 1 {

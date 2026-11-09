@@ -122,7 +122,7 @@ func editAccordion() *accordion {
 			}},
 			{Title: "Final comment", Body: "Close."},
 		},
-		Keys:  []forms.Action{{Key: "1", Label: "post as Approve"}, {Key: "c", Label: "chat about it"}},
+		Keys:  []forms.Action{{Key: "1", Label: "post as Approve", Keeps: true}, {Key: "c", Label: "chat about it"}},
 		Edits: true,
 	})
 	m.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
@@ -205,28 +205,45 @@ func TestAccordion_UnsentChangesAreNeverLostByAccident(t *testing.T) {
 	require.Nil(t, m.key("s"), "nothing to send yet")
 	require.Contains(t, view(m), "Nothing to send yet")
 	m.key("x")
-	require.Nil(t, m.key("1"), "posting waits")
-	require.Contains(t, view(m), "1 change not sent yet. Press s to send, or 1 again to go on without.")
-	require.NotNil(t, m.key("1"), "pressed again, it goes ahead")
+	require.NotNil(t, m.key("1"), "a deletion needs no reviewer: posting goes ahead at once")
 	require.Equal(t, "1", m.pressed)
-	require.Empty(t, m.changes)
+	require.Equal(t, []forms.Change{{Kind: forms.ChangeDelete, Note: "f0"}}, m.changes, "and the deletion goes with it")
+
+	m = editAccordion()
+	m.key("?")
+	typeText(m, "still blocking?")
+	m.key("x")
+	require.Nil(t, m.key("1"), "a question waits")
+	require.Contains(t, view(m), "1 question not sent yet. Press s to send, or 1 again to go on without.")
+	require.NotNil(t, m.key("1"), "pressed again, it goes ahead")
+	require.Equal(t, []forms.Change{{Kind: forms.ChangeDelete, Note: "f0"}}, m.changes, "without the question, with the deletion")
 
 	m = editAccordion()
 	m.key("x")
+	m.key("?")
+	typeText(m, "why?")
 	m.key("p")
-	require.Contains(t, view(m), "1 change not sent: picking below drops them.  s send them first", "the list says it first")
+	require.Contains(t, view(m), "1 change of yours go up with the review when you post it; any other pick drops them.", "the list says what goes up")
+	require.Contains(t, view(m), "1 question not sent: picking below drops them.  s send them first")
 	require.NotNil(t, m.key("s"), "s sends from the list")
 	require.Equal(t, forms.KeySend, m.pressed)
 
 	m = editAccordion()
 	m.key("x")
+	require.Nil(t, m.key("c"), "a key that posts nothing would drop the deletion, so it waits")
+	require.Contains(t, view(m), "1 change not posted or sent. Press s to send, or c again to go on without them.")
+	require.NotNil(t, m.key("c"))
+	require.Empty(t, m.changes, "and nothing goes with it")
+
+	m = editAccordion()
+	m.a.Keys = []forms.Action{{Key: "c", Label: "chat about it"}}
+	m.key("x")
 	m.key("p")
-	require.NotNil(t, m.key("1"), "a pick from the list goes ahead: it said what is unsent")
-	require.Equal(t, "1", m.pressed)
+	require.Contains(t, view(m), "1 change of yours: picking below drops them.  s send them first", "with nothing that posts, the list warns")
 
 	m = editAccordion()
 	m.key("x")
-	require.Nil(t, m.key("q"))
+	require.Nil(t, m.key("q"), "leaving loses the deletion, so it waits")
 	m.key("down") // any other key puts the notice away
 	require.Nil(t, m.key("q"), "q must be pressed twice in a row")
 	require.NotNil(t, m.key("q"))

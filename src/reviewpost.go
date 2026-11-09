@@ -204,6 +204,10 @@ func runShownReview(ctx context.Context, argv, env []string, limit time.Time, st
 		asked, answer = ask && shown, picked
 		if picked {
 			decision = chosen
+			if len(changes) > 0 {
+				// Rewrites and deletions marked but not sent go up as written: they need no reviewer.
+				text, _, _ = applyEdits(text, changes)
+			}
 		}
 	} else {
 		// What may be posted is printed first, the replies to the earlier threads included.
@@ -391,7 +395,7 @@ func reviewView(st codeStyle, code codeSource, text, leads string, decision revi
 			if decisionKeys[k] == review.DecisionPlain {
 				group = other // no review at all, so not one of the decisions
 			}
-			a.Keys = append(a.Keys, forms.Action{Key: k, Label: label, Group: group})
+			a.Keys = append(a.Keys, forms.Action{Key: k, Label: label, Group: group, Keeps: true})
 		}
 	}
 	a.Keys = append(a.Keys, forms.Action{Key: keyChat, Label: "chat about it", Group: other})

@@ -39,6 +39,7 @@ var completionTree = []struct {
 		{"--persona", "Start from a described persona"}, {"--global", "Set the persona for every project"},
 	}},
 	{word{"doctor", "Check setup, sign-in, models, persona and trust"}, nil},
+	{word{"persona", "Show your persona and where it came from"}, []word{{"describe", "Show your persona and where it came from"}}},
 	{word{"sessions", "Pick a session of this directory and open it"}, []word{{"--all", "Every project's sessions"}, {"--list", "Print the sessions instead"}}},
 	{word{"models", "Choose, check and apply models"}, []word{
 		{"configure", "Choose models interactively"}, {"plan", "Show what will be used"},

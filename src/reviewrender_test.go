@@ -162,8 +162,8 @@ func TestRunReviewEngine_TheUserPicksTheDecisionThatIsPosted(t *testing.T) {
 	require.True(t, shown.Items[1].Open, "the final comment is open at the start")
 	require.Contains(t, shown.Items[1].Notes[0].Body, "Adds x as the description says.", "the final comment is a note, so it can be rewritten")
 	require.Equal(t, []forms.Action{
-		{Key: "1", Label: "post as Approve (suggested)", Group: "Post as"}, {Key: "2", Label: "post as Comment", Group: "Post as"},
-		{Key: "3", Label: "post as Request changes", Group: "Post as"}, {Key: "4", Label: "post as separate comments (deletable)", Group: "Or"},
+		{Key: "1", Label: "post as Approve (suggested)", Group: "Post as", Keeps: true}, {Key: "2", Label: "post as Comment", Group: "Post as", Keeps: true},
+		{Key: "3", Label: "post as Request changes", Group: "Post as", Keeps: true}, {Key: "4", Label: "post as separate comments (deletable)", Group: "Or", Keeps: true},
 		{Key: "c", Label: "chat about it", Group: "Or"},
 	}, shown.Keys)
 	require.Contains(t, out, "  a.go  1 suggestion · 1 nitpick\n", "a recap stays in the terminal")
@@ -171,6 +171,26 @@ func TestRunReviewEngine_TheUserPicksTheDecisionThatIsPosted(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(posted), `"event":"REQUEST_CHANGES"`, "the user's pick is posted, not the suggestion")
 	require.Contains(t, string(posted), "Adds x as the description says.")
+}
+
+func TestRunReviewEngine_ARewrittenFinalCommentIsPostedWithoutSending(t *testing.T) {
+	f := newPostFixture(t, styledEngine, 0)
+	onTerminal(t, true)
+	old := showAccordion
+	showAccordion = func(string, forms.Accordion) (string, []forms.Change, error) {
+		return "1", []forms.Change{{Kind: forms.ChangeEdit, Note: finalNoteID, Text: "Stellar work on this, thank you."}}, nil
+	}
+	t.Cleanup(func() { showAccordion = old })
+	_, _, err := captured(t, func() error {
+		_, err := runReviewEngine(postingContext(t), []string{f.engine, "the prompt"}, os.Environ(), time.Now().Add(10*time.Second))
+		return err
+	})
+	require.NoError(t, err)
+	posted, err := os.ReadFile(f.ghArgs)
+	require.NoError(t, err)
+	require.Contains(t, string(posted), `"event":"APPROVE"`)
+	require.Contains(t, string(posted), "Stellar work on this, thank you.", "the user's rewrite is what goes up")
+	require.NotContains(t, string(posted), "Adds x as the description says.")
 }
 
 func TestRunReviewEngine_ChangesAreSentThenTheRevisedReviewIsPosted(t *testing.T) {
