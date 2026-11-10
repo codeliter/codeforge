@@ -68,7 +68,7 @@ func askWork(w *work) error {
 	answers, err := forms.Run(forms.Page("ticket form",
 		forms.Field{Key: "ticket", Kind: forms.Input, Title: "Ticket", Description: "Leave empty if there is none.", Value: w.ticket},
 		forms.Field{Key: "description", Kind: forms.Text, Title: "Description", Lines: descriptionLines, Value: w.description, Required: "enter a description",
-			Description: "What needs to happen, with any context, links or limits. This also sets the effort."},
+			Description: "What needs to happen, with any context, links or limits."},
 	))
 	if err != nil {
 		return err
