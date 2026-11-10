@@ -3,6 +3,15 @@
 An AI helper for your code. It answers questions, makes changes, and reviews pull requests in your voice.
 It runs on [Empryo](https://empryo.com).
 
+## How it works
+
+- **Persona:** `codeforge init` learns how you write code and text from your Git history, so its changes and reviews read like yours. [More](TECHNICAL.md#2-initialisation-personas-and-repair)
+- **Model roles:** each job has its own model: one writes the code, an expert takes the hard pieces, cheap judges size reviews, and reviewers from other model families check the work. [More](TECHNICAL.md#4-effort-routing-and-model-roles)
+- **Modes:** `chat`, `work`, `ticket`, `review` and `respond` each run one agent with its own instructions. Tasks start at medium effort and the agent raises it when the work needs it.
+- **Guard:** every command and tool call is checked before it runs; reviews stay read-only, and the agent cannot change Codeforge's own settings. [More](TECHNICAL.md#3-enforcement-boundaries)
+- **Gate and review:** a change is sized, reviewed, and for larger ones checked by second reviewers. Their blockers are checked against the code before anything is posted, and you edit the review and pick the decision. [More](TECHNICAL.md#5-reviews-and-independent-checks)
+- **Memory:** sessions, reviews and learned habits are kept, so the next review of a PR follows up on the last one. [More](TECHNICAL.md#6-state-and-recovery)
+
 ## Install
 
 ```sh
