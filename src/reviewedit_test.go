@@ -402,6 +402,7 @@ func TestCheckLeads(t *testing.T) {
 		{name: "every lead ruled out leaves none", reply: "- RULED OUT `a.go:3` sorted later.\n- RULED OUT `b.go:9` the body is buffered in send().", want: ""},
 		{name: "a lead both kept and ruled out keeps the original", reply: "- RULED OUT `a.go:3` fine.\n- `a.go:3` A loser can outrank the winner here.\n- `b.go:9` The retry drops the body here.", want: leads},
 		{name: "a ruled-out place that is not a lead keeps the original", reply: "- RULED OUT `c.go:1` fine.\n- `a.go:3` A loser can outrank the winner here.", want: leads},
+		{name: "a place that is not a lead keeps the original", reply: "- RULED OUT `a.go:3` sorted later.\n- `c.go:1` Something else breaks here, buffer it.\n- `b.go:9` The retry drops the body here.", want: leads},
 		{name: "a ruling without a reason does not count", reply: "- RULED OUT `a.go:3`\n- `b.go:9` The retry drops the body here.", want: leads},
 		{
 			name:  "prose around the lines is dropped",
@@ -420,6 +421,14 @@ func TestCheckLeads(t *testing.T) {
 		})
 	}
 	require.Empty(t, checkLeads(t.Context(), "", func(context.Context, string) (string, error) { t.Fatal("no leads, no turn"); return "", nil }))
+}
+
+func TestCheckLeads_TwoLeadsAtOnePlaceAreNotChecked(t *testing.T) {
+	leads := review.LeadsHeader + "- `a.go:3` the retry drops the body\n- `a.go:3` the lock is held across the call\n"
+	require.Equal(t, leads, checkLeads(t.Context(), leads, func(context.Context, string) (string, error) {
+		t.Fatal("leads that share a place cannot be told apart in an answer, so none is checked")
+		return "", nil
+	}))
 }
 
 func TestDropCoveredLeads(t *testing.T) {

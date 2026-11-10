@@ -27,7 +27,6 @@ var flagsWithValue = map[string]bool{
 }
 
 // taskArgs prepends the coding model and an effort to a task launch; an explicit --effort wins if within the ceiling.
-// taskArgs prepends the coding model and an effort to a task launch; an explicit --effort wins if within the ceiling.
 // Without one the task starts at medium: no model calls are spent guessing the effort, and the agent asks for /effort
 // when the work turns out harder.
 func taskArgs(cfg config.Config, args []string) ([]string, error) {

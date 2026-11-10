@@ -680,6 +680,10 @@ func checkLeads(ctx context.Context, leads string, turn func(context.Context, st
 		}
 	}
 	fallback := review.LeadsHeader + strings.Join(compact, "\n") + "\n"
+	if len(slices.Compact(slices.Sorted(slices.Values(want)))) != len(want) {
+		// Two leads at one place cannot be told apart in the answer, so ruling out one could drop the other unchecked.
+		return fallback
+	}
 	reply, err := turn(ctx, leadsPrompt(body))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "codeforge: the leads could not be checked ("+err.Error()+"); posting them shortened.")
@@ -721,14 +725,14 @@ func parseCheckedLeads(reply string, want []string) (kept, ruledOut map[string]s
 	for _, l := range reviewLines(reply) {
 		l = strings.TrimSpace(l)
 		if m := ruledOutLine.FindStringSubmatch(l); m != nil {
-			if _, dup := ruledOut[m[1]]; dup {
+			if _, dup := ruledOut[m[1]]; dup || !slices.Contains(want, m[1]) {
 				return nil, nil, false
 			}
 			ruledOut[m[1]] = m[2]
 			continue
 		}
 		if m := leadLine.FindStringSubmatch(l); m != nil {
-			if _, dup := kept[m[1]]; dup {
+			if _, dup := kept[m[1]]; dup || !slices.Contains(want, m[1]) {
 				return nil, nil, false
 			}
 			kept[m[1]] = l
@@ -854,8 +858,9 @@ const (
 // the user's words.
 func leadsPrompt(leads string) string {
 	return "Another check of this change found the possible blockers below, which your review does not make. " +
-		"Check each one against the code before anything goes on the PR. " +
-		"When the code shows it does not break, answer `- RULED OUT `path:line` why`, with the evidence in one sentence. " +
+		"Before anything goes on the PR, open the file at each place and read the code around it. " +
+		"Only when the code you read shows it does not break, answer `- RULED OUT `path:line` why`, citing that code in one " +
+		"sentence; when you cannot tell, keep the lead. " +
 		"Otherwise it goes on the PR under your review, so rewrite it as I would leave it, in my voice as codeforge-persona " +
 		"describes it (codeforge-voice where it is silent): what breaks, then what to do, in plain words, " +
 		fmt.Sprintf("at most two sentences and %d words, with no hedging, no walkthrough and no mention of models, tools or ", maxLeadWords) +

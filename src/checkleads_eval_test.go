@@ -130,4 +130,5 @@ func TestEvalCheckLeads(t *testing.T) {
 	}
 	t.Logf("real lead kept %d/%d, false lead ruled out %d/%d", kept, runs, ruledOut, runs)
 	require.Equal(t, runs, kept, "a real blocker must never be ruled out")
+	require.Equal(t, runs, ruledOut, "a lead the code disproves must be left off")
 }

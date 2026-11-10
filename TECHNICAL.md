@@ -247,8 +247,7 @@ Provider routing and fallback are separate from Codeforge's role selection. Empr
 backoff, and backup-model attempts. Changing provider does not bypass shared connectivity failures,
 and an acknowledgement is not proof that the provider request succeeded.
 
-Implementation: [launch.go](src/launch.go), [effort/effort.go](src/effort/effort.go),
-[models.go](src/models.go), [config](src/config/config.go).
+Implementation: [launch.go](src/launch.go), [models.go](src/models.go), [config](src/config/config.go).
 The retired launch classifier's design paper and evaluation are in [adaptive-effort.md](docs/adaptive-effort.md).
 Its small evaluation set is not a release-by-release benchmark or a guarantee of calibration.
 
