@@ -21,7 +21,7 @@ You pick a model for each job: coding, expert help, review, effort judging, and 
 - **Provider defaults (recommended):** pick a main provider and an optional backup provider, then pick models by name, such as **Sonnet 5.5**. For DevPass, choose **LLM Gateway / DevPass** as main and **Copilot** as backup.
 - **Advanced:** type exact `provider/model` IDs. These choices have no Codeforge backup provider.
 
-New setups use **Sonnet 5.5** for coding and **Opus 5.5** for expert help. Existing choices are kept.
+New setups use **Opus 5.5** for coding, **Fable 5.2** for expert help and **Sonnet 5.5** to write the persona. Existing choices are kept.
 
 You also choose where to save:
 

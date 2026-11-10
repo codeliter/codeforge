@@ -10,22 +10,23 @@ import (
 	"github.com/codeliter/codeforge/src/config"
 )
 
-func TestSonnetDefaultWithOnDemandOpusExpert(t *testing.T) {
+func TestOpusDefaultWithOnDemandFableExpert(t *testing.T) {
 	cfg, err := config.LoadGlobal(t.TempDir())
 	require.NoError(t, err)
-	require.Equal(t, "copilot/claude-sonnet-5.5", cfg.Model)
-	require.Equal(t, "copilot/claude-opus-5.5", cfg.Expert)
+	require.Equal(t, "copilot/claude-opus-5.5", cfg.Model)
+	require.Equal(t, "copilot/claude-fable-5.2", cfg.Expert)
+	require.Equal(t, "copilot/claude-sonnet-5.5", cfg.Init, "the persona is drafted on Sonnet")
 	body, err := assets.Profile.ReadFile("agents/codeforge-expert.md")
 	require.NoError(t, err)
 	rendered, err := renderAgent(body, cfg)
 	require.NoError(t, err)
-	require.Contains(t, string(rendered), "model: copilot/claude-opus-5.5")
+	require.Contains(t, string(rendered), "model: copilot/claude-fable-5.2")
 	require.Contains(t, string(rendered), "specific difficult task")
 }
 
 func TestRecommendationsUseConnectedProviderAliases(t *testing.T) {
 	rec := recommend([]string{"llmgateway/claude-sonnet-5-5", "llmgateway/claude-opus-5-5", "copilot/gpt-6.1-sol", "copilot/kimi-k3"})
-	require.Equal(t, []string{"llmgateway/claude-sonnet-5-5"}, rec["model"])
+	require.Equal(t, []string{"llmgateway/claude-opus-5-5"}, rec["model"])
 	require.Equal(t, []string{"llmgateway/claude-opus-5-5"}, rec["expert"])
 }
 

@@ -241,6 +241,17 @@ func CatalogModel(ref, provider string, catalog []string) (string, error) {
 	return "", fmt.Errorf("%w: %q on provider %q", ErrModelName, ref, provider)
 }
 
+// builtInDefault reports whether ref names one of Codeforge's own default models.
+func builtInDefault(ref string) bool {
+	key := ModelReferenceKey(ref)
+	for _, id := range slices.Concat([]string{DefaultModel, DefaultExpertModel, DefaultReviewModel, DefaultLightModel, DefaultInitModel}, DefaultSecondOpinion) {
+		if ModelReferenceKey(ModelName(id)) == key {
+			return true
+		}
+	}
+	return false
+}
+
 func ResolveModelReference(role, ref string, policy *ProviderPolicy, catalog []string) (ModelRoute, error) {
 	route := ModelRoute{Role: role, Name: ref}
 	if ValidModelID(ref) {
@@ -260,6 +271,12 @@ func ResolveModelReference(role, ref string, policy *ProviderPolicy, catalog []s
 	}
 	var err error
 	route.Primary, err = CatalogModel(ref, primary, catalog)
+	if errors.Is(err, ErrModelName) && builtInDefault(ref) {
+		// A default the user never chose must not break a provider that lacks it; its closest model stands in.
+		if standIn, ok := EquivalentModel(ref, primary, catalog); ok {
+			route.Primary, err = standIn, nil
+		}
+	}
 	if err != nil {
 		return route, fmt.Errorf("%s: %w", role, err)
 	}

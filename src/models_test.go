@@ -34,12 +34,20 @@ func TestParseModelList(t *testing.T) {
 func TestRecommend(t *testing.T) {
 	rec := recommend(parseModelList(strings.NewReader(listing)))
 
-	require.Equal(t, []string{"copilot/claude-sonnet-5.5"}, rec["model"])
+	require.Equal(t, []string{"copilot/claude-opus-5.5"}, rec["model"])
 	require.Equal(t, []string{"copilot/claude-opus-5.5"}, rec["expert"])
 	require.Equal(t, []string{"copilot/claude-haiku-5.5", "copilot/gpt-6-luna"}, rec["judges"])
 	require.Equal(t, []string{"copilot/gpt-6.1-sol"}, rec["review.model"])
 	require.Equal(t, []string{"copilot/kimi-k3"}, rec["review.second_opinion"])
 	require.Equal(t, []string{"copilot/claude-sonnet-5.5"}, rec["init"])
+}
+
+func TestRecommend_FableIsTheExpertOverOpusCoder(t *testing.T) {
+	rec := recommend([]string{"x/claude-sonnet-5.5", "x/claude-opus-5.5", "x/claude-fable-5.2", "x/claude-haiku-5.5"})
+	require.Equal(t, []string{"x/claude-opus-5.5"}, rec["model"])
+	require.Equal(t, []string{"x/claude-fable-5.2"}, rec["expert"])
+	require.Equal(t, []string{"x/claude-haiku-5.5"}, rec["judges"])
+	require.Equal(t, []string{"x/claude-sonnet-5.5"}, rec["init"])
 }
 
 func TestRecommend_ReviewersAvoidCoderFamily(t *testing.T) {

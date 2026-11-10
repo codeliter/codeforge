@@ -31,6 +31,15 @@ func TestProviderModelResolution(t *testing.T) {
 	require.ErrorIs(t, err, ErrModelName)
 }
 
+func TestDefaultFableFallsBackToOpusOnAProviderWithoutIt(t *testing.T) {
+	policy := &ProviderPolicy{Primary: "copilot"}
+	route, err := ResolveModelReference("expert", ModelName(DefaultExpertModel), policy, []string{"copilot/claude-opus-5.5", "copilot/claude-sonnet-5.5"})
+	require.NoError(t, err)
+	require.Equal(t, "copilot/claude-opus-5.5", route.Primary)
+	_, err = ResolveModelReference("expert", "claude-opus-5", policy, []string{"copilot/claude-sonnet-5.5"})
+	require.ErrorIs(t, err, ErrModelName, "a model the user chose still fails loudly")
+}
+
 func TestProviderPlanAliasesCannotDuplicateReviewers(t *testing.T) {
 	cfg := Config{Providers: &ProviderPolicy{Primary: "devpass"}, Model: "Sonnet 5.5", Review: ReviewConfig{Model: "claude-sonnet-5-5"}}
 	_, err := ResolvePlan(cfg, providerTestCatalog())

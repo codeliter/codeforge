@@ -242,7 +242,7 @@ judge calls; an idle chat starts at low. Interactive review defaults to high. An
 `--effort` wins, but Codeforge rejects levels above high.
 
 The model-role settings are `model`, `expert`, `judges`, `review.model`, `review.second_opinion`, and `init`.
-The new-install coding default is Sonnet 5.5; the `codeforge-expert` delegate uses Opus 5.5 only for a bounded difficult task.
+The new-install coding default is Opus 5.5; the `codeforge-expert` delegate uses Fable 5.2 only for a bounded difficult task, and `init` defaults to Sonnet 5.5 unless a coder is set.
 Saved model choices are not overwritten. Gemini 4 Argon is excluded from Codeforge recommendations and selection lists;
 existing manually configured native Empryo routing/fallback settings are not silently rewritten.
 Recommendations try to separate model families. Configuration validation rejects identical model IDs

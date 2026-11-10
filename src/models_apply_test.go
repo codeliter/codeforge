@@ -79,11 +79,11 @@ func TestSaveRecommendedModels(t *testing.T) {
 	var preview string
 	next, err := saveRecommendedModels(home, root, "global", cfg, catalog, func(_ string, text string) bool { preview = text; return true })
 	require.NoError(t, err)
-	require.Contains(t, preview, "model: copilot/gpt-6.1-sol -> copilot/claude-sonnet-5.5")
-	require.Equal(t, "copilot/claude-sonnet-5.5", next.Model)
+	require.Contains(t, preview, "model: copilot/gpt-6.1-sol -> copilot/claude-opus-5.5")
+	require.Equal(t, "copilot/claude-opus-5.5", next.Model)
 	saved, err := config.ReadFile(home)
 	require.NoError(t, err)
-	require.Equal(t, "copilot/claude-sonnet-5.5", saved.Model)
+	require.Equal(t, "copilot/claude-opus-5.5", saved.Model)
 	require.Equal(t, "copilot/gpt-6.1-sol", saved.Review.Model)
 	require.Equal(t, "work", saved.DefaultMode, "non-role settings are kept")
 	require.Equal(t, "copilot/gpt-6-luna", saved.Routing["editing"], "helper routing is kept")
@@ -103,7 +103,7 @@ func TestSaveRecommendedModels(t *testing.T) {
 	require.NoError(t, err)
 	effective, err := config.Load(home, root, nil)
 	require.NoError(t, err)
-	require.Equal(t, "copilot/claude-sonnet-5.5", effective.Model, "saved project choices are approved and used")
+	require.Equal(t, "copilot/claude-opus-5.5", effective.Model, "saved project choices are approved and used")
 	globalAfter, err := config.ReadFile(home)
 	require.NoError(t, err)
 	require.Equal(t, saved.Model, globalAfter.Model, "project application must not change global settings")
@@ -116,7 +116,7 @@ func TestRecommendedModelsKeepProviderNames(t *testing.T) {
 	cfg := config.Config{Providers: &config.ProviderPolicy{Primary: "devpass", Fallback: "copilot"}, Model: "GPT 6.1 Sol"}
 	next, _, err := recommendedModelConfig(cfg, providerTestCatalog())
 	require.NoError(t, err)
-	require.Equal(t, "claude-sonnet-5-5", next.Model, "recommendations follow the primary provider and stay provider-neutral names")
+	require.Equal(t, "claude-opus-5-5", next.Model, "recommendations follow the primary provider and stay provider-neutral names")
 	require.Equal(t, "GPT 6.1 Sol", cfg.Model, "input is not mutated")
 }
 func TestModelApplyLoadsOnlySelectedSavedScope(t *testing.T) {

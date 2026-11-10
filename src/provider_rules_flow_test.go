@@ -225,7 +225,7 @@ func TestRecommendationsFollowRules(t *testing.T) {
 			require.Equal(t, policy.PrimaryFor(name), strings.Split(route.Primary, "/")[0], name)
 		}
 	}
-	require.Equal(t, []string{"claude-sonnet-5-5"}, rec["model"])
+	require.Equal(t, []string{"claude-opus-5-5"}, rec["model"])
 }
 
 func TestCoverageIgnoresModelsARuleRoutesElsewhere(t *testing.T) {

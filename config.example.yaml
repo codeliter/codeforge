@@ -17,8 +17,8 @@ providers:
 #       fallbacks: [openrouter]
 # Omit fallbacks to inherit native policy without a Codeforge backup preference.
 # The older single "fallback: copilot" key still works and comes first.
-model: Sonnet 5.5
-expert: Opus 5.5
+model: Opus 5.5
+expert: Fable 5.2
 judges:
   - Haiku 5.5
   - gpt-6-luna
@@ -38,7 +38,7 @@ review:
 init: Sonnet 5.5
 
 # Explicit provider/model values are advanced overrides; they keep native fallback.
-# expert: copilot/claude-opus-5.5
+# expert: copilot/claude-fable-5.2
 
 # Optional profile routing. Omitted project jobs inherit global Codeforge routing.
 # In a project override, an empty string resets that job to native Empryo routing.

@@ -26,7 +26,10 @@ func TestEquivalentModelPrefersSameLineThenLevel(t *testing.T) {
 		require.True(t, ok, c.want+" on "+c.provider)
 		require.Equal(t, c.got, got, c.want+" on "+c.provider)
 	}
-	_, ok := EquivalentModel("claude-opus-5.5", "fast", catalog)
+	standIn, ok := EquivalentModel("claude-fable-5.2", "copilot", []string{"copilot/claude-sonnet-5.5", "copilot/claude-opus-5.5"})
+	require.True(t, ok)
+	require.Equal(t, "copilot/claude-opus-5.5", standIn, "Opus stands in for Fable where Fable is not served")
+	_, ok = EquivalentModel("claude-opus-5.5", "fast", catalog)
 	require.False(t, ok, "a fast-only provider has nothing at the frontier level")
 	_, ok = EquivalentModel("claude-opus-5.5", "none", catalog)
 	require.False(t, ok, "unknown models never stand in")

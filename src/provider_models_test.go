@@ -56,7 +56,7 @@ func TestProviderRecommendationsKeepNamesAndOverrides(t *testing.T) {
 	require.Equal(t, []string{"custom/private-model"}, rec["expert"])
 	require.Equal(t, []string{"gpt-6-1-sol"}, rec["review.model"])
 	rec = recommendConfigured(providerTestCatalog(), cfg, false)
-	require.Equal(t, []string{"claude-sonnet-5-5"}, rec["model"])
+	require.Equal(t, []string{"claude-opus-5-5"}, rec["model"])
 	require.Equal(t, []string{"claude-opus-5-5"}, rec["expert"])
 	require.False(t, config.SuggestedModel("Gemini 4 Argon"))
 	require.Equal(t, "claude", config.Family("Sonnet 5.5"))

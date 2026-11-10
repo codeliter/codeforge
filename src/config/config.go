@@ -46,10 +46,12 @@ type ReviewConfig struct {
 }
 
 const (
-	DefaultModel       = "copilot/claude-sonnet-5.5"
-	DefaultExpertModel = "copilot/claude-opus-5.5"
+	DefaultModel       = "copilot/claude-opus-5.5"
+	DefaultExpertModel = "copilot/claude-fable-5.2"
 	DefaultReviewModel = "copilot/gpt-6.1-sol"
 	DefaultLightModel  = "copilot/deepseek-v4.1-flash"
+	// DefaultInitModel writes the persona; drafting needs no more than Sonnet.
+	DefaultInitModel = "copilot/claude-sonnet-5.5"
 )
 
 var DefaultSecondOpinion = []string{"copilot/kimi-k3"}
@@ -107,6 +109,9 @@ func Defaults(cfg Config) Config {
 			return ModelName(id)
 		}
 		return id
+	}
+	if cfg.Init == "" && cfg.Model == "" {
+		cfg.Init = choice(DefaultInitModel)
 	}
 	cfg.Model = cmp.Or(cfg.Model, choice(DefaultModel))
 	cfg.Init = cmp.Or(cfg.Init, cfg.Model)

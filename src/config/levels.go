@@ -16,7 +16,7 @@ const (
 // levelWords maps a word in a model name to its level. Names with none of these words have no known level,
 // so they are only replaced by another version of the same model line.
 var levelWords = map[string]string{
-	"opus": levelFrontier, "sol": levelFrontier, "pro": levelFrontier, "ultra": levelFrontier, "kimi": levelFrontier,
+	"opus": levelFrontier, "fable": levelFrontier, "mythos": levelFrontier, "sol": levelFrontier, "pro": levelFrontier, "ultra": levelFrontier, "kimi": levelFrontier,
 	"sonnet": levelEveryday,
 	"haiku":  levelFast, "luna": levelFast, "flash": levelFast, "nano": levelFast, "mini": levelFast, "lite": levelFast,
 }
