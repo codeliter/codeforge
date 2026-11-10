@@ -27,7 +27,7 @@ func TestTaskArgs_ExplicitEffort(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := taskArgs(t.Context(), "/nonexistent", cfg, tt.args)
+			got, err := taskArgs(cfg, tt.args)
 			if tt.wantErr {
 				require.ErrorIs(t, err, errEffortAboveCeiling)
 				return
@@ -39,13 +39,13 @@ func TestTaskArgs_ExplicitEffort(t *testing.T) {
 }
 
 func TestTaskArgs_NoPromptStartsAtMedium(t *testing.T) {
-	got, err := taskArgs(t.Context(), "/nonexistent", config.Config{}, []string{"--cwd", "/tmp/migrate"})
+	got, err := taskArgs(config.Config{}, []string{"--cwd", "/tmp/migrate"})
 	require.NoError(t, err)
 	require.Equal(t, []string{"--effort", "medium", "--cwd", "/tmp/migrate"}, got)
 }
 
-func TestTaskArgs_JudgeFailureFallsBackToMedium(t *testing.T) {
-	got, err := taskArgs(t.Context(), "/nonexistent", config.Config{Judges: []string{"x/y"}}, []string{"--headless", "explain", "this"})
+func TestTaskArgs_APromptStartsAtMediumWithoutAskingJudges(t *testing.T) {
+	got, err := taskArgs(config.Config{Judges: []string{"x/y"}}, []string{"--headless", "explain", "this"})
 	require.NoError(t, err)
 	require.Equal(t, []string{"--effort", "medium", "--headless", "explain", "this"}, got)
 }

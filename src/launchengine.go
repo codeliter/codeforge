@@ -157,32 +157,20 @@ func modeArgs(ctx context.Context, bin string, cfg config.Config, cmd string, ar
 		args, err = reviewArgs(ctx, bin, cfg.Review, judgesFor(bin, cfg.Judges, nil), jurorsFor(bin), args)
 		return modeReview, args, err
 	case modeWork:
-		// Skip effort judges for conversational work; explicit effort still wins.
-		if !hasEffort(args) {
-			args = append([]string{"--effort", "medium"}, args...)
-		}
-		args, err = taskArgs(ctx, bin, cfg, args)
+		args, err = taskArgs(cfg, args)
 		return modeWork, args, err
 	case modeChat:
 		if promptOf(args) == "" && !hasEffort(args) {
 			args = append([]string{"--effort", "low"}, args...)
 		}
-		args, err = taskArgs(ctx, bin, cfg, args)
+		args, err = taskArgs(cfg, args)
 		return cmd, args, err
 	}
 
-	description := ""
-	if args, description, err = startArgs(args); err != nil {
+	if args, err = startArgs(args); err != nil {
 		return modeTicket, nil, err
 	}
-	// The judges score the description alone, not the skill and ticket lines added around it.
-	if !hasEffort(args) {
-		if err := checkEffort(args); err != nil {
-			return modeTicket, nil, err
-		}
-		args = append([]string{"--effort", classify(ctx, bin, description, cfg.Judges).String()}, args...)
-	}
-	args, err = taskArgs(ctx, bin, cfg, args)
+	args, err = taskArgs(cfg, args)
 	return modeTicket, args, err
 }
 

@@ -13,9 +13,6 @@ var Personas embed.FS
 //go:embed prompts/init.md
 var InitPrompt string
 
-//go:embed prompts/rubric.md
-var Rubric string
-
 //go:embed prompts/review-rubric.md
 var ReviewRubric string
 

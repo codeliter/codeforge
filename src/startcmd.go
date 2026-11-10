@@ -18,22 +18,21 @@ type work struct {
 }
 
 // startArgs collects the ticket and description, then turns them into a task prompt for the agent.
-// It also returns the description alone, which the effort judges score.
-func startArgs(args []string) ([]string, string, error) {
+func startArgs(args []string) ([]string, error) {
 	w, rest, err := workFromArgs(args)
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
 
 	if w.description == "" {
 		if !interactive() {
-			return nil, "", errStartUsage
+			return nil, errStartUsage
 		}
 		if err := askWork(&w); err != nil {
-			return nil, "", err
+			return nil, err
 		}
 	}
-	return append(rest, w.prompt()), strings.TrimSpace(w.description), nil
+	return append(rest, w.prompt()), nil
 }
 
 func workFromArgs(args []string) (work, []string, error) {

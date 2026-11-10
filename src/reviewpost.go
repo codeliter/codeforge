@@ -152,9 +152,10 @@ func runShownReview(ctx context.Context, argv, env []string, limit time.Time, st
 	if pipe := review.PipelineOf(ctx); pipe != nil && post.Enabled() {
 		leads = pipe.Leads(ctx)
 		if dropCoveredLeads(leads, text) != "" {
-			// Another reviewer wrote them; what goes on the PR reads as the user's own, like the rest of the review.
-			fmt.Fprintln(os.Stderr, "codeforge: putting the unconfirmed blocking leads in your words...")
-			leads = voiceLeads(ctx, leads, reviewTurn(argv, env))
+			// Another reviewer wrote them: the reviewer checks them against the code, and what goes on the PR reads as the
+			// user's own, like the rest of the review.
+			fmt.Fprintln(os.Stderr, "codeforge: checking the unconfirmed blocking leads against the code...")
+			leads = checkLeads(ctx, leads, reviewTurn(argv, env))
 		}
 	}
 	asked, answer := false, false

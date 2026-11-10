@@ -42,8 +42,9 @@ init: Sonnet 5.5
 
 # Optional profile routing. Omitted project jobs inherit global Codeforge routing.
 # In a project override, an empty string resets that job to native Empryo routing.
+# Route only work whose mistakes are cheap to spot (research, summaries, search) to smaller models; edits stay on
+# the coding model.
 routing:
   research: gpt-6-luna
-  editing: Sonnet 5.5
   verify: gpt-6.1-sol
   summaries: gpt-6-luna

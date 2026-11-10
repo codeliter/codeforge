@@ -32,7 +32,7 @@ func TestConfigurationLayersAndEnvironment(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "environment/coder", cfg.Model)
 	require.Equal(t, "environment/writer", cfg.Init)
-	args, err := taskArgs(t.Context(), "/missing", cfg, []string{"--effort", "low", "--model", "cli/coder", "task"})
+	args, err := taskArgs(cfg, []string{"--effort", "low", "--model", "cli/coder", "task"})
 	require.NoError(t, err)
 	require.Equal(t, "cli/coder", flagValue(args, "--model"))
 	preserved, err := config.ReadFile(home)

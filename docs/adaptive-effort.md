@@ -1,7 +1,9 @@
 # Adaptive reasoning effort for a coding agent
 
-Implementation scope: this classifier applies to prompted ticket/chat launches without an explicit effort.
-Work and review use their own defaults. The evaluation below is a historical report, not a benchmark rerun for each release.
+Status: retired. Every task now starts at medium and the agent changes effort itself with `/effort`; no judge runs
+before launch. Current models manage effort inside one loop, so the classifier spent two calls and a few seconds per
+launch on a choice the agent could make. This paper is kept as a historical record; the code and `effort/eval_test.go`
+are gone. The `judges` role still sizes reviews.
 See [TECHNICAL.md](../TECHNICAL.md) for the current architecture and consolidated citations.
 
 ## Abstract

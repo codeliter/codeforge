@@ -24,7 +24,7 @@ type Role struct {
 var Roles = []Role{
 	{"model", 1, "writes the code; Opus is the everyday default, Sonnet when cost matters more", []string{"claude-opus-5.5", "claude-sonnet-5.5", "gpt-6.1-sol", "claude-opus-5", "gpt-6-sol"}},
 	{"expert", 1, "on-demand delegate for refactors, migrations and work the coder falls short on", []string{"claude-fable-5.2", "claude-opus-5.5", "claude-opus-5", "gpt-6.1-sol"}},
-	{"judges", 2, "score effort before launch; cheapest fast models, two families", []string{"claude-haiku-5.5", "gpt-6-luna", "gemini-3.8-flash", "gpt-5.6-luna", "mai-code-1.1-flash", "gpt-5.4-nano"}},
+	{"judges", 2, "size each review (tier, jury); cheapest fast models, two families", []string{"claude-haiku-5.5", "gpt-6-luna", "gemini-3.8-flash", "gpt-5.6-luna", "mai-code-1.1-flash", "gpt-5.4-nano"}},
 	{"review.model", 1, "writes the review; strongest model from a different family than the coder", []string{"gpt-6.1-sol", "claude-opus-5.5", "gpt-5.5", "claude-opus-5", "gemini-3.8-flash"}},
 	{"review.second_opinion", 2, "independent reviewers; frontier models from other families", []string{"kimi-k3", "gpt-6.1-sol", "gpt-5.5", "claude-opus-5.5"}},
 	{"init", 1, "distils your persona once; capable everyday writer", []string{"claude-sonnet-5.5", "claude-opus-5.5", "gpt-6.1-sol"}},

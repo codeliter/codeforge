@@ -41,28 +41,24 @@ func TestWorkPrompt_NoTicket(t *testing.T) {
 }
 
 func TestStartArgs_NeedsDescriptionWhenNotInteractive(t *testing.T) {
-	_, _, err := startArgs([]string{"--ticket", "ABC-1"})
+	_, err := startArgs([]string{"--ticket", "ABC-1"})
 	require.ErrorIs(t, err, errStartUsage)
 }
 
-func TestStartArgs_ReturnsDescriptionForTheJudge(t *testing.T) {
-	args, description, err := startArgs([]string{"--ticket", "ABC-1", "--model", "a/b", "fix", "the", "race"})
+func TestStartArgs_KeepsFlagsAndBuildsThePrompt(t *testing.T) {
+	args, err := startArgs([]string{"--ticket", "ABC-1", "--model", "a/b", "fix", "the", "race"})
 	require.NoError(t, err)
-	require.Equal(t, "fix the race", description, "the judge sees the description, not the prompt template")
 	require.Equal(t, []string{"--model", "a/b"}, args[:2])
 	require.Contains(t, args[2], "Ticket: ABC-1.")
 }
 
-func TestTicketJudgeScoresDescriptionOnly(t *testing.T) {
+func TestTicketStartsAtMediumWithoutAskingJudges(t *testing.T) {
 	bin := filepath.Join(t.TempDir(), "empryo")
-	capture := filepath.Join(t.TempDir(), "judge-input")
-	t.Setenv("CODEFORGE_JUDGE_CAPTURE", capture)
-	require.NoError(t, os.WriteFile(bin, []byte("#!/bin/sh\nfor a; do last=$a; done\nprintf '%s' \"$last\" > \"$CODEFORGE_JUDGE_CAPTURE\"\nprintf '%s' '{\"output\":\"{\\\"ambiguity\\\":0,\\\"blast\\\":0,\\\"risk\\\":0,\\\"novelty\\\":0,\\\"verify\\\":0,\\\"reason\\\":\\\"typo\\\"}\"}'\n"), execPerm))
+	require.NoError(t, os.WriteFile(bin, []byte("#!/bin/sh\nexit 90\n"), execPerm))
 	mode, args, err := modeArgs(t.Context(), bin, config.Config{Model: "a/coder", Judges: []string{"a/judge"}}, modeTicket, []string{"--ticket", "ABC-1", "fix", "the", "typo"})
-	require.NoError(t, err)
+	require.NoError(t, err, "no model is called before the task starts")
 	require.Equal(t, modeTicket, mode)
-	require.Equal(t, "low", flagValue(args, "--effort"))
-	data, err := os.ReadFile(capture)
-	require.NoError(t, err)
-	require.Equal(t, "<task>\nfix the typo\n</task>", string(data), "no skill line, ticket line or repo signals reach the judge")
+	require.Equal(t, "medium", flagValue(args, "--effort"))
+	_, _, err = modeArgs(t.Context(), bin, config.Config{}, modeTicket, []string{"--ticket", "ABC-1", "--effort", "max", "fix"})
+	require.ErrorIs(t, err, errEffortAboveCeiling)
 }

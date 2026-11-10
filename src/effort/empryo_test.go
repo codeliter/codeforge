@@ -36,8 +36,3 @@ func TestEmpryoJudgeErrors(t *testing.T) {
 	_, err = EmpryoJudge{Bin: bin, Model: "a/b"}.Ask(t.Context(), "s", "u")
 	require.ErrorIs(t, err, errEmpryo)
 }
-
-func TestUserMessageOmitsEmptySignals(t *testing.T) {
-	require.Equal(t, "<task>\nfix it\n</task>", userMessage("fix it", Signals{}))
-	require.Contains(t, userMessage("fix it", Signals{ChangedFiles: 2}), "changed_files=2")
-}

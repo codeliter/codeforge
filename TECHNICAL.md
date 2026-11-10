@@ -225,21 +225,15 @@ Outcomes are ordered by when the async hook wrote them, which can differ slightl
 
 ## 4. Effort routing and model roles
 
-The effort classifier borrows the idea of allocating inference compute by task difficulty [1–5]
-and uses rubric-based judging [6] with a diverse judge panel [7]. It is not an implementation of the
-papers' trained routers, nor evidence that their reported cost or accuracy gains transfer to Codeforge.
+Tasks start at medium: ticket, work and prompted chat launches spend no model calls guessing the
+effort, and the agent suggests `/effort` when the work turns out harder or easier. An idle chat starts
+at low and interactive review defaults to high. An explicit supported `--effort` wins, but Codeforge
+rejects levels above high.
 
-For applicable prompted launches without an explicit effort, judges independently score ambiguity,
-blast radius, risk, novelty, and verification difficulty from 0 to 2. Risk uses the maximum score;
-the other dimensions use the rounded mean. A deterministic rule chooses the effort:
-
-- **High:** risk is 2, ambiguity is 2, total is at least 7, or verification is 2 with total at least 5.
-- **Low:** total is at most 2, provided no high-effort rule applies.
-- **Medium:** otherwise; also the fallback when all judges fail.
-
-Ticket and prompted chat launches can use this classifier. Work starts at medium without startup
-judge calls; an idle chat starts at low. Interactive review defaults to high. An explicit supported
-`--effort` wins, but Codeforge rejects levels above high.
+Codeforge used to score each prompted launch with a two-judge rubric panel before the agent started
+([adaptive-effort.md](docs/adaptive-effort.md)). It was retired because current models manage effort
+inside one loop, and an up-front classifier cost a few seconds and two calls on every launch for a
+level the agent could change anyway. The `judges` role now only sizes reviews (section 5).
 
 The model-role settings are `model`, `expert`, `judges`, `review.model`, `review.second_opinion`, and `init`.
 The new-install coding default is Opus 5.5; the `codeforge-expert` delegate uses Fable 5.2 only for a bounded difficult task, and `init` defaults to Sonnet 5.5 unless a coder is set.
@@ -255,7 +249,7 @@ and an acknowledgement is not proof that the provider request succeeded.
 
 Implementation: [launch.go](src/launch.go), [effort/effort.go](src/effort/effort.go),
 [models.go](src/models.go), [config](src/config/config.go).
-The project design paper and historical evaluation are in [adaptive-effort.md](docs/adaptive-effort.md).
+The retired launch classifier's design paper and evaluation are in [adaptive-effort.md](docs/adaptive-effort.md).
 Its small evaluation set is not a release-by-release benchmark or a guarantee of calibration.
 
 ### YAML configuration and launch-only overrides
@@ -407,6 +401,13 @@ The interactive review's jury requirement is expressed in the brief and skill. T
 `codeforge gate` also has programmatic quorum, verdict parsing, cache, and finding-grounding checks.
 Do not confuse a rendered draft with a machine-validated gate pass. A quota failure or repository rule
 forbidding a configured juror does not count as an independent review and must not silently become approval.
+
+In a review that posts, the second opinions run beside the reviewer, and the blockers they report that the review does
+not make are sent back to the reviewer's own session before anything is posted (`checkLeads` in
+[reviewedit.go](src/reviewedit.go)). The reviewer checks each against the code: one the code rules out is left off, with
+its reason shown on the terminal; the rest are rewritten in the user's voice and posted as unconfirmed leads. A juror's
+word alone is never a verdict, and the same turn does the checking and the wording. When the turn fails or does not
+account for every lead, every lead is posted, shortened.
 
 Implementation: [reviewcmd.go](src/reviewcmd.go), [review/triage.go](src/review/triage.go),
 [review/jury.go](src/review/jury.go), [gate.go](src/gate.go),

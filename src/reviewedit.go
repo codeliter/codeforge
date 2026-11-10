@@ -657,11 +657,12 @@ func withoutPrompt(args []string) []string {
 	return slices.Concat(args[:prompt], args[prompt+1:])
 }
 
-// voiceLeads has the reviewer rewrite the unconfirmed blocking leads, which another reviewer wrote in its own words, as
-// the user would leave them: short, plain and in the persona's voice, one line each, every lead kept at its place. The
-// leads are returned as they were when the turn fails or its answer does not keep every lead, so a blocker is never
-// lost to a rewrite.
-func voiceLeads(ctx context.Context, leads string, turn func(context.Context, string) (string, error)) string {
+// checkLeads has the reviewer, in its own session, check the unconfirmed blocking leads another reviewer found against
+// the code, and rewrite the ones that stand as the user would leave them: short, plain and in the persona's voice, one
+// line each, every lead kept at its place. A juror's word alone is not a verdict, so a lead the reviewer rules out from
+// the code, with its reason, is left off and said on the terminal. Every lead is kept as it was when the turn fails or
+// its answer does not account for every lead, so a blocker is never lost to a rewrite.
+func checkLeads(ctx context.Context, leads string, turn func(context.Context, string) (string, error)) string {
 	header, body, found := strings.Cut(leads, review.LeadsHeader)
 	if !found || strings.TrimSpace(header) != "" {
 		return leads
@@ -681,26 +682,74 @@ func voiceLeads(ctx context.Context, leads string, turn func(context.Context, st
 	fallback := review.LeadsHeader + strings.Join(compact, "\n") + "\n"
 	reply, err := turn(ctx, leadsPrompt(body))
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "codeforge: the leads could not be put in your words ("+err.Error()+"); posting them shortened.")
+		fmt.Fprintln(os.Stderr, "codeforge: the leads could not be checked ("+err.Error()+"); posting them shortened.")
+		return fallback
+	}
+	kept, ruledOut, ok := parseCheckedLeads(reply, want)
+	if !ok {
 		return fallback
 	}
 	var lines []string
-	for _, l := range reviewLines(reply) {
-		if l = strings.TrimSpace(l); leadLine.MatchString(l) {
-			lines = append(lines, l)
+	for i, place := range want {
+		if why, out := ruledOut[place]; out {
+			fmt.Fprintf(os.Stderr, "codeforge: left out the lead at %s, which the code rules out: %s\n", place, why)
+			continue
 		}
-	}
-	if !slices.Equal(leadPlaces(strings.Join(lines, "\n")), want) {
-		return fallback
-	}
-	// A rewrite that says next to nothing has lost the lead, and one no shorter than the plain form gains nothing: the
-	// plain form stands for it.
-	for i, l := range lines {
+		// A rewrite that says next to nothing has lost the lead, and one no shorter than the plain form gains nothing:
+		// the plain form stands for it.
+		l := kept[place]
 		if n := len(strings.Fields(l)) - leadPrefixWords; n < minLeadWords || len(strings.Fields(l)) >= len(strings.Fields(compact[i])) && n > maxLeadWords {
-			lines[i] = compact[i]
+			l = compact[i]
 		}
+		lines = append(lines, l)
+	}
+	if len(lines) == 0 {
+		return ""
 	}
 	return review.LeadsHeader + strings.Join(lines, "\n") + "\n"
+}
+
+// ruledOutLine is a lead the reviewer ruled out: its place, then why the code shows it does not break.
+var ruledOutLine = regexp.MustCompile("^- RULED OUT `([^`]+:\\d+)` (\\S.*)$")
+
+// parseCheckedLeads reads the reviewer's answer on the leads: each place in want either rewritten or ruled out with a
+// reason, exactly once, the rewritten ones in their order. Anything else around those lines is ignored. It reports false
+// when the answer does not account for every lead, or names a place that is not one.
+func parseCheckedLeads(reply string, want []string) (kept, ruledOut map[string]string, ok bool) {
+	kept, ruledOut = map[string]string{}, map[string]string{}
+	var order []string
+	for _, l := range reviewLines(reply) {
+		l = strings.TrimSpace(l)
+		if m := ruledOutLine.FindStringSubmatch(l); m != nil {
+			if _, dup := ruledOut[m[1]]; dup {
+				return nil, nil, false
+			}
+			ruledOut[m[1]] = m[2]
+			continue
+		}
+		if m := leadLine.FindStringSubmatch(l); m != nil {
+			if _, dup := kept[m[1]]; dup {
+				return nil, nil, false
+			}
+			kept[m[1]] = l
+			order = append(order, m[1])
+		}
+	}
+	if len(kept)+len(ruledOut) != len(want) {
+		return nil, nil, false
+	}
+	var standing []string
+	for _, place := range want {
+		_, k := kept[place]
+		_, r := ruledOut[place]
+		if k == r {
+			return nil, nil, false
+		}
+		if k {
+			standing = append(standing, place)
+		}
+	}
+	return kept, ruledOut, slices.Equal(order, standing)
 }
 
 // compactLead is a lead line cut to what a reader needs: its place, the sentence that says what breaks, and the
@@ -801,12 +850,16 @@ const (
 )
 
 // leadsPrompt asks the reviewer, in its own session, to put the leads in the user's words.
+// leadsPrompt asks the reviewer, in its own session, to check the leads against the code and put the ones that stand in
+// the user's words.
 func leadsPrompt(leads string) string {
-	return "Another check of this change found the possible blockers below, which your review does not confirm. " +
-		"They go on the PR under your review, so rewrite each one as I would leave it, in my voice as codeforge-persona " +
+	return "Another check of this change found the possible blockers below, which your review does not make. " +
+		"Check each one against the code before anything goes on the PR. " +
+		"When the code shows it does not break, answer `- RULED OUT `path:line` why`, with the evidence in one sentence. " +
+		"Otherwise it goes on the PR under your review, so rewrite it as I would leave it, in my voice as codeforge-persona " +
 		"describes it (codeforge-voice where it is silent): what breaks, then what to do, in plain words, " +
 		fmt.Sprintf("at most two sentences and %d words, with no hedging, no walkthrough and no mention of models, tools or ", maxLeadWords) +
-		"a second check. Keep every lead, in the same order, each on one line that starts with its place exactly as " +
+		"a second check. Answer for every lead, in the same order, each on one line that starts with its place exactly as " +
 		"given (`- `path:line` text`). Reply with those lines and nothing else.\n\n" + leads
 }
 

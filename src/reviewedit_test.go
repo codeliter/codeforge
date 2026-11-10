@@ -378,7 +378,7 @@ func TestReviseReview_TheAnswerFollowsTheFindingAsTheUserLeftIt(t *testing.T) {
 	}
 }
 
-func TestVoiceLeads(t *testing.T) {
+func TestCheckLeads(t *testing.T) {
 	leads := review.LeadsHeader + "- `a.go:3` The ranking assumes the winner bonus always wins, and it does not. Duel example: ...\n- `b.go:9` drops data\n"
 	tests := []struct {
 		name  string
@@ -395,6 +395,15 @@ func TestVoiceLeads(t *testing.T) {
 		{name: "a place changed keeps the original", reply: "- `a.go:4` x\n- `b.go:9` y", want: leads},
 		{name: "a failed turn keeps the original", err: errors.New("down"), want: leads}, //nolint:err113 // a stand-in failure
 		{
+			name:  "a lead the code rules out is left off",
+			reply: "- RULED OUT `a.go:3` The winner bonus is applied after the sort in rank().\n- `b.go:9` The retry drops the body. Buffer it.",
+			want:  review.LeadsHeader + "- `b.go:9` The retry drops the body. Buffer it.\n",
+		},
+		{name: "every lead ruled out leaves none", reply: "- RULED OUT `a.go:3` sorted later.\n- RULED OUT `b.go:9` the body is buffered in send().", want: ""},
+		{name: "a lead both kept and ruled out keeps the original", reply: "- RULED OUT `a.go:3` fine.\n- `a.go:3` A loser can outrank the winner here.\n- `b.go:9` The retry drops the body here.", want: leads},
+		{name: "a ruled-out place that is not a lead keeps the original", reply: "- RULED OUT `c.go:1` fine.\n- `a.go:3` A loser can outrank the winner here.", want: leads},
+		{name: "a ruling without a reason does not count", reply: "- RULED OUT `a.go:3`\n- `b.go:9` The retry drops the body here.", want: leads},
+		{
 			name:  "prose around the lines is dropped",
 			reply: "Here they are:\n- `a.go:3` A loser can outrank the winner here.\n- `b.go:9` The retry drops the body here.\nDone.",
 			want:  review.LeadsHeader + "- `a.go:3` A loser can outrank the winner here.\n- `b.go:9` The retry drops the body here.\n",
@@ -404,12 +413,13 @@ func TestVoiceLeads(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			var prompt string
 			turn := func(_ context.Context, p string) (string, error) { prompt = p; return tt.reply, tt.err }
-			require.Equal(t, tt.want, voiceLeads(t.Context(), leads, turn))
+			require.Equal(t, tt.want, checkLeads(t.Context(), leads, turn))
 			require.Contains(t, prompt, "codeforge-persona")
+			require.Contains(t, prompt, "RULED OUT", "the reviewer is asked to check each lead against the code")
 			require.NotContains(t, prompt, review.LeadsHeader, "only the leads are sent, not the header")
 		})
 	}
-	require.Empty(t, voiceLeads(t.Context(), "", func(context.Context, string) (string, error) { t.Fatal("no leads, no turn"); return "", nil }))
+	require.Empty(t, checkLeads(t.Context(), "", func(context.Context, string) (string, error) { t.Fatal("no leads, no turn"); return "", nil }))
 }
 
 func TestDropCoveredLeads(t *testing.T) {
@@ -501,14 +511,14 @@ func TestTightenReview_ACutNeverChangesALabelTheDecisionOrAnotherFinding(t *test
 	}
 }
 
-func TestVoiceLeads_ARewriteThatSaysNothingKeepsTheOriginal(t *testing.T) {
+func TestCheckLeads_ARewriteThatSaysNothingKeepsTheOriginal(t *testing.T) {
 	leads := review.LeadsHeader + "- `a.go:3` the retry re-sends the read body, so the upload is empty\n"
-	require.Equal(t, leads, voiceLeads(t.Context(), leads, func(context.Context, string) (string, error) { return "- `a.go:3` Looks fine.", nil }))
+	require.Equal(t, leads, checkLeads(t.Context(), leads, func(context.Context, string) (string, error) { return "- `a.go:3` Looks fine.", nil }))
 }
 
 func TestLeads_ALeadThatCannotBePlacedIsNeverLost(t *testing.T) {
 	leads := review.LeadsHeader + "- `a.go:3` \n- `b.go:9` the retry drops the body\n"
-	require.Equal(t, leads, voiceLeads(t.Context(), leads, func(context.Context, string) (string, error) {
+	require.Equal(t, leads, checkLeads(t.Context(), leads, func(context.Context, string) (string, error) {
 		t.Fatal("a lead that cannot be checked after a rewrite is not rewritten")
 		return "", nil
 	}))
@@ -574,9 +584,9 @@ func TestCompactLead(t *testing.T) {
 	require.Equal(t, short, compactLead(short), "a short lead stays as written")
 }
 
-func TestVoiceLeads_AFailedTurnStillShortensTheLeads(t *testing.T) {
+func TestCheckLeads_AFailedTurnStillShortensTheLeads(t *testing.T) {
 	long := review.LeadsHeader + "- `a.go:3` It breaks. " + strings.Repeat("More detail here. ", 20) + "Fix: buffer the body.\n"
-	got := voiceLeads(t.Context(), long, func(context.Context, string) (string, error) { return "", errors.New("down") }) //nolint:err113 // a stand-in failure
+	got := checkLeads(t.Context(), long, func(context.Context, string) (string, error) { return "", errors.New("down") }) //nolint:err113 // a stand-in failure
 	require.Equal(t, review.LeadsHeader+"- `a.go:3` It breaks. Buffer the body.\n", got)
 }
 

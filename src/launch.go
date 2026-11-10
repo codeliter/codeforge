@@ -1,7 +1,6 @@
 package src
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -10,8 +9,6 @@ import (
 	"strings"
 
 	"github.com/codeliter/codeforge/src/config"
-
-	"github.com/codeliter/codeforge/src/effort"
 )
 
 var (
@@ -30,17 +27,16 @@ var flagsWithValue = map[string]bool{
 }
 
 // taskArgs prepends the coding model and an effort to a task launch; an explicit --effort wins if within the ceiling.
-func taskArgs(ctx context.Context, bin string, cfg config.Config, args []string) ([]string, error) {
+// taskArgs prepends the coding model and an effort to a task launch; an explicit --effort wins if within the ceiling.
+// Without one the task starts at medium: no model calls are spent guessing the effort, and the agent asks for /effort
+// when the work turns out harder.
+func taskArgs(cfg config.Config, args []string) ([]string, error) {
 	if err := checkEffort(args); err != nil {
 		return nil, err
 	}
 
 	if !hasEffort(args) {
-		level := effort.Medium
-		if prompt := promptOf(args); prompt != "" {
-			level = classify(ctx, bin, prompt, cfg.Judges)
-		}
-		args = append([]string{"--effort", level.String()}, args...)
+		args = append([]string{"--effort", "medium"}, args...)
 	}
 
 	if cfg.Model != "" && !hasFlag(args, "--model") {
@@ -78,29 +74,6 @@ func promptOf(args []string) string {
 		}
 	}
 	return strings.Join(prompt, " ")
-}
-
-func classify(ctx context.Context, bin, task string, models []string) effort.Level {
-	judges := make([]effort.Judge, len(models))
-	for i, m := range models {
-		judges[i] = effort.EmpryoJudge{Bin: bin, Model: m}
-	}
-
-	c, err := effort.New(effort.Options{Judges: judges})
-	if err != nil {
-		return effort.Medium
-	}
-
-	// Judge the described work only. The tree's uncommitted changes belong to earlier work, not this task,
-	// and inflated the blast score.
-	res, err := c.Classify(ctx, task, effort.Signals{})
-	if len(res.Votes) == 0 {
-		fmt.Fprintln(os.Stderr, "codeforge: effort judges failed, using medium:", err)
-		return res.Level
-	}
-
-	fmt.Fprintf(os.Stderr, "codeforge: effort %s from %d/%d judges (%s)\n", res.Level, len(res.Votes), len(judges), res.Scores.Reason)
-	return res.Level
 }
 
 func hasFlag(args []string, name string) bool {

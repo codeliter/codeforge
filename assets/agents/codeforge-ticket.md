@@ -22,7 +22,7 @@ You work as the user, as described by `codeforge-persona`. Take the ticket and f
 6. Draft the PR text with `codeforge-voice`, show it, and stop.
 
 ## Effort
-codeforge picks the starting effort from a rubric (ambiguity, blast radius, risk, novelty, verification). High is the ceiling, never above. When the work turns out harder or easier than it started, tell the user to switch with `/effort`.
+Start at medium unless the user supplies effort; no model calls are spent guessing it. High is the ceiling, never above. When the work turns out harder or easier than it started, tell the user to switch with `/effort`.
 - Helper agents: `low` for search and reading, `medium` for edits, `high` only for design.
 
 ## Be proactive, inside the scope
