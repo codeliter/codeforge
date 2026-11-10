@@ -158,6 +158,7 @@ func runShownReview(ctx context.Context, argv, env []string, limit time.Time, st
 			leads = checkLeads(ctx, leads, reviewTurn(argv, env))
 		}
 	}
+	decision = withLeads(decision, leads, text)
 	asked, answer := false, false
 	if styled {
 		ask := post.Enabled() && !post.Preapproved() && !unreadable // a round whose verdicts did not read is never posted
@@ -188,6 +189,7 @@ func runShownReview(ctx context.Context, argv, env []string, limit time.Time, st
 					if fu.Active() && decision == review.DecisionApprove && fu.Unsettled(answers) {
 						decision = review.DecisionRequestChanges // never suggest approving past an open blocking thread
 					}
+					decision = withLeads(decision, leads, text)
 				}
 				if key == keyWalk {
 					showWalkthrough(ctx, walk)
@@ -219,6 +221,7 @@ func runShownReview(ctx context.Context, argv, env []string, limit time.Time, st
 			if fu.Active() && decision == review.DecisionApprove && fu.Unsettled(answers) {
 				decision = review.DecisionRequestChanges
 			}
+			decision = withLeads(decision, leads, text)
 			key, changes, shown = showReview(ctx, display, decision, dropCoveredLeads(leads, text), out.Bytes(), ask, threads, round)
 		}
 		*chat = key == keyChat
@@ -333,6 +336,16 @@ func runShownReview(ctx context.Context, argv, env []string, limit time.Time, st
 		return fmt.Errorf("%s, but %w", where, ferr)
 	}
 	return nil
+}
+
+// withLeads is the suggested decision with the blocking leads that still stand: a blocker another reviewer found that
+// the review neither makes nor rules out is not disproved, so the suggestion is never to approve past it. The user's own
+// pick and a lead the user deleted still decide.
+func withLeads(decision review.Decision, leads, text string) review.Decision {
+	if decision == review.DecisionApprove && dropCoveredLeads(leads, text) != "" {
+		return review.DecisionRequestChanges
+	}
+	return decision
 }
 
 // postedAs is the decision that actually went up: a review GitHub refused that went up as one plain comment is no

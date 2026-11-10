@@ -853,14 +853,14 @@ const (
 	leadPrefixWords = 2
 )
 
-// leadsPrompt asks the reviewer, in its own session, to put the leads in the user's words.
 // leadsPrompt asks the reviewer, in its own session, to check the leads against the code and put the ones that stand in
 // the user's words.
 func leadsPrompt(leads string) string {
 	return "Another check of this change found the possible blockers below, which your review does not make. " +
 		"Before anything goes on the PR, open the file at each place and read the code around it. " +
-		"Only when the code you read shows it does not break, answer `- RULED OUT `path:line` why`, citing that code in one " +
-		"sentence; when you cannot tell, keep the lead. " +
+		"Only when the code you read shows it does not break, answer with a line that starts with - RULED OUT and the " +
+		"place exactly as given, then why, citing that code in one sentence, for example: - RULED OUT `a.go:3` the body is " +
+		"buffered in send() before the retry. When you cannot tell, keep the lead. " +
 		"Otherwise it goes on the PR under your review, so rewrite it as I would leave it, in my voice as codeforge-persona " +
 		"describes it (codeforge-voice where it is silent): what breaks, then what to do, in plain words, " +
 		fmt.Sprintf("at most two sentences and %d words, with no hedging, no walkthrough and no mention of models, tools or ", maxLeadWords) +

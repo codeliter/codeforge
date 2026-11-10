@@ -403,6 +403,7 @@ func TestCheckLeads(t *testing.T) {
 		{name: "a lead both kept and ruled out keeps the original", reply: "- RULED OUT `a.go:3` fine.\n- `a.go:3` A loser can outrank the winner here.\n- `b.go:9` The retry drops the body here.", want: leads},
 		{name: "a ruled-out place that is not a lead keeps the original", reply: "- RULED OUT `c.go:1` fine.\n- `a.go:3` A loser can outrank the winner here.", want: leads},
 		{name: "a place that is not a lead keeps the original", reply: "- RULED OUT `a.go:3` sorted later.\n- `c.go:1` Something else breaks here, buffer it.\n- `b.go:9` The retry drops the body here.", want: leads},
+		{name: "a lead written twice keeps the original", reply: "- `a.go:3` A loser can outrank the winner here.\n- `a.go:3` A loser can outrank the winner here.\n- RULED OUT `b.go:9` the body is buffered.", want: leads},
 		{name: "a ruling without a reason does not count", reply: "- RULED OUT `a.go:3`\n- `b.go:9` The retry drops the body here.", want: leads},
 		{
 			name:  "prose around the lines is dropped",
@@ -417,6 +418,7 @@ func TestCheckLeads(t *testing.T) {
 			require.Equal(t, tt.want, checkLeads(t.Context(), leads, turn))
 			require.Contains(t, prompt, "codeforge-persona")
 			require.Contains(t, prompt, "RULED OUT", "the reviewer is asked to check each lead against the code")
+			require.Contains(t, prompt, "open the file at each place and read the code", "a lead is ruled out only from code the reviewer read")
 			require.NotContains(t, prompt, review.LeadsHeader, "only the leads are sent, not the header")
 		})
 	}
@@ -429,6 +431,16 @@ func TestCheckLeads_TwoLeadsAtOnePlaceAreNotChecked(t *testing.T) {
 		t.Fatal("leads that share a place cannot be told apart in an answer, so none is checked")
 		return "", nil
 	}))
+}
+
+func TestWithLeads_NeverSuggestsApprovingPastAStandingLead(t *testing.T) {
+	leads := review.LeadsHeader + "- `b.go:9` the retry drops the body\n"
+	text := "- nitpick: a.go:1 — fine\n\nOk.\n\nDecision: Approve"
+	require.Equal(t, review.DecisionRequestChanges, withLeads(review.DecisionApprove, leads, text))
+	require.Equal(t, review.DecisionApprove, withLeads(review.DecisionApprove, "", text), "no lead stands")
+	require.Equal(t, review.DecisionComment, withLeads(review.DecisionComment, leads, text), "only an approval is changed")
+	covered := "- issue (blocking): b.go:9 — drops the body\n\nOk.\n\nDecision: Approve"
+	require.Equal(t, review.DecisionApprove, withLeads(review.DecisionApprove, leads, covered), "a lead the review makes itself is not a standing lead")
 }
 
 func TestDropCoveredLeads(t *testing.T) {
