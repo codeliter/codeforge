@@ -43,10 +43,15 @@ type PR struct {
 		State string `json:"state"`
 		Body  string `json:"body"`
 	} `json:"reviews"`
-	StatusCheckRollup []struct {
-		Name       string `json:"name"`
-		Conclusion string `json:"conclusion"`
-	} `json:"statusCheckRollup"`
+	StatusCheckRollup []CheckStatus `json:"statusCheckRollup"`
+}
+
+// CheckStatus is one CI check on the PR: a check run has a name and a conclusion, a commit status a context and a state.
+type CheckStatus struct {
+	Name       string `json:"name"`
+	Conclusion string `json:"conclusion"`
+	Context    string `json:"context"`
+	State      string `json:"state"`
 }
 
 const prFields = "number,title,body,url,baseRefName,headRefName,headRefOid,author,additions,deletions,files,commits,reviews,statusCheckRollup"
@@ -74,6 +79,8 @@ type Brief struct {
 	Diff    string
 	Tickets []string
 	HeadRef string
+	// Coverage is what the CI's coverage checks said about the head commit; none when CI reports no coverage.
+	Coverage []Coverage
 }
 
 // Files lists the PR's changed paths for triage.
@@ -114,6 +121,9 @@ func Load(ctx context.Context, r Runner, repo, number string) (Brief, error) {
 	}
 
 	b.Tickets = uniqueTickets(b.PR.Title + "\n" + b.PR.Body + "\n" + b.PR.HeadRefName)
+	if b.PR.HasCoverageCheck() {
+		b.Coverage = LoadCoverage(ctx, r, repo, b.PR.HeadRefOid)
+	}
 
 	// A PR named by URL is often one of this checkout's own: then its head is fetched as for a bare number, so the
 	// reviewer reads files locally and the review can show the code around each finding.

@@ -1,6 +1,7 @@
 package src
 
 import (
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -34,7 +35,30 @@ func TestGateCommand_AcceptingTheLastBlockerGivesTheBranchItsRunsBack(t *testing
 
 	require.NoError(t, gateCommand(rounds, accepts, "k", []string{"unaccept", "a.go:3"}, &out, now))
 	require.Len(t, accepts.Load("k", now), 1)
-	require.ErrorIs(t, gateCommand(rounds, accepts, "k", []string{"nope"}, &out, now), errGateUsage)
+	err := gateCommand(rounds, accepts, "k", []string{"nope"}, &out, now)
+	require.ErrorIs(t, err, errNoSuchCommand, "an unknown subcommand says it does not exist, never runs the gate")
+	require.ErrorContains(t, err, "codeforge gate nope does not exist")
+	require.ErrorIs(t, gateCommand(rounds, accepts, "k", []string{"reset", "extra"}, &out, now), errGateUsage)
+}
+
+func TestRun_ACommandThatTakesNoWordsRejectsOne(t *testing.T) {
+	for _, args := range [][]string{{"version", "x"}, {"--version", "reset"}, {"setup", "now"}} {
+		err := Run(t.Context(), args)
+		require.ErrorIs(t, err, errNoSuchCommand, args)
+		require.ErrorContains(t, err, "does not exist")
+	}
+}
+
+func TestRun_ABadSetupWordIsRejectedBeforeAnyRepair(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	old := Version
+	Version = "9.9.9" // a release build, where automatic repair is due
+	t.Cleanup(func() { Version = old })
+	require.ErrorIs(t, Run(t.Context(), []string{"setup", "now"}), errNoSuchCommand)
+	entries, err := os.ReadDir(home)
+	require.NoError(t, err)
+	require.Empty(t, entries, "nothing was repaired or written")
 }
 
 func TestGateCommand_ResetClearsTheRunCount(t *testing.T) {

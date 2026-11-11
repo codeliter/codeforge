@@ -2,10 +2,12 @@ package src
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 
 	"github.com/codeliter/codeforge/src/guard"
 )
@@ -58,6 +60,9 @@ func Run(ctx context.Context, args []string) error {
 		return nil
 	}
 	if first(args) == "version" || first(args) == "--version" {
+		if len(args) > 1 {
+			return noSuchCommand(args)
+		}
 		fmt.Println("codeforge", Version)
 		return nil
 	}
@@ -85,6 +90,10 @@ func Run(ctx context.Context, args []string) error {
 	// A mistyped mode such as `codeforge zsh` stops here, before any repair, model lookup or paid judge call.
 	if err := unknownCommand(args); err != nil {
 		return err
+	}
+	// So does a word after a command that takes none.
+	if first(args) == "setup" && slices.ContainsFunc(args[1:], func(a string) bool { return a != "--yes" && a != "-y" }) {
+		return noSuchCommand(args)
 	}
 
 	// persona only reads, like doctor below, so it runs before anything is repaired or prepared.
@@ -184,6 +193,14 @@ func Run(ctx context.Context, args []string) error {
 		return fmt.Errorf("%w: use codeforge trust [--models]", errInitUsage)
 	}
 	return runMode(ctx, p, args)
+}
+
+var errNoSuchCommand = errors.New("does not exist")
+
+// noSuchCommand rejects a word after a command that takes none, such as `codeforge version x`. A command never ignores
+// what it was given: an older codeforge that ignored `gate reset` ran a whole review instead.
+func noSuchCommand(args []string) error {
+	return fmt.Errorf("codeforge %s %s %w; `codeforge help --all` lists the commands", args[0], strings.Join(args[1:], " "), errNoSuchCommand)
 }
 
 // changeToCwd moves into --cwd, the directory Empryo will work in, so that enforcement, review collection, persona and

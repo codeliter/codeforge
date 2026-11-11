@@ -1,6 +1,7 @@
 package review
 
 import (
+	"cmp"
 	"fmt"
 	"strings"
 )
@@ -28,8 +29,9 @@ func Prompt(b Brief, tier Tier, jury []string) string {
 
 	s.WriteString("\nchecks:\n")
 	for _, c := range p.StatusCheckRollup {
-		fmt.Fprintf(&s, "- %s: %s\n", c.Name, orNone(c.Conclusion))
+		fmt.Fprintf(&s, "- %s: %s\n", cmp.Or(c.Name, c.Context), orNone(cmp.Or(c.Conclusion, c.State)))
 	}
+	s.WriteString(coverageSection(b.Coverage))
 
 	s.WriteString("\nexisting reviews:\n")
 	for _, r := range p.Reviews {

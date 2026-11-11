@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -136,6 +137,9 @@ func gateCommand(rounds review.Rounds, accepts review.AcceptedStore, key string,
 		}
 		fmt.Fprintf(w, "codeforge gate: %s:%d blocks again when a reviewer reports it.\n", path, line)
 		return nil
+	}
+	if !slices.Contains([]string{"accept", "unaccept", "accepted", "reset"}, args[0]) {
+		return fmt.Errorf("%w\n%w", noSuchCommand(append([]string{"gate"}, args...)), errGateUsage)
 	}
 	return errGateUsage
 }
