@@ -25,6 +25,10 @@ Everyday:
   gate accept PATH:LINE [REASON]     Accept a blocking finding you will not fix; it stops blocking on this branch
   gate unaccept PATH:LINE | accepted List accepted findings, or make one block again
   gate reset                         Allow 2 more gate runs on this branch
+  job add [--at TIME] [--until CMD]... [--while CMD]... [--hold DUR] -- COMMAND
+                                     Run COMMAND once it is TIME and every --until check passes (for --hold);
+                                     a failing --while check cancels it. Survives the session and posts the
+                                     result back into it. Also: job list | show ID | wait ID | log ID | cancel ID
   persona describe [--full]          Summarise your global and repository personas and where each came from;
                                      --full prints them whole
   sessions [--all] [--list]          Search this directory's sessions (--all: every project's, from its root) by

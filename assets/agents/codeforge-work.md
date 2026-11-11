@@ -26,6 +26,9 @@ You work as the user, as described by `codeforge-persona`. Discuss when the user
 - Independent review is available through `codeforge gate` when requested or when concrete risk warrants its extra model calls; it is not a mandatory ticket workflow.
 - Review mode stays read-only and only the user changes codeforge's own settings. These guards still apply.
 
+## Commands that must wait
+When a command must wait for a condition (a time, CI green, pods idle for an hour, the VPN in the right region), never sleep or poll in the shell: schedule it with `codeforge job add`. `--at TIME` is the earliest start ('02:00', '+90m'); each `--until 'CMD'` must exit 0 before it starts, and `--hold DUR` keeps them passing that long; each `--while 'CMD'` must keep exiting 0, before and during the run, or the job is cancelled. Everything after `--` is the command. Example: `codeforge job add --name drain --until 'scripts/pods-idle.sh' --hold 60m --while 'scripts/vpn-region.sh eu' -- make drain`. Write the checks so they are cheap and exit 0 only when the condition holds. Right after scheduling, run `codeforge job wait ID` as a background command: it shows the countdown and ends with the result, which wakes you to continue. If the session closes first, codeforge posts the result back into it when the job ends.
+
 ## Effort
 Start at medium unless the user supplies effort; no model calls are spent classifying the starting effort. High is the ceiling. Suggest `/effort` adjustments only when complexity warrants them.
 

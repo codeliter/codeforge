@@ -2,6 +2,7 @@
 package guard
 
 import (
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -75,8 +76,29 @@ func TestCheck_SelfStillGuarded(t *testing.T) {
 	require.Equal(t, []string{RuleLearning}, rules(Check("codeforge learn correct x", false)))
 	for _, cmd := range []string{"codeforge gate accept a.go:3", "codeforge gate reset", "codeforge gate unaccept a.go:3", "codeforge gate $x",
 		"codeforge review accept 42 a.go:3", "codeforge review unaccept 42 a.go:3", "codeforge review $w 42 a.go:3"} {
-		require.Equal(t, []string{RuleSelf}, rules(Check(cmd, false)), "only the user accepts a finding or lifts the cap: %s", cmd)
+		require.Equal(t, []string{RuleUserOnly}, rules(Check(cmd, false)), "only the user accepts a finding or lifts the cap: %s", cmd)
+		require.False(t, DecideOutsideReview(input(t, "Bash", map[string]any{"command": cmd})).Allow, "outside review mode too: %s", cmd)
 	}
+	for _, cmd := range []string{
+		"codeforge job add --at 02:00 -- codeforge observe x", "codeforge job add --until 'codeforge gate reset' -- make",
+		"codeforge job add --while 'codeforge learn correct x' -- make", "codeforge job $sub",
+		"codeforge job add --name -- --until 'codeforge gate reset' -- make",
+	} {
+		require.False(t, DecideOutsideReview(input(t, "Bash", map[string]any{"command": cmd})).Allow, "what the agent may not run, it may not schedule: %s", cmd)
+	}
+	for _, cmd := range []string{"codeforge job add --at 02:00 --until 'gh pr checks 42' -- make deploy", "codeforge job list", "codeforge job cancel j1"} {
+		require.True(t, DecideOutsideReview(input(t, "Bash", map[string]any{"command": cmd})).Allow, cmd)
+	}
+	sub := t.TempDir()
+	require.NoError(t, os.WriteFile(sub+"/rec.sh", []byte("codeforge gate reset\n"), 0o600))
+	in := input(t, "Bash", map[string]any{"command": "cd " + sub + " && codeforge job add --at +1m -- sh rec.sh"})
+	require.False(t, DecideOutsideReview(in).Allow, "a script is read where the job will run, after the cd")
+	in = input(t, "Bash", map[string]any{"command": "cd " + sub + " && sh -c 'sh rec.sh'"})
+	in.Cwd = t.TempDir()
+	require.False(t, DecideOutsideReview(in).Allow, "an inner shell starts where the cd left it")
+	require.True(t, printsOnlyCodeforge([]string{"codeforge", "job", "wait", "j1"}), "review mode may watch a job")
+	require.False(t, printsOnlyCodeforge([]string{"codeforge", "job", "add", "--at", "1:00", "--", "x"}), "but not schedule one")
+	require.Equal(t, []string{"a | b", "c", "'make' '' 'deploy'"}, JobCommands([]string{"--until", "a | b", "--name", "n", "--while", "c", "--", "make", "", "deploy"}))
 	for _, cmd := range []string{"codeforge models", "codeforge models recommend", "codeforge gate", "codeforge gate accepted", "codeforge learn list", "codeforge provider", "codeforge provider show", "codeforge providers list"} {
 		require.Empty(t, rules(Check(cmd, false)), cmd)
 	}

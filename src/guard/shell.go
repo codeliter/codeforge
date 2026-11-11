@@ -483,6 +483,9 @@ func knownBinary(name string) bool {
 
 const maxScriptBytes = 256 << 10
 
+// UninspectableScript is said of a script the guard could not read.
+const UninspectableScript = "cannot be inspected"
+
 // scriptCallsGuarded reads a local script and refuses it when it names a guarded tool or runs another script.
 // Scripts the guard cannot read, such as binaries or missing files, are refused too.
 func scriptCallsGuarded(path, cwd string) (Finding, bool) {
@@ -493,12 +496,12 @@ func scriptCallsGuarded(path, cwd string) (Finding, bool) {
 
 	info, err := os.Stat(p)
 	if err != nil || !info.Mode().IsRegular() || info.Size() > maxScriptBytes {
-		return Finding{RuleScript, path + " cannot be inspected, so it might run guarded commands; run the commands directly instead"}, true
+		return Finding{RuleScript, path + " " + UninspectableScript + ", so it might run guarded commands; run the commands directly instead"}, true
 	}
 
 	data, err := os.ReadFile(p)
 	if err != nil || slices.Contains(data, 0) {
-		return Finding{RuleScript, path + " cannot be inspected, so it might run guarded commands; run the commands directly instead"}, true
+		return Finding{RuleScript, path + " " + UninspectableScript + ", so it might run guarded commands; run the commands directly instead"}, true
 	}
 
 	if guardedTool.Match(data) {

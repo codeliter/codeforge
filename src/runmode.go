@@ -144,6 +144,20 @@ func launchMode(ctx context.Context, home, bin string, cfg config.Config, picked
 	if resumed && (hasFlag(rest, "--comment") || hasFlag(rest, "--comment=yes")) {
 		return errCommentResume
 	}
+	if resumed {
+		// What a scheduled job did while nobody had the session open is said before it opens.
+		if id, _, err := sessionID(rest); err == nil {
+			if wd, err := os.Getwd(); err == nil {
+				if full, err := resolveResumeID(wd, id); err == nil {
+					// A review launch is read-only: it starts nothing of another session's.
+					if cmd != modeReview {
+						reviveJobs(ctx, jobStore(home), full)
+					}
+					printJobNotice(os.Stderr, jobStore(home), wd, full, time.Now(), cmd == modeReview)
+				}
+			}
+		}
+	}
 	if !resumed {
 		acknowledgeTask(os.Stderr, cmd, rest)
 	}

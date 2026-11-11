@@ -31,7 +31,7 @@ func DecideOutsideReview(in Input) Decision {
 	bare.Paths = nil
 	var kept []string
 	for _, f := range CheckTool(bare, false).Blocked {
-		if f.Rule == RuleLearning || f.Rule == RuleOpaque {
+		if f.Rule == RuleLearning || f.Rule == RuleOpaque || f.Rule == RuleUserOnly {
 			kept = append(kept, f.Reason+". Only the user can do this, outside the agent.")
 		}
 	}
@@ -60,7 +60,7 @@ func Decide(in Input, readOnly bool) Decision {
 		switch f.Rule {
 		case RuleReadOnly:
 			reasons = append(reasons, f.Reason+": review mode is read-only. Switch to ticket or chat mode to change files.")
-		case RuleSelf, RuleLearning:
+		case RuleSelf, RuleLearning, RuleUserOnly:
 			reasons = append(reasons, f.Reason+". Only the user can do this, outside the agent.")
 		default:
 			reasons = append(reasons, f.Reason+" ("+f.Rule+").")

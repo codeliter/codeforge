@@ -16,6 +16,9 @@ const (
 	// RuleComment marks a PR comment with its text on the command line: the one write a review session may offer to
 	// the user to approve, since they see the exact comment before it goes up.
 	RuleComment = "pr-comment"
+	// RuleUserOnly marks the user's own calls on the agent's work: accepting a finding, lifting the gate's run cap. Unlike
+	// RuleSelf it holds outside review mode too, or the agent could lift the limits set on it.
+	RuleUserOnly = "user-only"
 )
 
 const minGitTokens = 2
@@ -37,6 +40,11 @@ type Result struct {
 // Check classifies a shell command line. readOnly adds the rules for review mode.
 func Check(command string, readOnly bool) Result {
 	return checkIn(command, readOnly, "")
+}
+
+// CheckInDir is Check run in directory cwd, so a script the command names is read from where it will run.
+func CheckInDir(command string, readOnly bool, cwd string) Result {
+	return checkIn(command, readOnly, cwd)
 }
 
 // checkIn is Check with the tool's working directory, so script files named in the command can be read.
@@ -137,7 +145,8 @@ func checkIn(command string, readOnly bool, cwd string) Result {
 		}
 
 		if inner, ok := shellScript(words); ok {
-			r.merge(checkIn(inner, readOnly, cwd))
+			// The inner shell starts where this one is, after any cd earlier in the line.
+			r.merge(checkIn(inner, readOnly, joinDir(cwd, dir)))
 			continue
 		}
 
@@ -178,7 +187,8 @@ func checkIn(command string, readOnly bool, cwd string) Result {
 			r.Blocked = append(r.Blocked, f)
 			continue
 		}
-		r.Blocked = append(r.Blocked, classify(words)...)
+		// Where the command runs: the tool's directory, after any cd earlier in the line.
+		r.Blocked = append(r.Blocked, classify(words, joinDir(r.cwd, dir))...)
 	}
 
 	// A PR comment is offered for approval only as written. A variable or command substitution anywhere in the command
@@ -194,7 +204,7 @@ func checkIn(command string, readOnly bool, cwd string) Result {
 	return r
 }
 
-func classify(w []string) []Finding {
+func classify(w []string, cwd string) []Finding {
 	switch w[0] {
 	case "script", "expect", "unbuffer", "socat", "tmux", "screen", "zpty":
 		// These give a program a pseudo-terminal the agent controls, which could answer codeforge trust's prompt.
@@ -208,10 +218,13 @@ func classify(w []string) []Finding {
 		}
 		// Accepting a finding or resetting the run cap is the user's call on the agent's work; listing is reading.
 		if len(w) > 2 && w[1] == "gate" && (len(w) != 3 || w[2] != "accepted") {
-			return []Finding{{RuleSelf, "only you can accept a gate finding or reset the gate's run cap"}}
+			return []Finding{{RuleUserOnly, "only you can accept a gate finding or reset the gate's run cap"}}
 		}
 		if len(w) > 2 && w[1] == "review" && (w[2] == "accept" || w[2] == "unaccept" || strings.ContainsAny(w[2], "$`")) {
-			return []Finding{{RuleSelf, "only you can accept a finding on a PR"}}
+			return []Finding{{RuleUserOnly, "only you can accept a finding on a PR"}}
+		}
+		if len(w) > 2 && w[1] == "job" {
+			return classifyJob(w[2:], cwd)
 		}
 		// A subcommand built from a variable (`o=observe; codeforge $o`) can name observe or learn where no literal shows.
 		if len(w) > 1 && strings.ContainsAny(w[1], "$`") {
@@ -224,6 +237,61 @@ func classify(w []string) []Finding {
 		return classifyGH(w)
 	}
 	return nil
+}
+
+// classifyJob judges `codeforge job ...`. A scheduled command runs later with nobody watching and outside every tool
+// call, so scheduling one is judged as running each of its commands now: what the guard refuses to run, it refuses to
+// schedule. A subcommand built from a variable could name add, so it is judged as add with commands the guard cannot read.
+func classifyJob(args []string, cwd string) []Finding {
+	if strings.ContainsAny(args[0], "$`") {
+		return []Finding{{RuleOpaque, "a codeforge job subcommand built from a variable could schedule anything"}}
+	}
+	if args[0] != "add" {
+		return nil
+	}
+	var found []Finding
+	for _, c := range JobCommands(args[1:]) {
+		// Read from the directory the job is scheduled in, which is where it runs.
+		for _, f := range checkIn(c, false, cwd).Blocked {
+			if f.Rule == RuleLearning || f.Rule == RuleOpaque || f.Rule == RuleUserOnly {
+				found = append(found, Finding{f.Rule, "the scheduled command `" + c + "`: " + f.Reason})
+			}
+		}
+	}
+	return found
+}
+
+// JobCommands are the shell commands `codeforge job add ARGS` schedules: each --until and --while check, and the
+// command after -- (see JobCommandLine).
+func JobCommands(args []string) []string {
+	var out []string
+	for i := 0; i < len(args); i++ {
+		switch {
+		case args[i] == "--":
+			return append(out, JobCommandLine(args[i+1:]))
+		case (args[i] == "--until" || args[i] == "--while") && i+1 < len(args):
+			out = append(out, args[i+1])
+			i++
+		case slices.Contains([]string{"--name", "--at", "--hold", "--every", "--expire"}, args[i]):
+			// Their value is never the start of the command, even when it is "--", as parseJob reads it.
+			i++
+		}
+	}
+	return out
+}
+
+// JobCommandLine is the shell line a job runs for the words after --. One word is a shell line as written
+// (`-- 'kubectl get pods | wc -l'`); several are a command and its arguments, each quoted so it reaches the command
+// exactly as given (`-- git commit -m "fix bug"`).
+func JobCommandLine(words []string) string {
+	if len(words) == 1 {
+		return strings.TrimSpace(words[0])
+	}
+	quoted := make([]string, len(words))
+	for i, w := range words {
+		quoted[i] = "'" + strings.ReplaceAll(w, "'", `'\''`) + "'"
+	}
+	return strings.Join(quoted, " ")
 }
 
 // merge folds a nested command's result into r.

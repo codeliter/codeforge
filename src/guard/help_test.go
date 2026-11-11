@@ -8,7 +8,7 @@ import (
 
 // subcommands are the registered codeforge commands (src.RegisteredCommands), written out here because guard cannot import src.
 var subcommands = []string{
-	"approve", "allow", "chat", "completion", "doctor", "gate", "gh-shim", "help", "hook", "init", "learn", "models", "observe",
+	"approve", "allow", "chat", "completion", "doctor", "gate", "gh-shim", "help", "hook", "init", "job", "learn", "models", "observe",
 	"pre-push", "provider", "providers", "reinit", "repair", "respond", "review", "persona", "session-end", "sessions", "setup", "start",
 	"ticket", "trust", "version", "work",
 }

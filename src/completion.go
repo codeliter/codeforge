@@ -39,6 +39,12 @@ var completionTree = []struct {
 		{"accept", "Accept a blocking finding you will not fix"}, {"unaccept", "Make an accepted finding block again"},
 		{"accepted", "List the accepted findings"}, {"reset", "Allow more gate runs on this branch"},
 	}},
+	{word{"job", "Run a command once its preconditions hold"}, []word{
+		{"add", "Schedule a command"}, {"list", "List the jobs"}, {"show", "Show a job"}, {"wait", "Show the countdown, then the result"},
+		{"log", "Show a job's log"}, {"cancel", "Cancel a job"}, {"--at", "Earliest start time"}, {"--until", "A check that must pass first"},
+		{"--while", "A check that must keep passing"}, {"--hold", "How long the checks must pass"}, {"--every", "How often to check"},
+		{"--expire", "When to give up waiting"}, {"--name", "A name for the job"},
+	}},
 	{word{"init", "Set up Empryo, sign-in and checks; learn a persona"}, []word{
 		{"--yes", "Accept the defaults"}, {"--repo", "Learn this repository's persona"},
 		{"--persona", "Start from a described persona"}, {"--global", "Set the persona for every project"},

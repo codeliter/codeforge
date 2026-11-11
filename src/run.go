@@ -82,6 +82,9 @@ func Run(ctx context.Context, args []string) error {
 		return runLearn(ctx, home, args[1:], os.Stdout)
 	case "allow":
 		return errAllowRemoved
+	case "job":
+		// Before --cwd is taken from the arguments: everything after a job's -- is its command's, --cwd included.
+		return runJob(ctx, home, args[1:], os.Stdout)
 	}
 	if args, err = changeToCwd(args); err != nil {
 		return err

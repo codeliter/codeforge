@@ -50,7 +50,7 @@ func showModeTitle(w io.Writer, mode string) func() {
 
 // commands are the words Run handles before or instead of a mode; any of them is never a task.
 var commands = []string{"start", "respond", "init", "setup", "gate", "trust", "doctor", "repair", "reinit", "models",
-	"provider", "providers", "learn", "allow", "version", "help", "completion", "sessions", "persona"}
+	"provider", "providers", "learn", "allow", "version", "help", "completion", "sessions", "persona", "job"}
 
 // internalCommands are dispatched by main before Run: the hooks Empryo and git call, which read stdin.
 var internalCommands = []string{"hook", "pre-push", "gh-shim", "session-end", "observe"}
