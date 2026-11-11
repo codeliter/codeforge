@@ -24,6 +24,9 @@ type Record struct {
 	// a later round tells codeforge's own reviews from ones the user left by hand by it, never by time, and adding an
 	// id that is already there changes nothing.
 	Posted []int64 `json:"posted,omitempty"`
+	// Accepted holds the findings the user accepted as they are (codeforge review accept): they never block again, and
+	// later rounds leave them out.
+	Accepted []Accepted `json:"accepted,omitempty"`
 }
 
 // AddPosted records that codeforge posted review id; posting is recorded once however often it is added.

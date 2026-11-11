@@ -37,6 +37,8 @@ type followUpData struct {
 	// Delta is the diff from Since to Head; DeltaErr says why it could not be read, when it could not.
 	Delta    string
 	DeltaErr error
+	// Accepted are the findings the user accepted as they are; the round neither raises them again nor counts them.
+	Accepted []Accepted
 }
 
 // MyThread is a review thread the user started.
@@ -85,6 +87,16 @@ func (fu *FollowUp) Threads() []MyThread {
 	fu.mu.Lock()
 	defer fu.mu.Unlock()
 	return slices.Clone(fu.data.Threads)
+}
+
+// Accepted returns the findings the user accepted as they are on this PR.
+func (fu *FollowUp) Accepted() []Accepted {
+	if fu == nil {
+		return nil
+	}
+	fu.mu.Lock()
+	defer fu.mu.Unlock()
+	return slices.Clone(fu.data.Accepted)
 }
 
 // Feedback is the round's threads in the form the thread view and the reply poster take.
@@ -200,10 +212,14 @@ func LoadFollowUp(ctx context.Context, r Runner, repo, number, head string, rec 
 			posted := t.ReviewID != 0 && slices.Contains(rec.Posted, t.ReviewID)
 			t.Known = knownID || (knownLine && (f.Blocking || posted))
 			t.Blocking = byID || (knownLine && f.Blocking)
+			if AcceptedAt(rec.Accepted, t.Path, t.OriginalLine) {
+				t.Known, t.Blocking = true, false // accepted, not fixing: settled whatever was recorded before
+			}
 		}
 		d.Threads = append(d.Threads, t)
 	}
 
+	d.Accepted = slices.Clone(rec.Accepted)
 	if d.LastState == "" && len(threads) == 0 && !finalPosted && !hasRec {
 		return nil, false, nil
 	}
@@ -416,6 +432,7 @@ func (fu *FollowUp) PromptFollowUp() string {
 		fmt.Fprintf(&s, "PR comment by %s:\n%s\n\n", c.Author, fenced(c.Body))
 	}
 	s.WriteString("</earlier_review>\n")
+	s.WriteString(AcceptedNote(d.Accepted))
 	switch {
 	case d.Since == "":
 		s.WriteString("\nThe commit I reviewed is not known: review the whole diff, and raise only what is new since my threads.\n")

@@ -38,28 +38,33 @@ func TestReport_ShowsTheCodeAroundEachFindingByFile(t *testing.T) {
 	require.NotContains(t, got, "\x1b[", "no colour when the output is not a terminal")
 }
 
-// deepFile is a Go file whose line 25 sits deep inside func run, which starts at line 3.
+// deepFile is a Go file whose line 55 sits deep inside func run, which starts at line 3 and is too long to show whole.
 func deepFile(t *testing.T) string {
+	return funcFile(t, 52)
+}
+
+// funcFile is a Go file with func run from line 3 and a for loop from line loop; the return inside it is on loop+3.
+func funcFile(t *testing.T, loop int) string {
 	t.Helper()
 	repo := t.TempDir()
 	var b strings.Builder
 	b.WriteString("package p\n\nfunc run(items []string) error {\n")
-	for i := 4; i < 22; i++ {
+	for i := 4; i < loop; i++ {
 		b.WriteString("\tstep()\n")
 	}
-	b.WriteString("\tfor _, it := range items {\n\t\tif it == \"\" {\n\t\t\tcontinue\n")                          // 22-24
-	b.WriteString("\t\t\treturn errors.New(\"" + strings.Repeat("y", 100) + "\")\n\t\t}\n\t}\n\treturn nil\n}\n") // 25-29
+	b.WriteString("\tfor _, it := range items {\n\t\tif it == \"\" {\n\t\t\tcontinue\n")
+	b.WriteString("\t\t\treturn errors.New(\"" + strings.Repeat("y", 100) + "\")\n\t\t}\n\t}\n\treturn nil\n}\n")
 	require.NoError(t, os.WriteFile(filepath.Join(repo, "p.go"), []byte(b.String()), 0o600))
 	return repo
 }
 
 func TestCodeAround_ShowsTheEnclosingFunctionAndEnoughContext(t *testing.T) {
 	repo := deepFile(t)
-	plain := codeAround(repo, "p.go", 25, codeStyle{width: 60})
-	require.True(t, strings.HasPrefix(plain, "     3 | func run(items []string) error {\n       ⋮\n    19 |     step()\n"),
+	plain := codeAround(repo, "p.go", 55, codeStyle{width: 60})
+	require.True(t, strings.HasPrefix(plain, "     3 | func run(items []string) error {\n       ⋮\n    49 |     step()\n"),
 		"the function the line is in heads the snippet, then a gap, then six lines before: %q", plain)
-	require.Contains(t, plain, "  > 25 |             return errors.New(\"y")
-	require.True(t, strings.HasSuffix(plain, "    29 | }\n"), "four lines after")
+	require.Contains(t, plain, "  > 55 |             return errors.New(\"y")
+	require.True(t, strings.HasSuffix(plain, "    59 | }\n"), "four lines after")
 	for _, l := range strings.Split(strings.TrimRight(plain, "\n"), "\n") {
 		require.LessOrEqual(t, len([]rune(l)), 60, "every line fits the width: %q", l)
 	}
@@ -113,6 +118,41 @@ func TestCodeSnippetFocus_ShowsAndMarksTheNamedCall(t *testing.T) {
 	require.Equal(t, 4, strings.Count(card, "▌"), "every cited line has the accent bar")
 }
 
+func TestCodeAround_ShowsAShortFunctionWhole(t *testing.T) {
+	repo := funcFile(t, 22) // func run is lines 3 to 29
+	plain := codeAround(repo, "p.go", 25, codeStyle{width: 200})
+	require.True(t, strings.HasPrefix(plain, "     3 | func run(items []string) error {\n     4 |     step()\n"), "from the header down, no gap: %q", plain)
+	require.NotContains(t, plain, "⋮")
+	require.True(t, strings.HasSuffix(plain, "    29 | }\n"), "down to the function's closing brace")
+}
+
+func TestCodeAround_ALongBlockBelowTheFindingIsShownToItsEnd(t *testing.T) {
+	var b strings.Builder
+	b.WriteString("package p\n\nfunc run() {\n")
+	for range 60 {
+		b.WriteString("\tstep()\n")
+	}
+	b.WriteString("\tif ok {\n") // 64
+	for range 12 {
+		b.WriteString("\t\tstep()\n") // 65-76
+	}
+	b.WriteString("\t}\n\tdone()\n}\n") // 77-79
+	all := strings.Split(b.String(), "\n")
+	from, to := enclosingSpan(all, 65, 65)
+	require.Equal(t, [2]int{64, 77}, [2]int{from, to}, "the if fits, the 77-line function does not")
+	got := codeSnippetFocus(b.String(), "p.go", focus{Line: 65}, codeStyle{width: 200})
+	require.True(t, strings.HasSuffix(got, "    77 |     }\n"), "the block runs past four lines after; it is shown to its end: %q", got)
+}
+
+func TestEnclosingSpan_TopLevelAndPython(t *testing.T) {
+	require.Equal(t, [2]int{0, 0}, func() [2]int { a, b := enclosingSpan([]string{"a", "b"}, 2, 2); return [2]int{a, b} }())
+	py := strings.Split("class A:\n    def f(self):\n        x = 1\n        if x:\n            return x\n    def g(self):\n        pass\n", "\n")
+	a, b := enclosingSpan(py, 5, 5)
+	require.Equal(t, [2]int{2, 5}, [2]int{a, b}, "the method, ending before the next one")
+	require.False(t, closesBlock("endpoint := x"))
+	require.True(t, closesBlock("end"))
+}
+
 func TestEnclosingHeader(t *testing.T) {
 	py := strings.Split("class A:\n    def f(self):\n        x = 1\n        if x:\n            return x\n", "\n")
 	require.Equal(t, 2, enclosingHeader(py, 5), "the method, not the if")
@@ -124,17 +164,17 @@ func TestEnclosingHeader(t *testing.T) {
 func TestCodeAround_DrawsACardOnATerminal(t *testing.T) {
 	repo := deepFile(t)
 	pal := paletteFor("dark")
-	card := codeAround(repo, "p.go", 25, codeStyle{color: true, width: 100, pal: pal})
+	card := codeAround(repo, "p.go", 55, codeStyle{color: true, width: 100, pal: pal})
 	lines := strings.Split(strings.TrimRight(card, "\n"), "\n")
 	require.Contains(t, lines[0], pal.cardTitle, "a title row on its own background")
-	require.Contains(t, lines[0], pal.accent+" p.go:25")
-	require.Contains(t, card, pal.cardLine+pal.accent+"▌25", "the finding's line is raised and marked")
+	require.Contains(t, lines[0], pal.accent+" p.go:55")
+	require.Contains(t, card, pal.cardLine+pal.accent+"▌55", "the finding's line is raised and marked")
 	require.Contains(t, card, "\x1b[1m\x1b[38;2;126;168;201mfunc", "code is highlighted in Steel")
 	for i, l := range lines {
 		require.Equal(t, 2+100-2, ansi.StringWidth(l), "every row of the card has the same width: row %d", i)
 		require.True(t, strings.HasSuffix(l, ansiReset), "the background ends with the row")
 	}
-	require.Len(t, lines, 1+2+11, "title, header and gap, and lines 19 to 29")
+	require.Len(t, lines, 1+2+11, "title, header and gap, and lines 49 to 59")
 }
 
 func TestCutColumns_CountsCharacters(t *testing.T) {

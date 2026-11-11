@@ -9,11 +9,13 @@ import (
 	"strings"
 
 	"github.com/codeliter/codeforge/src/config"
+	"github.com/codeliter/codeforge/src/review"
 )
 
 const (
-	// maxGateRounds bounds how often codeforge sends blocking findings back to the agent before handing over.
-	maxGateRounds = 3
+	// maxGateRounds bounds how often codeforge sends blocking findings back to the agent before handing over: the
+	// gate's own cap, so the loop never ends on a run the gate refuses.
+	maxGateRounds = review.MaxGateRuns
 	gateFixPrompt = "codeforge gate found blocking issues in your change. Fix every Blocking finding below, re-run the build, lint and tests, and stop. Do not open the PR.\n\n<gate>\n%s\n</gate>"
 )
 
@@ -32,6 +34,9 @@ func ticketReviewLoop(ctx context.Context, gate gateRunner, fix engineTurn, w io
 		report, passed, err := gate(ctx)
 		fmt.Fprint(w, report)
 		switch {
+		case errors.Is(err, errGateCapped):
+			fmt.Fprintln(w, "codeforge: the gate's runs on this branch are used up; the findings are above. Continue in the session.")
+			return
 		case err != nil:
 			// The reviewers could not give a verdict (unreachable, timed out, no diff): nothing to send back.
 			fmt.Fprintln(w, "codeforge: review could not run:", err)

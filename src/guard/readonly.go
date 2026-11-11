@@ -53,6 +53,11 @@ func printsOnlyCodeforge(w []string) bool {
 		return true
 	case "doctor":
 		return len(args) == 1
+	case "gate":
+		return len(args) == 2 && args[1] == "accepted"
+	case "review":
+		// Listing the findings accepted on a PR: `review accepted PR [--repo OWNER/NAME]`.
+		return len(args) >= 3 && args[1] == "accepted" && (len(args) == 3 || len(args) == 5 && args[3] == "--repo")
 	case "persona":
 		// Any mix of describe and --full, as runPersona takes them.
 		return !slices.ContainsFunc(args[1:], func(a string) bool { return a != "describe" && a != "--full" })

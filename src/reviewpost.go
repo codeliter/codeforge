@@ -139,6 +139,12 @@ func runShownReview(ctx context.Context, argv, env []string, limit time.Time, st
 			return review.StripPreamble(review.StripVerdict(revised))
 		})
 	}
+	// A finding the user accepted as it is (codeforge review accept) is never raised on the PR again.
+	if n := 0; len(fu.Accepted()) > 0 {
+		if text, n = dropAccepted(text, fu.Accepted()); n > 0 {
+			fmt.Fprintf(os.Stderr, "codeforge: left out %s you accepted as they are.\n", plural(n, "finding"))
+		}
+	}
 	// The closing Decision line is the review's suggestion for its type, shown as such, not as a line of text; the user
 	// picks the decision that is posted.
 	decision, display := review.ParseDecision(text)
@@ -150,7 +156,7 @@ func runShownReview(ctx context.Context, argv, env []string, limit time.Time, st
 	// posting, the leads follow from finishLeads.
 	leads := ""
 	if pipe := review.PipelineOf(ctx); pipe != nil && post.Enabled() {
-		leads = pipe.Leads(ctx)
+		leads = dropAcceptedLeads(pipe.Leads(ctx), fu.Accepted())
 		if dropCoveredLeads(leads, text) != "" {
 			// Another reviewer wrote them: the reviewer checks them against the code, and what goes on the PR reads as the
 			// user's own, like the rest of the review.

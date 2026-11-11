@@ -13,7 +13,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-var errExit = errors.New("exit status 1")
+var (
+	errExit   = errors.New("exit status 1")
+	errKilled = errors.New("signal: killed")
+)
 
 type fakeTests struct {
 	out   string
@@ -34,14 +37,14 @@ func TestTestPackages(t *testing.T) {
 
 func TestVerify_PassesWhenTestsPass(t *testing.T) {
 	r := &fakeTests{out: "ok  \texample.com/shop/internal/a\t0.1s"}
-	require.Empty(t, Verify(t.Context(), r, "/repo", []string{"internal/a/a.go"}))
+	require.Empty(t, mustVerify(t, r, "/repo", []string{"internal/a/a.go"}))
 	require.Equal(t, []string{"/repo go test ./internal/a"}, r.calls, "go test's own result cache is used")
 }
 
 func TestVerify_NoCacheEnvForcesAFreshRun(t *testing.T) {
 	t.Setenv(verifyNoCacheEnv, "1")
 	r := &fakeTests{out: "ok  \texample.com/shop/internal/a\t0.1s"}
-	require.Empty(t, Verify(t.Context(), r, "/repo", []string{"internal/a/a.go"}))
+	require.Empty(t, mustVerify(t, r, "/repo", []string{"internal/a/a.go"}))
 	require.Equal(t, []string{"/repo go test -count=1 ./internal/a"}, r.calls)
 }
 
@@ -50,7 +53,7 @@ func TestVerify_BlocksOnAFailingPackage(t *testing.T) {
 		out: "--- FAIL: TestWrap (0.00s)\n    wrap_test.go:12: lost the last line\nFAIL\texample.com/shop/internal/textutil\t0.2s\n",
 		err: errExit,
 	}
-	got := Verify(t.Context(), r, "/repo", []string{"internal/textutil/wrap.go", "internal/report/report.go"})
+	got := mustVerify(t, r, "/repo", []string{"internal/textutil/wrap.go", "internal/report/report.go"})
 	require.Len(t, got, 1)
 	require.Equal(t, "internal/textutil/wrap.go", got[0].File, "the finding points at a changed file of the failing package")
 	require.Contains(t, got[0].What, "tests fail for example.com/shop/internal/textutil")
@@ -59,7 +62,7 @@ func TestVerify_BlocksOnAFailingPackage(t *testing.T) {
 
 func TestVerify_BlocksWhenTheTestsCannotRun(t *testing.T) {
 	r := &fakeTests{out: "# example.com/shop/internal/a\nbuild failed: undefined: Foo", err: errExit}
-	got := Verify(t.Context(), r, "/repo", []string{"internal/a/a.go"})
+	got := mustVerify(t, r, "/repo", []string{"internal/a/a.go"})
 	require.Len(t, got, 1)
 	require.Contains(t, got[0].What, "could not be run")
 	require.Contains(t, got[0].What, "build failed")
@@ -111,7 +114,7 @@ func TestWrap(t *testing.T) {
 }
 `)
 
-	got := Verify(t.Context(), ExecRunner{}, dir, []string{"internal/textutil/wrap.go"})
+	got := mustVerify(t, ExecRunner{}, dir, []string{"internal/textutil/wrap.go"})
 	require.Len(t, got, 1, "the dropped final line fails the shipped test, so the gate must block")
 	require.Equal(t, "internal/textutil/wrap.go", got[0].File)
 	require.Contains(t, got[0].What, "tests fail for example.com/shop/internal/textutil")
@@ -141,7 +144,7 @@ func Wrap(s string, width int) []string {
 	return lines
 }
 `)
-	require.Empty(t, Verify(t.Context(), ExecRunner{}, dir, []string{"internal/textutil/wrap.go"}), "the fixed code passes")
+	require.Empty(t, mustVerify(t, ExecRunner{}, dir, []string{"internal/textutil/wrap.go"}), "the fixed code passes")
 }
 
 func TestCacheDelete(t *testing.T) {
@@ -156,9 +159,33 @@ func TestCacheDelete(t *testing.T) {
 	c.Delete("missing") // a missing entry is not an error
 }
 
+func mustVerify(t *testing.T, r DirRunner, repo string, files []string) []Finding {
+	t.Helper()
+	got, err := Verify(t.Context(), r, repo, files)
+	require.NoError(t, err)
+	return got
+}
+
+// slowTests is a go test that is still running when its context ends, as a cold build cut off by the gate's clock is.
+type slowTests struct{}
+
+func (slowTests) RunDir(ctx context.Context, _, _ string, _ ...string) ([]byte, error) {
+	<-ctx.Done()
+	return []byte("signal: killed"), errKilled
+}
+
+func TestVerify_ATestRunCutOffByTimeIsNotAFailingTest(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Millisecond)
+	defer cancel()
+	got, err := Verify(ctx, slowTests{}, "/repo", []string{"internal/a/a.go"})
+	require.ErrorIs(t, err, ErrTestsUnfinished)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	require.Empty(t, got, "a slow suite is not a blocking finding against the change")
+}
+
 func TestVerify_SkipsNonGoChanges(t *testing.T) {
 	r := &fakeTests{}
-	require.Empty(t, Verify(t.Context(), r, "/repo", []string{"README.md"}))
+	require.Empty(t, mustVerify(t, r, "/repo", []string{"README.md"}))
 	require.Empty(t, r.calls, "no test run for a docs change")
 }
 
@@ -167,7 +194,7 @@ func TestVerify_EachFailingPackageNamesItsOwnTest(t *testing.T) {
 		out: "--- FAIL: TestA (0.00s)\nFAIL\texample.com/shop/internal/a\t0.1s\nok  \texample.com/shop/internal/c\t0.1s\n--- FAIL: TestB (0.00s)\nFAIL\texample.com/shop/internal/b\t0.1s\n",
 		err: errExit,
 	}
-	got := Verify(t.Context(), r, "/repo", []string{"internal/a/a.go", "internal/b/b.go", "internal/c/c.go"})
+	got := mustVerify(t, r, "/repo", []string{"internal/a/a.go", "internal/b/b.go", "internal/c/c.go"})
 	require.Len(t, got, 2)
 	require.Contains(t, got[0].What, "TestA")
 	require.NotContains(t, got[0].What, "TestB")
@@ -177,7 +204,7 @@ func TestVerify_EachFailingPackageNamesItsOwnTest(t *testing.T) {
 
 func TestVerify_CompileFailureKeepsItsReason(t *testing.T) {
 	r := &fakeTests{out: "# example.com/shop/internal/a\ninternal/a/a.go:3:1: undefined: Foo\nFAIL\texample.com/shop/internal/a [build failed]\n", err: errExit}
-	got := Verify(t.Context(), r, "/repo", []string{"internal/a/a.go"})
+	got := mustVerify(t, r, "/repo", []string{"internal/a/a.go"})
 	require.Len(t, got, 1)
 	require.Contains(t, got[0].What, "build failed")
 	require.True(t, JuryResult{Blocking: got}.WithTests(), "a toolchain failure also clears the cached verdicts")

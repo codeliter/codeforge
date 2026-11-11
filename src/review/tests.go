@@ -2,6 +2,8 @@ package review
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -35,13 +37,18 @@ func TestPackages(files []string) []string {
 	return dirs
 }
 
+// ErrTestsUnfinished is returned by Verify when its time ran out or it was cancelled before go test finished. Nothing is
+// known about the code then: it is neither a failing test nor a pass.
+var ErrTestsUnfinished = errors.New("the changed packages' tests did not finish in time")
+
 // Verify runs the changed packages' tests in the repository and returns one Blocking finding per failing package.
 // A reviewer that reports pass while the code's own tests fail has missed a defect the repository already proves, so
 // the gate blocks on that proof instead of trusting the verdict. It is deterministic: no model is involved.
-func Verify(ctx context.Context, r DirRunner, repo string, files []string) []Finding {
+// A run killed for time is ErrTestsUnfinished, never a finding: a slow test suite is not a defect in the change.
+func Verify(ctx context.Context, r DirRunner, repo string, files []string) ([]Finding, error) {
 	dirs := TestPackages(files)
 	if len(dirs) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, verifyTimeout)
@@ -50,7 +57,10 @@ func Verify(ctx context.Context, r DirRunner, repo string, files []string) []Fin
 	args := slices.Concat([]string{"test"}, cacheFlags(), prefixed(dirs))
 	out, err := r.RunDir(ctx, repo, "go", args...)
 	if err == nil {
-		return nil
+		return nil, nil
+	}
+	if ctx.Err() != nil {
+		return nil, fmt.Errorf("%w: %w", ErrTestsUnfinished, context.Cause(ctx))
 	}
 
 	output := string(out)
@@ -78,7 +88,7 @@ func Verify(ctx context.Context, r DirRunner, repo string, files []string) []Fin
 		// A build failure or a missing toolchain prints no FAIL line; it still means the change is unverified.
 		findings = append(findings, Finding{File: fileIn(dirs, files, ""), What: "the repository's own tests could not be run: " + tail(output)})
 	}
-	return findings
+	return findings, nil
 }
 
 // isPackageResult is the line go test prints when a package passes or has no tests.

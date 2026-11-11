@@ -183,6 +183,10 @@ func mergeRecord(rec, old review.Record, hadOld bool, outcomes []review.ThreadOu
 	for _, id := range old.Posted {
 		rec.AddPosted(id)
 	}
+	// What the user accepted as it is stays accepted, whichever round wins.
+	if hadOld {
+		rec.Accepted = slices.Clone(old.Accepted)
+	}
 	resolved := map[string]bool{}
 	for _, o := range outcomes {
 		resolved[o.Thread] = o.Resolved
@@ -198,6 +202,8 @@ func mergeRecord(rec, old review.Record, hadOld bool, outcomes []review.ThreadOu
 			case resolved[t.ID]:
 				delete(rec.Threads, t.ID)
 				gone = append(gone, t)
+			case review.AcceptedAt(rec.Accepted, t.Path, t.OriginalLine):
+				rec.Threads[t.ID] = false // accepted, not fixing: it never blocks again
 			default:
 				// Only ever raised: a round that read the thread as non-blocking never lowers what another recorded, by
 				// thread id or by a blocking finding where the thread was posted. A finding matched on its line alone may

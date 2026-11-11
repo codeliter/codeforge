@@ -10,6 +10,8 @@ Modes:
   review [PR|URL] [--comment]        Read-only review of a PR (post it from the view with p; --comment asks on the
                                      terminal where there is no view), or of your branch;
                                      a PR you reviewed before gets a follow-up (--follow-up to ask, --fresh for a full one)
+  review accept PR PATH:LINE [REASON] Accept a finding of your posted review as it is: later rounds leave it out
+                                     and its thread no longer blocks (unaccept PR PATH:LINE, accepted PR to list)
   respond [PR] [--watch]             Address new review comments on your PR: judge, fix, push back, draft replies
   (none)                             Pick a mode. A PR link or "#42" (quote it: shells treat # as a comment) starts review,
                                      --ticket starts ticket, a question goes to chat
@@ -18,7 +20,11 @@ Everyday:
   init [--yes]                       Set up Empryo, sign-in and checks; learn a local persona in this Git repo
   doctor                             Check setup, sign-in, models, persona and trust; shows what to do next
   gate                               Review your branch: one reviewer for simple changes, the jury for
-                                     complicated or high-risk ones. Voluntary; nothing waits for it
+                                     complicated or high-risk ones. Voluntary; nothing waits for it.
+                                     Stops after 2 failed runs on a branch until you accept or reset
+  gate accept PATH:LINE [REASON]     Accept a blocking finding you will not fix; it stops blocking on this branch
+  gate unaccept PATH:LINE | accepted List accepted findings, or make one block again
+  gate reset                         Allow 2 more gate runs on this branch
   persona describe [--full]          Summarise your global and repository personas and where each came from;
                                      --full prints them whole
   sessions [--all] [--list]          Search this directory's sessions (--all: every project's, from its root) by

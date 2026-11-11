@@ -206,6 +206,13 @@ func classify(w []string) []Finding {
 		if len(w) > 1 && (hasAny(w[1:2], "trust", "init", "repair", "reinit") || w[1] == "models" && !printsModels(w[2:]) || (w[1] == "provider" || w[1] == "providers") && !printsProviders(w[2:])) {
 			return []Finding{{RuleSelf, "only you can change codeforge settings"}}
 		}
+		// Accepting a finding or resetting the run cap is the user's call on the agent's work; listing is reading.
+		if len(w) > 2 && w[1] == "gate" && (len(w) != 3 || w[2] != "accepted") {
+			return []Finding{{RuleSelf, "only you can accept a gate finding or reset the gate's run cap"}}
+		}
+		if len(w) > 2 && w[1] == "review" && (w[2] == "accept" || w[2] == "unaccept" || strings.ContainsAny(w[2], "$`")) {
+			return []Finding{{RuleSelf, "only you can accept a finding on a PR"}}
+		}
 		// A subcommand built from a variable (`o=observe; codeforge $o`) can name observe or learn where no literal shows.
 		if len(w) > 1 && strings.ContainsAny(w[1], "$`") {
 			return []Finding{{RuleLearning, learningReason}}

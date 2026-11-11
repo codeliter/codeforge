@@ -73,7 +73,11 @@ func TestCheck_SelfStillGuarded(t *testing.T) {
 		require.Equal(t, []string{RuleSelf}, rules(Check(cmd, false)), cmd)
 	}
 	require.Equal(t, []string{RuleLearning}, rules(Check("codeforge learn correct x", false)))
-	for _, cmd := range []string{"codeforge models", "codeforge models recommend", "codeforge gate", "codeforge learn list", "codeforge provider", "codeforge provider show", "codeforge providers list"} {
+	for _, cmd := range []string{"codeforge gate accept a.go:3", "codeforge gate reset", "codeforge gate unaccept a.go:3", "codeforge gate $x",
+		"codeforge review accept 42 a.go:3", "codeforge review unaccept 42 a.go:3", "codeforge review $w 42 a.go:3"} {
+		require.Equal(t, []string{RuleSelf}, rules(Check(cmd, false)), "only the user accepts a finding or lifts the cap: %s", cmd)
+	}
+	for _, cmd := range []string{"codeforge models", "codeforge models recommend", "codeforge gate", "codeforge gate accepted", "codeforge learn list", "codeforge provider", "codeforge provider show", "codeforge providers list"} {
 		require.Empty(t, rules(Check(cmd, false)), cmd)
 	}
 	for _, cmd := range []string{"codeforge models apply", "codeforge models fill", "codeforge models set model x/y", "codeforge models nope", "codeforge provider set copilot", "codeforge providers clear", "codeforge provider show --global x"} {

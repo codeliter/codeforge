@@ -22,7 +22,11 @@ import (
 	"github.com/codeliter/codeforge/src/effort"
 )
 
-var errGateFailed = errors.New("review gate failed")
+var (
+	errGateFailed = errors.New("review gate failed")
+	// errGateCapped is a gate that would not run: the branch has used its runs since its last pass.
+	errGateCapped = errors.New("review gate not run: this branch has used its gate runs")
+)
 
 func stateDir(home string) string {
 	return config.Dir(home)
@@ -61,18 +65,27 @@ func runGate(ctx context.Context, home, bin string, cfg config.Config, w io.Writ
 	// A follow-up round after blocking findings sends the findings and only the files changed since, not the whole pack,
 	// and keeps the tier the earlier round was judged at instead of paying the judges to size the same work again.
 	usage := &gateUsage{}
-	rounds := review.Rounds{Dir: filepath.Join(config.Dir(home), "review-rounds")}
+	rounds := gateRounds(home)
 	roundKey := review.RoundKey(repo, local.Branch, local.Base)
+	prev, hadRound := rounds.Load(roundKey, time.Now())
+	// The cap is the tool's, not only the skill's: after MaxGateRuns failed runs the gate shows what is left and stops,
+	// so neither an agent nor a loop can keep paying for rounds of the same findings.
+	if hadRound && prev.Capped() {
+		printCapped(w, prev)
+		return fmt.Errorf("%w: %d failed runs on this branch", errGateCapped, prev.FailedRuns())
+	}
+	accepts := gateAccepted(home)
+	accepted := accepts.Load(roundKey, time.Now())
 	digests := review.FileDigests(repo, local.Files)
-	packed, note := local, ""
+	packed, note := local, review.AcceptedNote(accepted)
 	var tier review.Tier
 	var why string
 	followUp := false
-	if prev, ok := rounds.Load(roundKey, time.Now()); ok && len(prev.Blocking) > 0 && prev.Tree != tree {
+	if hadRound && len(prev.Blocking) > 0 && prev.Tree != tree {
 		if changed := prev.ChangedSince(digests); len(changed) > 0 && len(changed) < len(local.Files) {
 			packed.Files = changed
 			packed.Diff = review.FilterDiff(local.Diff, changed)
-			note = review.DeltaNote(prev, changed)
+			note = review.DeltaNote(prev, changed) + note
 			followUp = true
 			fmt.Fprintf(w, "codeforge gate: follow-up round, %d of %d files changed since the last review\n", len(changed), len(local.Files))
 			if t, ok := review.Reuse(prev.Tier, local.Diff, local.Files); ok {
@@ -124,24 +137,50 @@ func runGate(ctx context.Context, home, bin string, cfg config.Config, w io.Writ
 	// are read-only and the tree is re-checked after the review, so nothing they do can change what the tests see.
 	panelCtx, stopPanel := context.WithDeadline(ctx, review.AgentEnd(ctx))
 	defer stopPanel()
-	verifyCtx, stopVerify := context.WithCancel(panelCtx)
+	// The tests get the whole review's time, not the panel's: a cold build that outlives the reviewers is slow, not
+	// broken, and cutting it at the panel deadline reported a failing test where none failed.
+	verifyCtx, stopVerify := context.WithDeadline(ctx, review.WorkDeadline(ctx))
 	defer stopVerify()
-	verified := make(chan []review.Finding, 1)
-	go func() { verified <- review.Verify(verifyCtx, review.ExecRunner{}, repo, local.Files) }()
+	type verification struct {
+		findings []review.Finding
+		err      error
+	}
+	verified := make(chan verification, 1)
+	go func() {
+		fs, err := review.Verify(verifyCtx, review.ExecRunner{}, repo, local.Files)
+		verified <- verification{fs, err}
+	}()
 
 	res, err := review.Jury(panelCtx, repo, brief, reviewers, opts)
+	// Findings the user accepted as they are stay off the blocking list; the tests' findings are added after, so a
+	// failing test is never set aside.
+	var setAside []review.Finding
+	if err == nil {
+		var moved bool
+		res.Blocking, setAside, moved = review.SetAside(res.Blocking, accepted)
+		if moved {
+			if serr := accepts.Save(roundKey, accepted, time.Now()); serr != nil {
+				fmt.Fprintln(w, "codeforge gate: could not save the accepted findings:", serr)
+			}
+		}
+	}
 	// Deterministic backstop, collected on every review rather than only on a pass: the code's own tests are evidence the
 	// repository gives, and a reviewer that missed a failing test is wrong however it voted. They cover every changed
 	// package even in a follow-up round, because a fix can break a package whose files did not change since the last
 	// round. A jury error leaves nothing to add them to, so it stops the tests instead of waiting for them.
+	var testsErr error
 	if err != nil {
 		stopVerify()
 		<-verified
-	} else if findings := <-verified; len(findings) > 0 {
-		res.Blocking = append(res.Blocking, findings...)
+	} else if v := <-verified; v.err != nil {
+		testsErr = v.err
+		fmt.Fprintf(w, "codeforge gate: %v, so nothing about them is known and the review cannot pass\n", v.err)
+	} else if len(v.findings) > 0 {
+		res.Blocking = append(res.Blocking, v.findings...)
 		fmt.Fprintf(w, "codeforge gate: the changed packages' tests fail, so the review cannot pass\n")
 	}
 	report(ctx, w, repo, res)
+	reportAccepted(w, setAside)
 	fmt.Fprintf(w, "codeforge gate: done in %s; %s\n", time.Since(start).Round(time.Second), usage.totals())
 	usage.record(gateRecord{At: time.Now(), Tier: tier.Name, Models: models, Files: len(packed.Files), Brief: len(brief),
 		Elapsed: time.Since(start).Seconds(), Passed: err == nil && res.Passed(), Blocking: len(res.Blocking), FollowUp: followUp})
@@ -160,15 +199,27 @@ func runGate(ctx context.Context, home, bin string, cfg config.Config, w io.Writ
 			}
 		}
 	}
+	// Unfinished tests are no verdict on the code: no round is counted against the branch and no pass is recorded. The
+	// reviewers' verdicts are cached above, so the next run only waits for the tests.
+	if res.Passed() && testsErr != nil {
+		return fmt.Errorf("gate: %w; run `codeforge gate` again, the reviewers' verdicts are kept", testsErr)
+	}
+	runs := 1
+	if hadRound {
+		runs = prev.FailedRuns() + 1
+	}
 	if after, err := guard.TreeID(ctx, repo); err == nil && after == tree {
 		if res.Passed() {
 			rounds.Clear(roundKey)
-		} else if err := rounds.Save(roundKey, review.Round{Tree: tree, Tier: tier.Name, Files: digests, Blocking: res.Blocking, At: time.Now()}); err != nil {
+		} else if err := rounds.Save(roundKey, review.Round{Tree: tree, Tier: tier.Name, Files: digests, Blocking: res.Blocking, At: time.Now(), Runs: runs}); err != nil {
 			fmt.Fprintln(w, "codeforge gate: could not save the review round:", err)
 		}
 	}
 	if !res.Passed() {
-		return fmt.Errorf("%w: %d blocking finding(s); fix them and run `codeforge gate` again", errGateFailed, len(res.Blocking))
+		if runs >= review.MaxGateRuns {
+			return fmt.Errorf("%w: %d blocking finding(s) after %d runs; stop and show them to the user. %s", errGateFailed, len(res.Blocking), runs, gateCapAdvice)
+		}
+		return fmt.Errorf("%w: %d blocking finding(s); fix them all and run `codeforge gate` again (run %d of %d)", errGateFailed, len(res.Blocking), runs, review.MaxGateRuns)
 	}
 
 	// The pass, and any cached verdict, only counts if nothing changed while the reviewers worked.

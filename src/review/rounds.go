@@ -13,6 +13,10 @@ import (
 
 const roundTTL = 6 * time.Hour
 
+// MaxGateRuns is how many gate runs in a row may fail on one branch. After that the gate refuses to review again until
+// a person looks at what is left: a third round of the same findings costs a full review and rarely ends the loop.
+const MaxGateRuns = 2
+
 // Round is what a failed gate run left behind, so the next run reviews the delta instead of starting over.
 type Round struct {
 	Tree     string            `json:"tree"`
@@ -20,6 +24,18 @@ type Round struct {
 	Files    map[string]string `json:"files"`
 	Blocking []Finding         `json:"blocking"`
 	At       time.Time         `json:"at"`
+	// Runs counts the failed gate runs on the branch since its last pass. Rounds saved before it was kept read as one.
+	Runs int `json:"runs,omitempty"`
+}
+
+// FailedRuns is how many gate runs in a row have failed on the branch.
+func (r Round) FailedRuns() int {
+	return max(r.Runs, 1)
+}
+
+// Capped reports whether the branch has used its gate runs.
+func (r Round) Capped() bool {
+	return r.FailedRuns() >= MaxGateRuns
 }
 
 // Rounds stores the last round per branch.

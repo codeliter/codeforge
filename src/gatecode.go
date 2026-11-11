@@ -41,6 +41,9 @@ const (
 	minHintLen    = 4
 	hintMax       = 3
 	maxMarkedSpan = 16
+	// maxContextLines is the most lines a snippet grows to so it shows the whole construct a finding sits in; a longer
+	// construct is shown as the window around the finding with its header on top.
+	maxContextLines = 40
 )
 
 // codeStyle is how the report is drawn: the Codeforge Steel palette and highlighting only on a terminal that wants
@@ -133,6 +136,11 @@ func codeSnippetFocus(content, file string, fc focus, st codeStyle) string {
 		lo, hi = min(lo, n), max(hi, n)
 	}
 	first, last := max(1, lo-contextBefore), min(len(all), hi+contextAfter)
+	// The window grows to the whole construct the finding sits in, a short function or the loop or branch within a long
+	// one, so the reader sees where it starts and ends instead of a fixed slice cut mid-way.
+	if from, to := enclosingSpan(all, lo, hi); from > 0 {
+		first, last = min(first, from), max(last, to)
+	}
 	header := enclosingHeader(all, lo)
 	switch {
 	case header >= first:
@@ -293,6 +301,68 @@ func enclosingHeader(all []string, line int) int {
 		target = indentOf(l) // an outer statement; keep looking for what contains it
 	}
 	return block
+}
+
+// enclosingSpan returns the first and last line of the largest construct around lines lo to hi that has at most
+// maxContextLines lines: walking out from the innermost block (an if, a loop) to the declaration that holds it, and
+// stopping at that declaration or at the first construct too long to show whole. It returns 0, 0 when even the innermost
+// one is too long, or when the lines sit at the top level.
+func enclosingSpan(all []string, lo, hi int) (from, to int) {
+	target := indentOf(all[lo-1])
+	if strings.TrimSpace(all[lo-1]) == "" {
+		target = math.MaxInt
+	}
+	for n := lo - 1; n >= 1 && n >= lo-headerSearch && target > 0; n-- {
+		l := all[n-1]
+		if strings.TrimSpace(l) == "" || indentOf(l) >= target {
+			continue
+		}
+		target = indentOf(l)
+		end := blockEnd(all, n)
+		if end < hi {
+			continue // a statement that ends above the finding, such as a multi-line call's closing line; look further out
+		}
+		if end-n+1 > maxContextLines {
+			break
+		}
+		from, to = n, end
+		if declLine.MatchString(l) {
+			break
+		}
+	}
+	return from, to
+}
+
+// blockEnd is the last line of the block that opens at line start: the last line indented deeper than it, or the
+// closing line at its own indentation (a brace, bracket, end, fi or done) that follows them.
+func blockEnd(all []string, start int) int {
+	indent, last := indentOf(all[start-1]), start
+	for n := start + 1; n <= len(all); n++ {
+		t := strings.TrimSpace(all[n-1])
+		if t == "" {
+			continue
+		}
+		if indentOf(all[n-1]) <= indent {
+			if closesBlock(t) {
+				return n
+			}
+			return last
+		}
+		last = n
+	}
+	return last
+}
+
+func closesBlock(t string) bool {
+	if strings.HasPrefix(t, "}") || strings.HasPrefix(t, ")") || strings.HasPrefix(t, "]") || strings.HasPrefix(t, "</") {
+		return true
+	}
+	word, _, _ := strings.Cut(t, " ")
+	switch strings.TrimRight(word, ";") {
+	case "end", "fi", "done", "esac":
+		return true
+	}
+	return false
 }
 
 // cutColumns keeps s within width characters, ending a cut line with "…". It counts characters, not bytes, so a line

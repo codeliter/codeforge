@@ -28,12 +28,17 @@ var completionTree = []struct {
 		{"--follow-up", "Follow up on your earlier review: replies and changes since"},
 		{"--fresh", "Review the whole PR again, even after an earlier review"},
 		{"--repo", "The PR's repository, owner/name"},
+		{"accept", "Accept a finding of your posted review as it is"}, {"unaccept", "Make an accepted finding count again"},
+		{"accepted", "List the findings you accepted on a PR"},
 	}, sessionFlags...)},
 	{word{"respond", "Answer the open review comments on your PR"}, []word{
 		{"--watch", "Wait for new review comments, then start"}, {"--print", "Print the brief instead of starting"},
 		{"--model", "Model for this run"}, {"--effort", "Reasoning effort"},
 	}},
-	{word{"gate", "Review your branch and run the changed packages' tests"}, nil},
+	{word{"gate", "Review your branch and run the changed packages' tests"}, []word{
+		{"accept", "Accept a blocking finding you will not fix"}, {"unaccept", "Make an accepted finding block again"},
+		{"accepted", "List the accepted findings"}, {"reset", "Allow more gate runs on this branch"},
+	}},
 	{word{"init", "Set up Empryo, sign-in and checks; learn a persona"}, []word{
 		{"--yes", "Accept the defaults"}, {"--repo", "Learn this repository's persona"},
 		{"--persona", "Start from a described persona"}, {"--global", "Set the persona for every project"},

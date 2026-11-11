@@ -92,6 +92,15 @@ func Run(ctx context.Context, args []string) error {
 		return runPersona(ctx, home, args[1:], os.Stdout)
 	}
 
+	// The gate's own state (accepted findings, the run cap) needs no models or Empryo: only the repository and the branch.
+	if first(args) == "gate" && len(args) > 1 {
+		return runGateCommand(ctx, home, args[1:], os.Stdout)
+	}
+	// So are the findings accepted on a PR: they live in the record of the user's posted review.
+	if isReviewAccept(args) {
+		return runReviewAccept(ctx, args[1:], os.Stdout)
+	}
+
 	// doctor only reads state, so it runs before automatic repair, project, config and Empryo preparation.
 	if first(args) == "doctor" {
 		if len(args) > 1 {
