@@ -7,9 +7,30 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
+
+func TestOpen_WaitsPastTheOperationTimeoutForAnotherProcessesMigration(t *testing.T) {
+	dir := t.TempDir()
+	first, err := Open(t.Context(), dir)
+	require.NoError(t, err)
+	// Another process holds the write lock, as one migrating does, for longer than one operation may take.
+	tx, err := first.db.BeginTx(t.Context(), nil)
+	require.NoError(t, err)
+	_, err = tx.ExecContext(t.Context(), "PRAGMA user_version = user_version")
+	require.NoError(t, err)
+	released := time.AfterFunc(operationTimeout+500*time.Millisecond, func() { tx.Rollback() }) //nolint:errcheck // releasing the lock is all that matters
+	defer released.Stop()
+	defer first.Close() //nolint:errcheck // test
+
+	start := time.Now()
+	second, err := Open(t.Context(), dir)
+	require.NoError(t, err, "opening waits for the lock instead of failing at operationTimeout")
+	require.Greater(t, time.Since(start), operationTimeout)
+	require.NoError(t, second.Close())
+}
 
 func TestReviewRecords_UpdatesOnOnePRNeverLoseEachOther(t *testing.T) {
 	dir := t.TempDir()

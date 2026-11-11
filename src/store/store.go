@@ -33,6 +33,11 @@ const (
 var migrations embed.FS
 
 const operationTimeout = 2 * time.Second
+
+// openTimeout bounds opening the database: up to migrationWait for other processes' migrations, then the operation's
+// own time. Bounded by operationTimeout alone, the wait was cut at 2s, and on a slow disk the last of eight processes
+// opening at once failed with "starting migration: context deadline exceeded".
+const openTimeout = migrationWait + operationTimeout
 const busyTimeoutMS = 500
 const privateDir = 0o700
 const privateFile = 0o600
@@ -68,7 +73,7 @@ func Open(ctx context.Context, dir string) (*Store, error) {
 
 // OpenWith is Open with options.
 func OpenWith(ctx context.Context, dir string, opts Options) (*Store, error) {
-	ctx, cancel := context.WithTimeout(ctx, operationTimeout)
+	ctx, cancel := context.WithTimeout(ctx, openTimeout)
 	defer cancel()
 	if err := os.MkdirAll(dir, privateDir); err != nil {
 		return nil, fmt.Errorf("creating session directory: %w", err)
