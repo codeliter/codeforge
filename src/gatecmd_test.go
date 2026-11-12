@@ -14,7 +14,7 @@ import (
 func TestGateCommand_AcceptingTheLastBlockerGivesTheBranchItsRunsBack(t *testing.T) {
 	dir, now := t.TempDir(), time.Now()
 	rounds, accepts := review.Rounds{Dir: dir + "/r"}, review.AcceptedStore{Dir: dir + "/a"}
-	require.NoError(t, rounds.Save("k", review.Round{Runs: 2, At: now, Blocking: []review.Finding{
+	require.NoError(t, rounds.Save("k", review.Round{Runs: review.MaxGateRuns, At: now, Blocking: []review.Finding{
 		{File: "a.go", Line: 3, What: "nil deref"}, {File: "b.go", Line: 9, What: "race"},
 	}}))
 	var out strings.Builder

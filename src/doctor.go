@@ -81,7 +81,7 @@ func doctorItems(ctx context.Context, home string) []doctorItem {
 	if note := personaStale(ctx, home, time.Now()); note != "" {
 		items = append(items, doctorItem{check: check{name: "global persona", note: note}, warn: true, fix: "codeforge persona update"})
 	}
-	return append(items, doctorRepo(home, root)...)
+	return append(items, doctorRepo(ctx, home, root)...)
 }
 
 func doctorFix(name string) string {
@@ -157,7 +157,7 @@ func doctorEffective(home, root string, global config.Config) (config.Config, st
 
 // doctorRepo reports the persona and project model configuration of the current Git project, and whether
 // each has been approved. Outside a Git project there is nothing to report.
-func doctorRepo(home, root string) []doctorItem {
+func doctorRepo(ctx context.Context, home, root string) []doctorItem {
 	if root == "" {
 		return []doctorItem{{check: check{name: "project", ok: true, note: "not in a Git project; only global settings apply"}}}
 	}
@@ -166,6 +166,13 @@ func doctorRepo(home, root string) []doctorItem {
 		return []doctorItem{{check: check{name: "trust", note: err.Error()}, fix: "remove the unreadable file in ~/.codeforge"}}
 	}
 	persona := doctorFile("persona", filepath.Join(root, repoPersonaPath), ledger, "codeforge init", "codeforge trust")
+	// A persona of the user's own for this repository is as good as one in it.
+	switch private, err := loadPrivateRepoPersona(ctx, home, root); {
+	case err != nil:
+		persona = doctorItem{check: check{name: "persona", note: err.Error()}, warn: true, fix: "fix or remove " + privateRepoPersonaPath(ctx, home, root)}
+	case private != "" && persona.fix == "codeforge init":
+		persona = doctorItem{check: check{name: "persona", ok: true, note: "yours alone, kept outside the repository"}}
+	}
 	project := doctorFile("config", config.ProjectPath(root), ledger, "", "codeforge trust --models")
 	return slices.DeleteFunc([]doctorItem{persona, project}, func(d doctorItem) bool { return d.name == "" })
 }

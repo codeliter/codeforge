@@ -21,10 +21,10 @@ Everyday:
   doctor                             Check setup, sign-in, models, persona and trust; shows what to do next
   gate                               Review your branch: one reviewer for simple changes, the jury for
                                      complicated or high-risk ones. Voluntary; nothing waits for it.
-                                     Stops after 2 failed runs on a branch until you accept or reset
+                                     Stops after 3 failed runs on a branch until you accept or reset
   gate accept PATH:LINE [REASON]     Accept a blocking finding you will not fix; it stops blocking on this branch
   gate unaccept PATH:LINE | accepted List accepted findings, or make one block again
-  gate reset                         Allow 2 more gate runs on this branch
+  gate reset                         Allow 3 more gate runs on this branch
   job add [--at TIME] [--until CMD]... [--while CMD]... [--hold DUR] -- COMMAND
                                      Run COMMAND once it is TIME and every --until check passes (for --hold);
                                      a failing --while check cancels it. Survives the session and posts the
@@ -34,6 +34,8 @@ Everyday:
   persona update [--section NAME]... [REPO...]
                                      Relearn your global persona from where it was learned (and REPO...); shows
                                      what changed and replaces only the sections you tick. persona revert undoes it
+  persona share                      Put your persona for this repository into it (.codeforge/persona.md) to commit
+  persona list | forget [NAME]       List your private repository personas, or remove one (this repository's by default)
   sessions [--all] [--list]          Search this directory's sessions (--all: every project's, from its root) by
                                      when, mode, title, turns, cost or ID, and open one in its own mode; --list prints them
   --resume ID, --session ID, -s ID    Restore the original mode without new-task preparation

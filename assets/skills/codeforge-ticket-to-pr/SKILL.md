@@ -9,6 +9,6 @@ description: Take a ticket ID to a verified branch and PR text. Use when the tas
 2. Read the ticket and the code it touches. Write a light plan if 3+ files.
 3. Implement with `codeforge-code`. Commit in small steps with `codeforge-voice` messages.
 4. Verify: build, lint, tests for every touched package.
-5. Run `codeforge gate` once the work is committed-ready, not after each edit. Fix only Blocking findings, all in one batch, then rerun. The gate runs at most twice on a branch and then refuses: if a Blocking finding remains after the second run, stop and show it. Only the user can accept a finding (`codeforge gate accept`) or allow more runs (`codeforge gate reset`). Ignore Should findings. Pushing and opening the PR never wait for the gate.
+5. Run `codeforge gate` once the work is committed-ready, not after each edit. Fix only Blocking findings, all in one batch, then rerun. The gate runs at most three times on a branch and then refuses: if a Blocking finding remains after the third run, stop and show it. Only the user can accept a finding (`codeforge gate accept`) or allow more runs (`codeforge gate reset`). Ignore Should findings. Pushing and opening the PR never wait for the gate.
 6. Draft the PR title and body with `codeforge-voice`. Show it.
 7. Stop. Opening the PR waits for an explicit go.

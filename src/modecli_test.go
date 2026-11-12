@@ -160,7 +160,7 @@ func TestModesCLI(t *testing.T) {
 				}
 				if variant == "tui" {
 					if tc.name == "ticket" || tc.name == "start" {
-						require.Contains(t, string(out), "codeforge: reviewing the change (round 1 of 2)", "ticket work is reviewed before the TUI opens")
+						require.Contains(t, string(out), "codeforge: reviewing the change (round 1 of 3)", "ticket work is reviewed before the TUI opens")
 					} else {
 						require.NotContains(t, string(out), "reviewing the change")
 					}

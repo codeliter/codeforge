@@ -59,8 +59,9 @@ func TestParsePlace(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestRound_CappedAfterTwoFailedRuns(t *testing.T) {
-	require.False(t, Round{Runs: 1}.Capped())
-	require.True(t, Round{Runs: 2}.Capped())
+func TestRound_CappedAfterTheMostFailedRuns(t *testing.T) {
+	require.Equal(t, 3, MaxGateRuns)
+	require.False(t, Round{Runs: MaxGateRuns - 1}.Capped())
+	require.True(t, Round{Runs: MaxGateRuns}.Capped())
 	require.Equal(t, 1, Round{}.FailedRuns(), "a round saved before runs were counted is one failed run")
 }

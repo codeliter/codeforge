@@ -134,7 +134,13 @@ func initRepo(ctx context.Context, home, bin, model string, ans initAnswers) err
 	} else if !errors.Is(err, fs.ErrNotExist) {
 		return fmt.Errorf("reading repository persona: %w", err)
 	}
-	fmt.Fprintf(os.Stderr, "codeforge: setting up the repository persona in %s; your global persona is unchanged.\n", root)
+	if existing, err := loadPrivateRepoPersona(ctx, home, root); err != nil {
+		return err
+	} else if existing != "" && !unfinishedRepoPersona([]byte(existing)) {
+		fmt.Fprintf(os.Stderr, "codeforge: you already have a persona for this repository at %s; left unchanged.\n", privateRepoPersonaPath(ctx, home, root))
+		return nil
+	}
+	fmt.Fprintf(os.Stderr, "codeforge: setting up the persona for %s; your global persona is unchanged.\n", root)
 	var persona []byte
 	if ans.source == sourceBlank {
 		persona, err = repoPersonaSeed("")
@@ -148,12 +154,16 @@ func initRepo(ctx context.Context, home, bin, model string, ans initAnswers) err
 		persona = append(persona, []byte("\n## Team notes\n"+ans.notes+"\n")...)
 	}
 
-	p, err = saveRepoPersona(home, root, persona)
+	p, err = saveRepoPersona(ctx, home, root, persona)
 	if err != nil {
 		return err
 	}
 
-	fmt.Fprintf(os.Stderr, "codeforge: repository persona written to %s. Edit it, then commit it to share with your team.\n", p)
+	if p == filepath.Join(root, repoPersonaPath) {
+		fmt.Fprintf(os.Stderr, "codeforge: repository persona written to %s. Edit it, then commit it to share with your team.\n", p)
+		return nil
+	}
+	fmt.Fprintf(os.Stderr, "codeforge: persona for this repository written to %s. It is yours alone and nothing was added to the repository; codeforge persona share puts it there for your team.\n", p)
 	return nil
 }
 

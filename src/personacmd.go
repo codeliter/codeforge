@@ -21,7 +21,7 @@ import (
 // built-in starter, or learned from the user's history in some repositories), and this repository's own, which
 // overrides it where they differ. It only reads.
 
-var errPersonaUsage = errors.New("usage: codeforge persona [describe] [--full] | update [--section NAME]... [REPO...] | revert")
+var errPersonaUsage = errors.New("usage: codeforge persona [describe] [--full] | update [--section NAME]... [REPO...] | revert | share | list | forget [NAME]")
 
 // personaSourceFile records where the global persona came from, beside it.
 const personaSourceFile = "persona.source.json"
@@ -96,6 +96,21 @@ func runPersona(ctx context.Context, home string, args []string, w io.Writer) er
 		}
 		return revertPersona(ctx, home, w)
 	}
+	if len(args) > 0 && args[0] == "list" {
+		if len(args) > 1 {
+			return errPersonaUsage
+		}
+		return runPersonaList(home, w)
+	}
+	if len(args) > 0 && args[0] == "forget" {
+		return runPersonaForget(ctx, home, args[1:], w)
+	}
+	if len(args) > 0 && args[0] == "share" {
+		if len(args) > 1 {
+			return errPersonaUsage
+		}
+		return runPersonaShare(ctx, home, w)
+	}
 	full := false
 	for _, a := range args {
 		switch a {
@@ -139,17 +154,32 @@ func runPersona(ctx context.Context, home string, args []string, w io.Writer) er
 	if err != nil {
 		return err
 	}
-	p := filepath.Join(root, repoPersonaPath)
-	if repo == "" {
-		fmt.Fprintf(w, "\nRepository persona: none in %s. Add one with codeforge init --repo.\n", root)
-		return nil
+	private, err := loadPrivateRepoPersona(ctx, home, root)
+	if err != nil {
+		return err
 	}
 	ts, err := config.LoadTrust(home)
 	if err != nil {
 		return err
 	}
-	state := "in use: it overrides the global persona where they differ"
-	if ts[p] != config.Digest(repo) {
+	sharedInUse := repo != "" && ts[filepath.Join(root, repoPersonaPath)] == config.Digest(repo)
+	if private != "" {
+		state := "in use"
+		if sharedInUse {
+			state = "in use; the shared one below wins where they differ"
+		}
+		fmt.Fprintf(w, "\nYour persona for this repository: %s\nSource: yours alone, not in the repository (%s). Share it with codeforge persona share.\n\n%s\n",
+			privateRepoPersonaPath(ctx, home, root), state, show(private))
+	}
+	p := filepath.Join(root, repoPersonaPath)
+	if repo == "" {
+		if private == "" {
+			fmt.Fprintf(w, "\nRepository persona: none for %s. Add one with codeforge init --repo.\n", root)
+		}
+		return nil
+	}
+	state := "in use: it overrides your own and the global persona where they differ"
+	if !sharedInUse {
 		state = "not in use: new or changed since you approved it. Run codeforge trust to use it"
 	}
 	fmt.Fprintf(w, "\nRepository persona: %s\nSource: this repository (%s)\n\n%s\n", p, state, show(repo))

@@ -62,7 +62,10 @@ func printsOnlyCodeforge(w []string) bool {
 		// Listing the findings accepted on a PR: `review accepted PR [--repo OWNER/NAME]`.
 		return len(args) >= 3 && args[1] == "accepted" && (len(args) == 3 || len(args) == 5 && args[3] == "--repo")
 	case "persona":
-		// Any mix of describe and --full, as runPersona takes them.
+		// Any mix of describe and --full, as runPersona takes them, or list. share, update, revert and forget write.
+		if len(args) == 2 && args[1] == "list" {
+			return true
+		}
 		return !slices.ContainsFunc(args[1:], func(a string) bool { return a != "describe" && a != "--full" })
 	case "models":
 		return printsModels(args[1:])

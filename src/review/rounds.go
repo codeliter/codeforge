@@ -14,8 +14,8 @@ import (
 const roundTTL = 6 * time.Hour
 
 // MaxGateRuns is how many gate runs in a row may fail on one branch. After that the gate refuses to review again until
-// a person looks at what is left: a third round of the same findings costs a full review and rarely ends the loop.
-const MaxGateRuns = 2
+// a person looks at what is left: another round of the same findings costs a full review and rarely ends the loop.
+const MaxGateRuns = 3
 
 // Round is what a failed gate run left behind, so the next run reviews the delta instead of starting over.
 type Round struct {

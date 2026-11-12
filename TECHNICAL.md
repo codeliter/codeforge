@@ -126,6 +126,13 @@ flowchart TD
   deleted, and the persona it replaces is kept as `~/.codeforge/persona.previous.md`. Without a terminal there is nobody to
   tick, so every changed section is taken; a section the history showed nothing for is never replaced either way. `codeforge persona` says how many
   commits you have made since it was learned.
+- A repository persona is yours alone by default: `codeforge init --repo` keeps it under `~/.codeforge/repos/<hash>/persona.md`,
+  keyed by a hash of the origin URL exactly as git has it, so clones with the same URL share it (the path when there is no remote), and it needs no approval because you wrote it.
+  `codeforge persona share` copies it, whole, into the repository as `.codeforge/persona.md` to commit; your own copy stays until
+  `codeforge persona forget`. An https and an ssh clone of one repository have different URLs, so each has its own. A shared persona is
+  trust-gated as before and wins over your own where they differ; both win over the global persona.
+- A `.codeforge/persona.md` already in a repository, from an earlier Codeforge or a teammate, keeps working unchanged as the shared
+  persona. `codeforge persona list` shows the private ones kept under `~/.codeforge/repos/` and `codeforge persona forget` removes one.
 - The reviewing profiles (`codeforge-review`, `codeforge-reviewer`, `codeforge-gate`) load `codeforge-persona-review`: the same
   persona without its sections on commit messages, pull requests and replies to reviewers. Every other mode loads all of it.
 - `repair` (`reinit` is an alias) reinstalls managed assets without model calls or sign-in.

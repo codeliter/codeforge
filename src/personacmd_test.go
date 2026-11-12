@@ -47,7 +47,7 @@ func TestRunPersona_ShowsEachPersonaAndWhereItCameFrom(t *testing.T) {
 	require.NoError(t, config.Trust(home, filepath.Join(repo, repoPersonaPath), "# Team\nUse tabs."))
 	out.Reset()
 	require.NoError(t, runPersona(t.Context(), home, nil, &out))
-	require.Contains(t, out.String(), "in use: it overrides the global persona where they differ")
+	require.Contains(t, out.String(), "in use: it overrides your own and the global persona where they differ")
 
 	require.ErrorIs(t, runPersona(t.Context(), home, []string{"show"}, &out), errPersonaUsage)
 }
