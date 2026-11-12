@@ -91,6 +91,13 @@ func LoadBase(home string) (Config, error) {
 	return cfg, nil
 }
 
+// EnvironmentNames are the variables Environment reads, for whatever must run without a caller's overrides.
+var EnvironmentNames = []string{
+	"CODEFORGE_MODEL", "CODEFORGE_INIT", "CODEFORGE_EXPERT", "CODEFORGE_MODE", "CODEFORGE_REVIEW_MODEL",
+	"CODEFORGE_REVIEW_LIGHT_MODEL", "CODEFORGE_JUDGES", "CODEFORGE_REVIEW_SECOND_OPINION",
+}
+
+// Environment applies the one-off overrides named in EnvironmentNames on top of cfg.
 func Environment(cfg Config) Config {
 	OverrideEnv(&cfg.Model, "CODEFORGE_MODEL")
 	OverrideEnv(&cfg.Init, "CODEFORGE_INIT")
