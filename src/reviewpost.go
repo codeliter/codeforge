@@ -513,7 +513,8 @@ func confirmed(ctx context.Context, w io.Writer, question string) bool {
 	}
 	fmt.Fprintf(w, "\ncodeforge: %s [y/N] ", question)
 	answer := make(chan string, 1)
-	go func() { answer <- readLine(confirmIn) }()
+	in := confirmIn // read here: the reader outlives a cancelled question
+	go func() { answer <- readLine(in) }()
 	select {
 	case <-ctx.Done():
 		fmt.Fprintln(w)
