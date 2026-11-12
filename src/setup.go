@@ -16,8 +16,9 @@ import (
 
 	"github.com/codeliter/codeforge/src/config"
 	"github.com/codeliter/codeforge/src/forms"
+	"github.com/codeliter/codeforge/src/modelcatalog"
 
-	"github.com/codeliter/codeforge/src/effort"
+	"github.com/codeliter/codeforge/src/modelconfig"
 )
 
 const empryoInstaller = "https://empryo.com/install.sh"
@@ -25,7 +26,6 @@ const empryoInstaller = "https://empryo.com/install.sh"
 var (
 	errSetupIncomplete = errors.New("setup is not complete; fix the items marked ✗ and run `codeforge init` again")
 	errNoConsent       = errors.New("installing Empryo needs your go-ahead; run `codeforge init --yes` or answer yes")
-	providerLine       = regexp.MustCompile(`^(\S+)\s+Ready\b`)
 	gitVersion         = regexp.MustCompile(`git version (\d+)\.(\d+)`)
 )
 
@@ -60,7 +60,7 @@ func runSetup(ctx context.Context, home string, args []string, out io.Writer) er
 		return err
 	}
 	// Signing in changes which models are connected, so the saved list is rebuilt on the next launch.
-	clearCatalogCache(home)
+	modelcatalog.ClearCache(home)
 
 	checks := []check{
 		{name: "Empryo", ok: true, note: empryoVersion(ctx, bin)},
@@ -77,7 +77,7 @@ func runSetup(ctx context.Context, home string, args []string, out io.Writer) er
 	if cfg, err := config.ReadFile(home); err == nil && slices.ContainsFunc(config.Roles, func(r config.Role) bool { return len(config.Current(cfg, r.Key)) == 0 }) {
 		fmt.Fprintln(out, "\nChoosing models for roles you have not set:")
 		// A model choice that cannot be filled must not stop init; the user can set it with `codeforge models set`.
-		if err := runModels(ctx, home, bin, []string{"fill"}); err != nil {
+		if err := modelconfig.RunModels(ctx, home, bin, []string{"fill"}); err != nil {
 			fmt.Fprintf(out, "codeforge: could not fill every model role (%v); set them with `codeforge models set`\n", err)
 		}
 	}
@@ -109,7 +109,7 @@ func installEmpryo(ctx context.Context, empryoDir string, opts setupOptions) (st
 
 // ensureSignedIn makes sure at least one model provider is ready, offering a subscription sign-in.
 func ensureSignedIn(ctx context.Context, bin string, opts setupOptions) error {
-	if ready := readyProviders(ctx, bin); len(ready) > 0 {
+	if ready := modelcatalog.ReadyProviders(ctx, bin); len(ready) > 0 {
 		fmt.Fprintf(opts.out, "Model providers ready: %s\n", strings.Join(ready, ", "))
 		return nil
 	}
@@ -133,31 +133,10 @@ func ensureSignedIn(ctx context.Context, bin string, opts setupOptions) error {
 		return fmt.Errorf("signing in to %s: %w", provider, err)
 	}
 
-	if len(readyProviders(ctx, bin)) == 0 {
+	if len(modelcatalog.ReadyProviders(ctx, bin)) == 0 {
 		return fmt.Errorf("sign-in to %s did not finish: %w", provider, errSetupIncomplete)
 	}
 	return nil
-}
-
-func readyProviders(ctx context.Context, bin string) []string {
-	cmd := exec.CommandContext(ctx, bin, "--list-providers")
-	effort.Bound(cmd)
-	out, err := cmd.Output()
-	effort.Reap(cmd)
-	if err != nil {
-		return nil
-	}
-	return parseReady(string(out))
-}
-
-func parseReady(list string) []string {
-	var ready []string
-	for line := range strings.SplitSeq(list, "\n") {
-		if m := providerLine.FindStringSubmatch(strings.TrimSpace(line)); m != nil {
-			ready = append(ready, m[1])
-		}
-	}
-	return ready
 }
 
 func empryoVersion(ctx context.Context, bin string) string {
@@ -221,14 +200,5 @@ func printChecks(w io.Writer, checks []check) {
 }
 
 func confirm(question string) bool {
-	if !interactive() {
-		return false
-	}
-
-	ok, err := forms.YesNo(question, "")
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "codeforge:", err)
-		return false
-	}
-	return ok
+	return forms.Agreed(question)
 }

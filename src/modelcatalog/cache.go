@@ -1,4 +1,4 @@
-package src
+package modelcatalog
 
 import (
 	"context"
@@ -72,28 +72,28 @@ func writeCatalogCache(home, bin string, providers, models []string, now time.Ti
 	if err != nil {
 		return
 	}
-	if err := os.MkdirAll(config.Dir(home), privateDir); err != nil {
+	if err := os.MkdirAll(config.Dir(home), fsutil.PrivateDir); err != nil {
 		return
 	}
-	_ = fsutil.AtomicWriteFile(catalogCachePath(home), data, privateFile) //nolint:errcheck // best-effort cache
+	_ = fsutil.AtomicWriteFile(catalogCachePath(home), data, fsutil.PrivateFile) //nolint:errcheck // best-effort cache
 }
 
-// clearCatalogCache forgets the saved catalog, for commands that change which providers are connected.
-func clearCatalogCache(home string) {
+// ClearCache forgets the saved catalog, for commands that change which providers are connected.
+func ClearCache(home string) {
 	if err := os.Remove(catalogCachePath(home)); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		fmt.Fprintln(os.Stderr, "codeforge: could not clear the model cache:", err)
 	}
 }
 
-// launchCatalog returns the connected-model catalog for a launch, from the cache when it is fresh. The second
+// Launch returns the connected-model catalog for a launch, from the cache when it is fresh. The second
 // result reports whether it came from the cache, so the caller can fetch fresh and retry if a name does not resolve.
-func launchCatalog(ctx context.Context, home, bin string) (models []string, cached bool, err error) {
+func Launch(ctx context.Context, home, bin string) (models []string, cached bool, err error) {
 	// Asking which providers are ready is quick; listing every model is the slow part worth caching.
-	providers := sortedCopy(readyProviders(ctx, bin))
+	providers := sortedCopy(ReadyProviders(ctx, bin))
 	if models = readCatalogCache(home, bin, providers, time.Now()); models != nil {
 		return models, true, nil
 	}
-	models, err = freshLaunchCatalog(ctx, home, bin, providers)
+	models, err = fresh(ctx, home, bin, providers)
 	return models, false, err
 }
 
@@ -103,10 +103,15 @@ func sortedCopy(in []string) []string {
 	return out
 }
 
-// freshLaunchCatalog fetches the catalog from Empryo and saves it.
-func freshLaunchCatalog(ctx context.Context, home, bin string, providers []string) ([]string, error) {
+// Refresh fetches the catalog from Empryo and saves it, whatever the cache holds.
+func Refresh(ctx context.Context, home, bin string) ([]string, error) {
+	return fresh(ctx, home, bin, sortedCopy(ReadyProviders(ctx, bin)))
+}
+
+// fresh fetches the catalog from Empryo and saves it for providers, which must be sorted as the cache compares them.
+func fresh(ctx context.Context, home, bin string, providers []string) ([]string, error) {
 	fmt.Fprintln(os.Stderr, "codeforge: request received; resolving model names through connected providers...")
-	models, err := connectedModelCatalog(ctx, bin)
+	models, err := Connected(ctx, bin)
 	if err != nil {
 		return nil, err
 	}
@@ -114,9 +119,9 @@ func freshLaunchCatalog(ctx context.Context, home, bin string, providers []strin
 	return models, nil
 }
 
-// changesProviders reports whether a models or provider command can change providers, models or fallbacks.
+// ChangesProviders reports whether a models or provider command can change providers, models or fallbacks.
 // Read-only subcommands keep the saved model list.
-func changesProviders(args []string) bool {
+func ChangesProviders(args []string) bool {
 	if len(args) <= 1 {
 		return false
 	}

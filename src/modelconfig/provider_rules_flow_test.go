@@ -1,4 +1,4 @@
-package src
+package modelconfig
 
 import (
 	"os"
@@ -58,7 +58,7 @@ esac
 `), execPerm))
 	run := func(args ...string) *config.ProviderPolicy {
 		var out strings.Builder
-		require.NoError(t, runProvider(t.Context(), home, bin, append([]string{"set"}, append(args, "--global")...), &out))
+		require.NoError(t, RunProvider(t.Context(), home, bin, append([]string{"set"}, append(args, "--global")...), &out))
 		cfg, err := config.ReadFile(home)
 		require.NoError(t, err)
 		return cfg.Providers
@@ -78,8 +78,8 @@ esac
 	require.Equal(t, "copilot", policy.Primary)
 	require.Empty(t, policy.Rules, "--no-rules removes only the rules")
 	var out strings.Builder
-	require.ErrorIs(t, runProvider(t.Context(), home, bin, []string{"set", "--no-rules", "--for", "gpt-*", "copilot"}, &out), errProviderUsage)
-	require.ErrorIs(t, runProvider(t.Context(), home, bin, []string{"clear", "--no-rules"}, &out), errProviderUsage)
+	require.ErrorIs(t, RunProvider(t.Context(), home, bin, []string{"set", "--no-rules", "--for", "gpt-*", "copilot"}, &out), errProviderUsage)
+	require.ErrorIs(t, RunProvider(t.Context(), home, bin, []string{"clear", "--no-rules"}, &out), errProviderUsage)
 }
 
 func TestRulesOnlyConfigRoundTripsAndProjectReplacesIt(t *testing.T) {
@@ -181,7 +181,7 @@ case "$1" in
 esac
 `), execPerm))
 	var out strings.Builder
-	require.NoError(t, runProvider(t.Context(), home, bin, []string{"set", "--for", "claude-*", "copilot", "--project"}, &out))
+	require.NoError(t, RunProvider(t.Context(), home, bin, []string{"set", "--for", "claude-*", "copilot", "--project"}, &out))
 	require.Contains(t, out.String(), "copied from your global order", "the user is told the inherited chain was copied")
 	global, err := config.ReadFile(home)
 	require.NoError(t, err)
@@ -191,9 +191,9 @@ esac
 	require.Equal(t, "llmgateway", local.Providers.Primary, "the project keeps the global chain it did not change")
 	require.Len(t, local.Providers.Rules, 1)
 	out.Reset()
-	require.NoError(t, runProvider(t.Context(), home, bin, []string{"set", "copilot", "--project"}, &out))
+	require.NoError(t, RunProvider(t.Context(), home, bin, []string{"set", "copilot", "--project"}, &out))
 	require.NotContains(t, out.String(), "copied", "a project that already has its own policy copies nothing")
-	err = runProvider(t.Context(), home, bin, []string{"set", "--no-rules", "--project"}, &out)
+	err = RunProvider(t.Context(), home, bin, []string{"set", "--no-rules", "--project"}, &out)
 	require.NoError(t, err)
 	local, err = config.ReadTrustedProject(home, root, nil)
 	require.NoError(t, err)
@@ -207,7 +207,7 @@ func TestNoRulesOnRulesOnlyPolicyPointsToClear(t *testing.T) {
 	bin := filepath.Join(t.TempDir(), "empryo")
 	require.NoError(t, os.WriteFile(bin, []byte("#!/bin/sh\ncase \"$1\" in\n --list-models) printf '%s\\n' 'copilot/claude-sonnet-5.5' ;;\n --list-providers) printf '%s\\n' 'copilot  Ready' ;;\n *) exit 90 ;;\nesac\n"), execPerm))
 	var out strings.Builder
-	err := runProvider(t.Context(), home, bin, []string{"set", "--no-rules", "--global"}, &out)
+	err := RunProvider(t.Context(), home, bin, []string{"set", "--no-rules", "--global"}, &out)
 	require.ErrorIs(t, err, errProviderUsage)
 	require.Contains(t, err.Error(), "provider clear")
 }

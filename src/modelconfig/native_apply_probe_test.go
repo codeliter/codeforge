@@ -1,4 +1,4 @@
-package src
+package modelconfig
 
 import (
 	"encoding/json"
@@ -13,6 +13,8 @@ import (
 	"github.com/codeliter/codeforge/src/config"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/codeliter/codeforge/src/fsutil"
 )
 
 func nativeApplyFixture(t *testing.T, projectOverride bool) (bin, home, root string, plan config.ModelPlan, calls *atomic.Int32) {
@@ -43,10 +45,10 @@ func nativeApplyFixture(t *testing.T, projectOverride bool) (bin, home, root str
 		data map[string]any
 	}{{home, global}, {root, project}} {
 		dir := filepath.Join(layer.root, ".empryo")
-		require.NoError(t, os.MkdirAll(dir, privateDir))
+		require.NoError(t, os.MkdirAll(dir, fsutil.PrivateDir))
 		data, err := json.Marshal(layer.data)
 		require.NoError(t, err)
-		require.NoError(t, os.WriteFile(filepath.Join(dir, "config.json"), data, privateFile))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "config.json"), data, fsutil.PrivateFile))
 	}
 	plan = config.ModelPlan{Routes: []config.ModelRoute{{Role: "model", Primary: "cf-config-probe/unit", Fallbacks: []string{"cf-backup-probe/unit"}}}}
 	return bin, home, root, plan, calls
@@ -189,7 +191,7 @@ func TestNativeModelApplyCancellationAndStalePreview(t *testing.T) {
 		var err error
 		external, err = json.Marshal(config)
 		require.NoError(t, err)
-		require.NoError(t, os.WriteFile(filepath.Join(root, ".empryo", "config.json"), external, privateFile))
+		require.NoError(t, os.WriteFile(filepath.Join(root, ".empryo", "config.json"), external, fsutil.PrivateFile))
 		return true
 	})
 	require.ErrorIs(t, err, errNativeConfigChanged)

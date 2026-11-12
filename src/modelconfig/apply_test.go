@@ -1,4 +1,4 @@
-package src
+package modelconfig
 
 import (
 	"os"
@@ -8,10 +8,13 @@ import (
 	"github.com/codeliter/codeforge/src/config"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/codeliter/codeforge/src/forms"
+	"github.com/codeliter/codeforge/src/fsutil"
 )
 
 func TestModelsApplyRequiresConfirmationAndPreservesSavedChoices(t *testing.T) {
-	if interactive() {
+	if forms.Interactive() {
 		t.Skip("non-interactive apply")
 	}
 	home := t.TempDir()
@@ -21,7 +24,7 @@ func TestModelsApplyRequiresConfirmationAndPreservesSavedChoices(t *testing.T) {
 	require.NoError(t, err)
 	bin := filepath.Join(t.TempDir(), "empryo")
 	require.NoError(t, os.WriteFile(bin, []byte("#!/bin/sh\nprintf '%s\\n' 'copilot/claude-sonnet-5.5' 'copilot/claude-opus-5.5' 'copilot/claude-haiku-5.5' 'copilot/gpt-6.1-sol' 'copilot/kimi-k3'\n"), 0700))
-	require.Error(t, runModels(t.Context(), home, bin, []string{"apply"}), "apply must ask before changing native settings, not replace saved roles with recommendations")
+	require.Error(t, RunModels(t.Context(), home, bin, []string{"apply"}), "apply must ask before changing native settings, not replace saved roles with recommendations")
 	after, err := os.ReadFile(path)
 	require.NoError(t, err)
 	require.Equal(t, before, after)
@@ -60,7 +63,7 @@ func TestModelApplyRecommendedArguments(t *testing.T) {
 }
 
 func TestSaveRecommendedModels(t *testing.T) {
-	if interactive() {
+	if forms.Interactive() {
 		t.Skip("non-interactive trust behaviour")
 	}
 	catalog := []string{"copilot/claude-sonnet-5.5", "copilot/claude-opus-5.5", "copilot/claude-haiku-5.5", "copilot/gpt-6-luna", "copilot/gpt-6.1-sol", "copilot/kimi-k3"}
@@ -120,7 +123,7 @@ func TestRecommendedModelsKeepProviderNames(t *testing.T) {
 	require.Equal(t, "GPT 6.1 Sol", cfg.Model, "input is not mutated")
 }
 func TestModelApplyLoadsOnlySelectedSavedScope(t *testing.T) {
-	if interactive() {
+	if forms.Interactive() {
 		t.Skip("non-interactive trust behaviour")
 	}
 	home, root := t.TempDir(), t.TempDir()
@@ -134,7 +137,7 @@ func TestModelApplyLoadsOnlySelectedSavedScope(t *testing.T) {
 	project, err := readModelApplyConfig(home, root, "project")
 	require.NoError(t, err)
 	require.Equal(t, "project/coder", project.Model)
-	require.NoError(t, os.WriteFile(config.ProjectPath(root), []byte("invalid: broken\n"), privateFile))
+	require.NoError(t, os.WriteFile(config.ProjectPath(root), []byte("invalid: broken\n"), fsutil.PrivateFile))
 	global, err = readModelApplyConfig(home, root, "global")
 	require.NoError(t, err)
 	require.Equal(t, "global/coder", global.Model, "global application must not load checkout configuration")
@@ -174,11 +177,11 @@ func TestGlobalDefaultModelShadowedByProject(t *testing.T) {
 	plan := config.ModelPlan{Routes: []config.ModelRoute{{Role: "model", Primary: "a/coder"}}}
 	require.Empty(t, globalDefaultModelShadowed(root, plan), "no project file")
 	dir := filepath.Join(root, ".empryo")
-	require.NoError(t, os.MkdirAll(dir, privateDir))
+	require.NoError(t, os.MkdirAll(dir, fsutil.PrivateDir))
 	path := filepath.Join(dir, "config.json")
-	require.NoError(t, os.WriteFile(path, []byte(`{"defaultModel":"a/coder"}`), privateFile))
+	require.NoError(t, os.WriteFile(path, []byte(`{"defaultModel":"a/coder"}`), fsutil.PrivateFile))
 	require.Empty(t, globalDefaultModelShadowed(root, plan), "project already matches")
-	require.NoError(t, os.WriteFile(path, []byte(`{"defaultModel":"b/other"}`), privateFile))
+	require.NoError(t, os.WriteFile(path, []byte(`{"defaultModel":"b/other"}`), fsutil.PrivateFile))
 	warning := globalDefaultModelShadowed(root, plan)
 	require.Contains(t, warning, "b/other")
 	require.Contains(t, warning, "--project")

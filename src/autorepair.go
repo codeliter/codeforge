@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	"github.com/codeliter/codeforge/src/config"
+
+	"github.com/codeliter/codeforge/src/modelconfig"
 )
 
 const repairStampFile = "repaired-version"
@@ -52,7 +54,7 @@ func repairManagedFiles(home, workspace string, legacyHooks []string) error {
 	if err != nil {
 		globalCfg = config.Config{}
 	}
-	cfg := maintenanceProfileConfig(globalCfg)
+	cfg := modelconfig.MaintenanceConfig(globalCfg)
 	empryoDir := filepath.Join(home, ".empryo")
 	if err := syncAssets(empryoDir, cfg); err != nil {
 		return fmt.Errorf("installing profiles: %w", err)

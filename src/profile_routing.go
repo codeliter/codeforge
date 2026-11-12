@@ -14,6 +14,8 @@ import (
 	"go.yaml.in/yaml/v3"
 
 	"github.com/codeliter/codeforge/assets"
+
+	"github.com/codeliter/codeforge/src/fsutil"
 )
 
 var errProfileRootSymlink = errors.New("workspace .empryo must not be a symlink")
@@ -78,7 +80,7 @@ func syncProjectAgents(workspace string, cfg config.Config) error {
 			return err
 		}
 		root := filepath.Join(workspace, ".empryo")
-		if existing, err := os.ReadFile(filepath.Join(root, path)); err == nil && bytes.Equal(existing, body) && !isSymlinked(root, path) {
+		if existing, err := os.ReadFile(filepath.Join(root, path)); err == nil && bytes.Equal(existing, body) && !fsutil.Symlinked(root, path) {
 			return nil
 		}
 		return writeFile(root, path, body, publicFile)

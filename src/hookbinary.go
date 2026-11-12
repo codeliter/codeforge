@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/codeliter/codeforge/src/fsutil"
 )
 
 const privateExec = 0o700
@@ -19,7 +21,7 @@ func installHookBinary(empryoDir, self string) (string, error) {
 	}
 	rel := filepath.Join("hooks", "cf")
 	target := filepath.Join(empryoDir, rel)
-	if !isSymlinked(empryoDir, rel) {
+	if !fsutil.Symlinked(empryoDir, rel) {
 		if have, err := os.ReadFile(target); err == nil && bytes.Equal(have, data) {
 			if info, err := os.Stat(target); err == nil && info.Mode().Perm() == privateExec {
 				return target, nil

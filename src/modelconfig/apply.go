@@ -1,4 +1,4 @@
-package src
+package modelconfig
 
 import (
 	"context"
@@ -16,6 +16,9 @@ import (
 	"github.com/codeliter/codeforge/src/forms"
 
 	"github.com/codeliter/codeforge/src/guard"
+	"github.com/codeliter/codeforge/src/modelcatalog"
+
+	"github.com/codeliter/codeforge/src/fsutil"
 )
 
 var errModelApplyUsage = errors.New("usage: codeforge models apply [--recommended] [--project|--global]")
@@ -68,7 +71,7 @@ func readModelApplyLayers(home, project, scope string) (merged, local config.Con
 		return merged, config.Config{}, err
 	}
 	if scope == "project" {
-		if local, err = config.ReadTrustedProject(home, project, modelTrustApprover()); err != nil {
+		if local, err = config.ReadTrustedProject(home, project, TrustApprover()); err != nil {
 			return merged, local, err
 		}
 		merged = config.Merge(merged, local)
@@ -82,7 +85,7 @@ func runModelApply(ctx context.Context, home, bin string, args []string) error {
 	if err != nil {
 		return err
 	}
-	if !interactive() {
+	if !forms.Interactive() {
 		return errModelApplyTerminal
 	}
 	wd, err := os.Getwd()
@@ -126,7 +129,7 @@ func runModelApply(ctx context.Context, home, bin string, args []string) error {
 	var catalog []string
 	if recommended {
 		fmt.Fprintln(os.Stderr, "codeforge: loading the connected-provider model catalog...")
-		catalog, err = connectedModelCatalogAt(ctx, bin, workspace)
+		catalog, err = modelcatalog.ConnectedAt(ctx, bin, workspace)
 		if err != nil {
 			return err
 		}
@@ -137,7 +140,7 @@ func runModelApply(ctx context.Context, home, bin string, args []string) error {
 	}
 	if catalog == nil && config.NeedsCatalog(cfg) {
 		fmt.Fprintln(os.Stderr, "codeforge: resolving saved model choices through connected providers...")
-		catalog, err = connectedModelCatalogAt(ctx, bin, workspace)
+		catalog, err = modelcatalog.ConnectedAt(ctx, bin, workspace)
 		if err != nil {
 			return err
 		}
@@ -251,14 +254,14 @@ func saveRecommendedModels(home, root, scope string, cfg config.Config, catalog 
 		return next, nil
 	}
 	if err := config.EnsureProjectEditing(home, root, func() bool {
-		return confirm("Replace the unapproved project model file with recommended choices? It is kept if you cancel.")
+		return forms.Agreed("Replace the unapproved project model file with recommended choices? It is kept if you cancel.")
 	}); err != nil {
 		return cfg, err
 	}
-	if isSymlinked(root, filepath.Join(".codeforge", "config.yaml")) {
+	if fsutil.Symlinked(root, filepath.Join(".codeforge", "config.yaml")) {
 		return cfg, config.ErrConfigSymlink
 	}
-	local, err := config.ReadTrustedProject(home, root, modelTrustApprover())
+	local, err := config.ReadTrustedProject(home, root, TrustApprover())
 	if err != nil {
 		return cfg, err
 	}

@@ -1,11 +1,12 @@
 //nolint:err113 // dynamic error messages are okay in tests
-package src
+package modelconfig
 
 import (
 	"strings"
 	"testing"
 
 	"github.com/codeliter/codeforge/src/config"
+	"github.com/codeliter/codeforge/src/modelcatalog"
 
 	"github.com/stretchr/testify/require"
 )
@@ -25,14 +26,14 @@ Anthropic (anthropic)
 `
 
 func TestParseModelList(t *testing.T) {
-	got := parseModelList(strings.NewReader(listing))
+	got := modelcatalog.ParseModels(strings.NewReader(listing))
 	require.Len(t, got, 8)
 	require.Equal(t, "copilot/claude-haiku-5.5", got[0])
 	require.NotContains(t, got, "/models")
 }
 
 func TestRecommend(t *testing.T) {
-	rec := recommend(parseModelList(strings.NewReader(listing)))
+	rec := recommend(modelcatalog.ParseModels(strings.NewReader(listing)))
 
 	require.Equal(t, []string{"copilot/claude-opus-5.5"}, rec["model"])
 	require.Equal(t, []string{"copilot/claude-opus-5.5"}, rec["expert"])

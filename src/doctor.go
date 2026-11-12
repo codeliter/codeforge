@@ -17,6 +17,7 @@ import (
 	"github.com/codeliter/codeforge/src/forms"
 
 	"github.com/codeliter/codeforge/src/guard"
+	"github.com/codeliter/codeforge/src/modelcatalog"
 )
 
 const doctorTimeout = 20 * time.Second
@@ -57,7 +58,7 @@ func doctorItems(ctx context.Context, home string) []doctorItem {
 		items = append(items, doctorItem{check: check{name: "Empryo", note: "not installed"}, fix: "codeforge init"})
 	} else {
 		items = append(items, doctorItem{check: check{name: "Empryo", ok: true, note: empryoVersion(ctx, bin)}})
-		if ready := readyProviders(ctx, bin); len(ready) == 0 {
+		if ready := modelcatalog.ReadyProviders(ctx, bin); len(ready) == 0 {
 			items = append(items, doctorItem{check: check{name: "sign-in", note: "no model provider is signed in"}, fix: "codeforge init"})
 		} else {
 			items = append(items, doctorItem{check: check{name: "sign-in", ok: true, note: strings.Join(ready, ", ")}})

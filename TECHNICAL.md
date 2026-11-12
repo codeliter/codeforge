@@ -247,7 +247,7 @@ Provider routing and fallback are separate from Codeforge's role selection. Empr
 backoff, and backup-model attempts. Changing provider does not bypass shared connectivity failures,
 and an acknowledgement is not proof that the provider request succeeded.
 
-Implementation: [launch.go](src/launch.go), [models.go](src/models.go), [config](src/config/config.go).
+Implementation: [launch.go](src/launch.go), [modelconfig/models.go](src/modelconfig/models.go), [config](src/config/config.go).
 The retired launch classifier's design paper and evaluation are in [adaptive-effort.md](docs/adaptive-effort.md).
 Its small evaluation set is not a release-by-release benchmark or a guarantee of calibration.
 
@@ -325,7 +325,7 @@ remain under Empryo's task router. Unsupported routing keys are rejected, not si
 Provider authentication, quotas, fallback chains, retries, and native background routing remain Empryo responsibilities.
 See [Empryo profile routing](https://empryo.com/docs/tools/profiles#routing-jobs).
 
-Implementation: [config/yaml.go](src/config/yaml.go), [models_configure.go](src/models_configure.go),
+Implementation: [config/yaml.go](src/config/yaml.go), [modelconfig/configure.go](src/modelconfig/configure.go),
 [profile_routing.go](src/profile_routing.go), and [config.example.yaml](config.example.yaml).
 
 ## 5. Reviews and independent checks
@@ -403,7 +403,7 @@ forbidding a configured juror does not count as an independent review and must n
 
 In a review that posts, the second opinions run beside the reviewer, and the blockers they report that the review does
 not make are sent back to the reviewer's own session before anything is posted (`checkLeads` in
-[reviewedit.go](src/reviewedit.go)). The reviewer checks each against the code: one the code rules out is left off, with
+[reviewleads.go](src/reviewleads.go)). The reviewer checks each against the code: one the code rules out is left off, with
 its reason shown on the terminal; the rest are rewritten in the user's voice and posted as unconfirmed leads. A juror's
 word alone is never a verdict, and the same turn does the checking and the wording. When the turn fails or does not
 account for every lead, every lead is posted, shortened.

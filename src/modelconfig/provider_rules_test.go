@@ -1,4 +1,4 @@
-package src
+package modelconfig
 
 import (
 	"os"
@@ -134,7 +134,7 @@ case "$1" in
 esac
 `), execPerm))
 	var out strings.Builder
-	require.NoError(t, runProvider(t.Context(), home, bin, []string{"set", "llmgateway", "--for", "claude-*", "copilot", "--global"}, &out))
+	require.NoError(t, RunProvider(t.Context(), home, bin, []string{"set", "llmgateway", "--for", "claude-*", "copilot", "--global"}, &out))
 	require.Contains(t, out.String(), "claude-*: copilot")
 	cfg, err := config.ReadFile(home)
 	require.NoError(t, err)
@@ -142,16 +142,16 @@ esac
 	require.Equal(t, []config.ProviderRule{{Match: "claude-*", Primary: "copilot"}}, cfg.Providers.Rules, "rules survive the config round trip")
 	require.Equal(t, "Sonnet 5.5", cfg.Model, "other saved choices are kept")
 	out.Reset()
-	require.NoError(t, runProvider(t.Context(), home, bin, nil, &out))
+	require.NoError(t, RunProvider(t.Context(), home, bin, nil, &out))
 	require.Contains(t, out.String(), "Primary: llmgateway")
 	require.Contains(t, out.String(), "Models claude-*: copilot")
-	err = runProvider(t.Context(), home, bin, []string{"set", "llmgateway", "--for", "claude-*", "offline", "--global"}, &out)
+	err = RunProvider(t.Context(), home, bin, []string{"set", "llmgateway", "--for", "claude-*", "offline", "--global"}, &out)
 	require.ErrorIs(t, err, config.ErrProviderPolicy, "a rule needs connected providers")
 	cfg, err = config.ReadFile(home)
 	require.NoError(t, err)
 	require.Len(t, cfg.Providers.Rules, 1, "a refused set changes nothing")
-	require.ErrorIs(t, runProvider(t.Context(), home, bin, []string{"clear", "--for", "claude-*", "copilot"}, &out), errProviderUsage)
-	require.NoError(t, runProvider(t.Context(), home, bin, []string{"clear", "--global"}, &out))
+	require.ErrorIs(t, RunProvider(t.Context(), home, bin, []string{"clear", "--for", "claude-*", "copilot"}, &out), errProviderUsage)
+	require.NoError(t, RunProvider(t.Context(), home, bin, []string{"clear", "--global"}, &out))
 	cfg, err = config.ReadFile(home)
 	require.NoError(t, err)
 	require.Nil(t, cfg.Providers, "clear removes the rules with the order")

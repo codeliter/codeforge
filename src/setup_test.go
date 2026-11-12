@@ -5,12 +5,14 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/codeliter/codeforge/src/modelcatalog"
 )
 
 func TestParseReady(t *testing.T) {
 	list := "anthropic          No key  (ANTHROPIC_API_KEY)\ncopilot            Ready  (COPILOT_API_KEY)\nopenai Ready\n"
-	require.Equal(t, []string{"copilot", "openai"}, parseReady(list))
-	require.Empty(t, parseReady("anthropic No key\n"))
+	require.Equal(t, []string{"copilot", "openai"}, modelcatalog.ParseReady(list))
+	require.Empty(t, modelcatalog.ParseReady("anthropic No key\n"))
 }
 
 func TestCheckGit(t *testing.T) {

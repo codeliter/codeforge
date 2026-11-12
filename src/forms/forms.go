@@ -18,6 +18,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"golang.org/x/term"
 )
 
 // Kind is what a field asks for.
@@ -476,4 +478,29 @@ func (w *When) Shown(current func(key string) string) bool {
 		return false
 	}
 	return w.And.Shown(current)
+}
+
+// Interactive reports whether a person is at the terminal: both standard input and output are one.
+func Interactive() bool {
+	return term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd()))
+}
+
+// Agreed asks a yes/no question and reports whether the answer was yes. With nobody to ask, or when the question
+// cannot be asked, it is no.
+func Agreed(question string) bool {
+	if !Interactive() {
+		return false
+	}
+	ok, err := YesNo(question, "")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "codeforge:", err)
+		return false
+	}
+	return ok
+}
+
+// AskTrust asks whether to trust what description shows, with Skip as the other answer.
+func AskTrust(title, description string) (bool, error) {
+	a, err := Ask("trust prompt", Field{Kind: Confirm, Title: title, Description: description, Affirmative: "Trust it", Negative: "Skip"})
+	return a.Yes, err
 }

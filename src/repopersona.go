@@ -6,15 +6,13 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/codeliter/codeforge/src/config"
 
 	"github.com/codeliter/codeforge/assets"
-	"github.com/codeliter/codeforge/src/effort"
+	"github.com/codeliter/codeforge/src/gitroot"
 )
 
 const (
@@ -32,26 +30,9 @@ var (
 	errNoRepoPersona     = errors.New("no repository persona")
 )
 
-const repoRootLimit = 10 * time.Second
-
 // repoRoot falls back to the working directory outside a git repository.
 func repoRoot(ctx context.Context) (string, error) {
-	// Bounded on its own: it runs before any review clock, and a git that never answers must not stall every launch.
-	ctx, cancel := context.WithTimeout(ctx, repoRootLimit)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", "rev-parse", "--show-toplevel")
-	effort.Bound(cmd)
-	out, err := cmd.Output()
-	effort.Reap(cmd)
-	if err == nil {
-		return strings.TrimSpace(string(out)), nil
-	}
-
-	wd, err := os.Getwd()
-	if err != nil {
-		return "", fmt.Errorf("finding working directory: %w", err)
-	}
-	return wd, nil
+	return gitroot.Find(ctx)
 }
 
 func loadRepoPersona(root string) (string, error) {

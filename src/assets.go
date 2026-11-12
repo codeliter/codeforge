@@ -42,7 +42,7 @@ func syncAssets(empryoDir string, cfg config.Config) error {
 		}
 
 		dst := filepath.Join(empryoDir, path)
-		if have, err := os.ReadFile(dst); err == nil && bytes.Equal(have, want) && !isSymlinked(empryoDir, path) {
+		if have, err := os.ReadFile(dst); err == nil && bytes.Equal(have, want) && !fsutil.Symlinked(empryoDir, path) {
 			return nil
 		}
 
@@ -70,20 +70,9 @@ func writeFile(root, rel string, data []byte, perm os.FileMode) error {
 	return nil
 }
 
-func isSymlinked(root, rel string) bool {
-	p := root
-	for _, part := range splitPath(rel) {
-		p = filepath.Join(p, part)
-		if fi, err := os.Lstat(p); err == nil && fi.Mode()&os.ModeSymlink != 0 {
-			return true
-		}
-	}
-	return false
-}
-
 func unlinkParents(root, rel string) error {
 	p := root
-	for _, part := range splitPath(rel) {
+	for _, part := range fsutil.SplitPath(rel) {
 		p = filepath.Join(p, part)
 
 		fi, err := os.Lstat(p)
@@ -102,13 +91,4 @@ func unlinkParents(root, rel string) error {
 		return nil
 	}
 	return nil
-}
-
-func splitPath(rel string) []string {
-	var parts []string
-	for rel != "." && rel != "" {
-		parts = append([]string{filepath.Base(rel)}, parts...)
-		rel = filepath.Dir(rel)
-	}
-	return parts
 }

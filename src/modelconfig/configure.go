@@ -1,4 +1,4 @@
-package src
+package modelconfig
 
 import (
 	"context"
@@ -13,6 +13,9 @@ import (
 	"github.com/codeliter/codeforge/src/forms"
 
 	"github.com/codeliter/codeforge/src/guard"
+	"github.com/codeliter/codeforge/src/modelcatalog"
+
+	"github.com/codeliter/codeforge/src/fsutil"
 )
 
 var errModelConfigure = errors.New("usage: codeforge models configure [--project|--global]")
@@ -43,7 +46,7 @@ func runModelConfigure(ctx context.Context, home, bin string, args []string) err
 	if err != nil {
 		return err
 	}
-	if !interactive() {
+	if !forms.Interactive() {
 		return errModelConfigureTerminal
 	}
 	wd, err := os.Getwd()
@@ -74,19 +77,19 @@ func runModelConfigure(ctx context.Context, home, bin string, args []string) err
 	global := config.Clone(cfg)
 	var local config.Config
 	if scope == "project" {
-		local, err = config.ReadTrustedProject(home, root, modelTrustApprover())
+		local, err = config.ReadTrustedProject(home, root, TrustApprover())
 		if err != nil {
 			return err
 		}
 		if err := config.EnsureProjectEditing(home, root, func() bool {
-			return confirm("Replace the unapproved project model file with new choices? It is kept if you cancel.")
+			return forms.Agreed("Replace the unapproved project model file with new choices? It is kept if you cancel.")
 		}); err != nil {
 			return err
 		}
 		cfg = config.Merge(cfg, local)
 	}
 	fmt.Fprintln(os.Stderr, "codeforge: loading the connected-provider model catalog...")
-	catalog, err := connectedModelCatalog(ctx, bin)
+	catalog, err := modelcatalog.Connected(ctx, bin)
 	if err != nil {
 		return err
 	}
@@ -105,7 +108,7 @@ func runModelConfigure(ctx context.Context, home, bin string, args []string) err
 			}); err != nil {
 				return err
 			}
-			if isSymlinked(root, filepath.Join(".codeforge", "config.yaml")) {
+			if fsutil.Symlinked(root, filepath.Join(".codeforge", "config.yaml")) {
 				return config.ErrConfigSymlink
 			}
 			*edited = projectModelDelta(local, baseline, *edited)

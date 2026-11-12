@@ -1,22 +1,20 @@
-package src
+package modelconfig
 
 import (
-	"bufio"
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
 	"text/tabwriter"
 
 	"github.com/codeliter/codeforge/src/config"
+	"github.com/codeliter/codeforge/src/modelcatalog"
 
-	"github.com/codeliter/codeforge/src/effort"
+	"github.com/codeliter/codeforge/src/gitroot"
 )
 
 var (
@@ -28,30 +26,6 @@ var (
 var independentOf = map[string][]string{
 	"review.model":          {"model"},
 	"review.second_opinion": {"model", "review.model"},
-}
-
-// availableModels lists provider/model ids from `empryo --list-models`, keeping the provider order Empryo prints.
-func availableModels(ctx context.Context, bin string) ([]string, error) {
-	cmd := exec.CommandContext(ctx, bin, "--list-models")
-	effort.Bound(cmd)
-	out, err := cmd.Output()
-	effort.Reap(cmd)
-	if err != nil {
-		return nil, fmt.Errorf("listing models: %w", err)
-	}
-	return parseModelList(bytes.NewReader(out)), nil
-}
-
-func parseModelList(r io.Reader) []string {
-	var models []string
-	sc := bufio.NewScanner(r)
-	for sc.Scan() {
-		f := strings.Fields(sc.Text())
-		if len(f) > 0 && config.ValidModelID(f[0]) && config.SuggestedModel(f[0]) {
-			models = append(models, f[0])
-		}
-	}
-	return models
 }
 
 // recommend picks, per role, the first available candidates; multi-model roles never repeat a family,
@@ -130,8 +104,8 @@ func recommendKeeping(available []string, keep config.Config) map[string][]strin
 	return rec
 }
 
-// runModels implements `codeforge models [recommend|apply|set <role> <model>...]`.
-func runModels(ctx context.Context, home, bin string, args []string) error {
+// RunModels implements `codeforge models [recommend|apply|set <role> <model>...]`.
+func RunModels(ctx context.Context, home, bin string, args []string) error {
 	if len(args) > 0 && args[0] == "configure" {
 		return runModelConfigure(ctx, home, bin, args[1:])
 	}
@@ -168,17 +142,17 @@ func runModels(ctx context.Context, home, bin string, args []string) error {
 		if len(args) != 1 {
 			return fmt.Errorf("%w: codeforge models plan takes no arguments", errModelsUsage)
 		}
-		root, err := repoRoot(ctx)
+		root, err := gitroot.Find(ctx)
 		if err != nil {
 			return err
 		}
-		cfg, err = config.Load(home, root, modelTrustApprover())
+		cfg, err = config.Load(home, root, TrustApprover())
 		if err != nil {
 			return err
 		}
 		var catalog []string
 		if config.NeedsCatalog(cfg) {
-			catalog, err = connectedModelCatalog(ctx, bin)
+			catalog, err = modelcatalog.Connected(ctx, bin)
 			if err != nil {
 				return err
 			}
@@ -188,7 +162,7 @@ func runModels(ctx context.Context, home, bin string, args []string) error {
 			return err
 		}
 		printModelPlan(os.Stdout, plan)
-		if err := verifyModelPlan(ctx, bin, root, plan); err != nil {
+		if err := VerifyPlan(ctx, bin, root, plan); err != nil {
 			return err
 		}
 		if len(plan.FallbackChains()) > 0 {
@@ -199,7 +173,7 @@ func runModels(ctx context.Context, home, bin string, args []string) error {
 		return nil
 	case "recommend", "fill":
 		if sub == "recommend" {
-			root, err := repoRoot(ctx)
+			root, err := gitroot.Find(ctx)
 			if err != nil {
 				return err
 			}
@@ -210,7 +184,7 @@ func runModels(ctx context.Context, home, bin string, args []string) error {
 				return err
 			}
 		}
-		available, err := availableModels(ctx, bin)
+		available, err := modelcatalog.Available(ctx, bin)
 		if err != nil {
 			return err
 		}

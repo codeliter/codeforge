@@ -1,4 +1,4 @@
-package src
+package modelconfig
 
 import (
 	"encoding/json"
@@ -11,6 +11,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/codeliter/codeforge/src/fsutil"
 )
 
 // Optional installed-runtime regression: isolated HOME/workspace, loopback only,
@@ -36,11 +38,11 @@ func TestNativeConfigReadProbe(t *testing.T) {
 	originals := [][]byte{}
 	for _, layer := range []struct{ root, model string }{{home, "global/backup"}, {wd, "project/backup"}} {
 		dir := filepath.Join(layer.root, ".empryo")
-		require.NoError(t, os.MkdirAll(dir, privateDir))
+		require.NoError(t, os.MkdirAll(dir, fsutil.PrivateDir))
 		data, err := json.Marshal(map[string]any{"liveTranslations": false, "liveSkills": false, "defaultModel": "cf-config-probe/unit", "providers": []any{map[string]any{"id": "cf-config-probe", "baseURL": server.URL + "/v1", "models": []string{"unit"}, "modelsAPI": false}}, "modelFallback": map[string][]string{"primary/unit": {layer.model}}})
 		require.NoError(t, err)
 		path := filepath.Join(dir, "config.json")
-		require.NoError(t, os.WriteFile(path, data, privateFile))
+		require.NoError(t, os.WriteFile(path, data, fsutil.PrivateFile))
 		paths = append(paths, path)
 		originals = append(originals, data)
 	}

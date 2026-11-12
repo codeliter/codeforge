@@ -1,4 +1,4 @@
-package src
+package modelconfig
 
 import (
 	"context"
@@ -11,6 +11,7 @@ import (
 
 	"github.com/codeliter/codeforge/src/config"
 	"github.com/codeliter/codeforge/src/forms"
+	"github.com/codeliter/codeforge/src/modelcatalog"
 )
 
 var errProviderConfigureTerminal = errors.New("provider configure needs a terminal; use codeforge provider set PRIMARY [BACKUP...] instead")
@@ -141,11 +142,11 @@ func configureProviders(ctx context.Context, home, bin, root string, inGit bool,
 	if err != nil || len(ids) > 0 {
 		return errProviderUsage
 	}
-	if !interactive() {
+	if !forms.Interactive() {
 		return errProviderConfigureTerminal
 	}
 	fmt.Fprintln(os.Stderr, "codeforge: loading connected providers...")
-	catalog, err := connectedModelCatalog(ctx, bin)
+	catalog, err := modelcatalog.Connected(ctx, bin)
 	if err != nil {
 		return err
 	}

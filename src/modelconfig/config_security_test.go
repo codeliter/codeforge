@@ -1,4 +1,4 @@
-package src
+package modelconfig
 
 import (
 	"os"
@@ -9,11 +9,13 @@ import (
 	"github.com/codeliter/codeforge/src/config"
 
 	"github.com/stretchr/testify/require"
-	"go.yaml.in/yaml/v3"
+
+	"github.com/codeliter/codeforge/src/forms"
+	"github.com/codeliter/codeforge/src/fsutil"
 )
 
 func TestUntrustedProjectCannotChooseItsOwnReviewer(t *testing.T) {
-	if interactive() {
+	if forms.Interactive() {
 		t.Skip("tests non-interactive checkout handling")
 	}
 	home, root := t.TempDir(), t.TempDir()
@@ -28,14 +30,14 @@ func TestUntrustedProjectCannotChooseItsOwnReviewer(t *testing.T) {
 	cfg, err = config.Load(home, root, nil)
 	require.NoError(t, err)
 	require.Equal(t, "checkout/weak-reviewer", cfg.Review.Model)
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "config.yaml"), []byte("unknown: true\n"), privateFile))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "config.yaml"), []byte("unknown: true\n"), fsutil.PrivateFile))
 	cfg, err = config.Load(home, root, nil)
 	require.NoError(t, err, "changed malformed checkout config must be skipped before parsing")
 	require.Equal(t, "global/reviewer", cfg.Review.Model)
 }
 
 func TestProjectApprovalUsesSavedBytesNotASecondRead(t *testing.T) {
-	if interactive() {
+	if forms.Interactive() {
 		t.Skip("tests non-interactive approval handling")
 	}
 	home, root := t.TempDir(), t.TempDir()
@@ -43,7 +45,7 @@ func TestProjectApprovalUsesSavedBytesNotASecondRead(t *testing.T) {
 	dir := filepath.Join(root, ".codeforge")
 	chosen := config.Config{Model: "chosen/coder", Review: config.ReviewConfig{Model: "chosen/reviewer"}}
 	err := configureModelFile(dir, chosen, nil, func(_ *config.Config, _ []string) error { return nil }, func(path, approved string) error {
-		require.NoError(t, os.WriteFile(path, []byte("model: substituted/coder\n"), privateFile))
+		require.NoError(t, os.WriteFile(path, []byte("model: substituted/coder\n"), fsutil.PrivateFile))
 		return config.Trust(home, config.ProjectPath(root), approved)
 	})
 	require.NoError(t, err)
@@ -109,17 +111,6 @@ func TestProjectWizardOnlyPinsChangedRoles(t *testing.T) {
 	require.Equal(t, "project/expert", delta.Expert)
 }
 
-func TestProfileModelScalarsAreQuotedSafely(t *testing.T) {
-	body, err := renderAgent([]byte("---\nname: test\nmodel: {{coder}}\n---\n"), config.Config{Model: "provider/model:"})
-	require.NoError(t, err)
-	var header struct {
-		Name  string
-		Model string
-	}
-	require.NoError(t, yaml.Unmarshal(body[4:len(body)-4], &header))
-	require.Equal(t, "provider/model:", header.Model)
-}
-
 func TestGlobalProfilesDoNotCaptureOneOffEnvironment(t *testing.T) {
 	home := t.TempDir()
 	require.NoError(t, config.WriteFile(home, config.Config{Model: "global/coder", Review: config.ReviewConfig{Model: "global/reviewer"}}))
@@ -130,18 +121,4 @@ func TestGlobalProfilesDoNotCaptureOneOffEnvironment(t *testing.T) {
 	active, err := config.LoadGlobal(home)
 	require.NoError(t, err)
 	require.Equal(t, "once/coder", active.Model)
-}
-
-func TestConfigAndWorkspaceSymlinksAreNotOverwritten(t *testing.T) {
-	root, other := t.TempDir(), t.TempDir()
-	require.NoError(t, os.Symlink(other, filepath.Join(root, ".empryo")))
-	require.ErrorIs(t, syncProjectAgents(root, config.Config{}), errProfileRootSymlink)
-	dir := t.TempDir()
-	target := filepath.Join(t.TempDir(), "actual.yaml")
-	require.NoError(t, os.WriteFile(target, []byte("keep this"), privateFile))
-	require.NoError(t, os.Symlink(target, filepath.Join(dir, "config.yaml")))
-	require.ErrorIs(t, config.WriteYAML(dir, config.Config{Model: "provider/model"}), config.ErrConfigSymlink)
-	data, err := os.ReadFile(target)
-	require.NoError(t, err)
-	require.Equal(t, "keep this", string(data))
 }

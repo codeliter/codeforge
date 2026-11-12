@@ -7,12 +7,15 @@ import (
 	"time"
 
 	"github.com/codeliter/codeforge/src/config"
+	"github.com/codeliter/codeforge/src/modelcatalog"
 	"github.com/codeliter/codeforge/src/review"
+
+	"github.com/codeliter/codeforge/src/modelconfig"
 )
 
 // runMode runs a mode or a command that launches Empryo: init, gate, respond and the four modes.
 func runMode(ctx context.Context, p prepared, args []string) error {
-	cfg, err := config.Load(p.home, p.project, modelTrustApprover())
+	cfg, err := config.Load(p.home, p.project, modelconfig.TrustApprover())
 	if err != nil {
 		return err
 	}
@@ -70,14 +73,14 @@ func runMode(ctx context.Context, p prepared, args []string) error {
 func planModels(ctx context.Context, p prepared, bin string, cfg config.Config, args []string) (plan config.ModelPlan, resolved, catalog []string, err error) {
 	cached := false
 	if config.NeedsCatalog(cfg) || argumentsNeedCatalog(args) {
-		if catalog, cached, err = launchCatalog(ctx, p.home, bin); err != nil {
+		if catalog, cached, err = modelcatalog.Launch(ctx, p.home, bin); err != nil {
 			return plan, nil, nil, err
 		}
 	}
 	plan, resolved, err = resolveModels(ctx, bin, p.workspace, cfg, catalog, args)
 	if err != nil && cached {
 		fmt.Fprintln(os.Stderr, "codeforge: refreshing the saved model list...")
-		if catalog, err = freshLaunchCatalog(ctx, p.home, bin, sortedCopy(readyProviders(ctx, bin))); err != nil {
+		if catalog, err = modelcatalog.Refresh(ctx, p.home, bin); err != nil {
 			return plan, nil, nil, err
 		}
 		plan, resolved, err = resolveModels(ctx, bin, p.workspace, cfg, catalog, args)
@@ -98,7 +101,7 @@ func resolveModels(ctx context.Context, bin, workspace string, cfg config.Config
 	plan.Routes = append(plan.Routes, overrides...)
 	if len(plan.FallbackChains()) > 0 {
 		fmt.Fprintln(os.Stderr, "codeforge: checking existing native fallback settings (read-only)...")
-		if err := verifyModelPlan(ctx, bin, workspace, plan); err != nil {
+		if err := modelconfig.VerifyPlan(ctx, bin, workspace, plan); err != nil {
 			return plan, nil, err
 		}
 	}

@@ -10,6 +10,9 @@ import (
 	"strings"
 
 	"github.com/codeliter/codeforge/src/guard"
+	"github.com/codeliter/codeforge/src/modelcatalog"
+
+	"github.com/codeliter/codeforge/src/modelconfig"
 )
 
 // Hook is the guard Empryo runs before every tool call; it skips setup and returns the hook exit code.
@@ -170,13 +173,13 @@ func Run(ctx context.Context, args []string) error {
 			return err
 		}
 		// These commands change providers, models and fallbacks, so the saved model list is rebuilt next launch.
-		if changesProviders(args) {
-			defer clearCatalogCache(home)
+		if modelcatalog.ChangesProviders(args) {
+			defer modelcatalog.ClearCache(home)
 		}
 		if args[0] != "models" {
-			return runProvider(ctx, home, bin, args[1:], os.Stdout)
+			return modelconfig.RunProvider(ctx, home, bin, args[1:], os.Stdout)
 		}
-		return runModels(ctx, home, bin, args[1:])
+		return modelconfig.RunModels(ctx, home, bin, args[1:])
 	}
 
 	p, err := prepare(ctx, home, repair)

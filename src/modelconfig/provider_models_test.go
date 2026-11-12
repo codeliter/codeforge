@@ -1,16 +1,18 @@
-package src
+package modelconfig
 
 import (
 	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"slices"
 	"testing"
 
 	"github.com/codeliter/codeforge/src/config"
+	"github.com/codeliter/codeforge/src/modelcatalog"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/codeliter/codeforge/src/forms"
 )
 
 func TestProviderPolicyValidation(t *testing.T) {
@@ -74,26 +76,11 @@ func TestProviderFallbackVerification(t *testing.T) {
 	chains = plan.FallbackChains()
 	chains[route.Fallbacks[0]] = []string{"custom/undeclared"}
 	require.ErrorIs(t, plan.VerifyFallbacks(chains), config.ErrNativeFallback)
-	require.NoError(t, verifyModelPlan(context.Background(), "/missing", "/missing", config.ModelPlan{}), "no preference requires no native process")
-}
-
-func TestProviderModelFlagsAreNotPromptText(t *testing.T) {
-	args := []string{"--system", "--model", "--model=Sonnet 5.5", "--system", "--effort"}
-	resolved, routes, err := resolveModelArguments(args, &config.ProviderPolicy{Primary: "devpass"}, providerTestCatalog())
-	require.NoError(t, err)
-	require.Len(t, routes, 1)
-	require.Equal(t, []string{"--system", "--model", "--model=llmgateway/claude-sonnet-5-5", "--system", "--effort"}, resolved)
-	require.False(t, hasEffort(args))
-	require.Empty(t, flagValue(args, "--effort"))
-	require.Equal(t, []string{"--system", "--model", "--system", "--effort"}, dropFlag(args, "--model"))
-	require.False(t, argumentsNeedCatalog([]string{"--system", "--model"}))
-	_, _, err = resolveModelArguments([]string{"--model"}, nil, nil)
-	require.ErrorIs(t, err, config.ErrModelName)
-	require.True(t, slices.Equal(args, []string{"--system", "--model", "--model=Sonnet 5.5", "--system", "--effort"}))
+	require.NoError(t, VerifyPlan(context.Background(), "/missing", "/missing", config.ModelPlan{}), "no preference requires no native process")
 }
 
 func TestProviderYAMLTrustAndPolicyDelta(t *testing.T) {
-	if interactive() {
+	if forms.Interactive() {
 		t.Skip("non-interactive trust behaviour")
 	}
 	home, project := t.TempDir(), t.TempDir()
@@ -147,11 +134,11 @@ func TestProviderPlanCommandKeepsConfigFiles(t *testing.T) {
 	path := filepath.Join(config.Dir(home), "config.yaml")
 	before, err := os.ReadFile(path)
 	require.NoError(t, err)
-	require.NoError(t, runModels(t.Context(), home, "/missing", []string{"plan"}))
+	require.NoError(t, RunModels(t.Context(), home, "/missing", []string{"plan"}))
 	after, err := os.ReadFile(path)
 	require.NoError(t, err)
 	require.Equal(t, before, after)
-	require.ErrorIs(t, runModels(t.Context(), home, "/missing", []string{"plan", "unexpected"}), errModelsUsage)
+	require.ErrorIs(t, RunModels(t.Context(), home, "/missing", []string{"plan", "unexpected"}), errModelsUsage)
 }
 
 func TestProviderCatalogFiltersDisconnectedAccounts(t *testing.T) {
@@ -165,7 +152,7 @@ case "$1" in
 esac
 `
 	require.NoError(t, os.WriteFile(bin, []byte(body), 0700))
-	ids, err := connectedModelCatalog(t.Context(), bin)
+	ids, err := modelcatalog.Connected(t.Context(), bin)
 	require.NoError(t, err)
 	require.Equal(t, []string{"llmgateway/claude-sonnet-5.5", "copilot/claude-sonnet-5.5"}, ids)
 }

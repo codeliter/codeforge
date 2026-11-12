@@ -21,3 +21,12 @@ func Shorten(s string, n int) string {
 	}
 	return Cut(s, n) + "…"
 }
+
+// Preview is the start of content, enough to judge a file by before trusting it, with a cut marked by an ellipsis.
+func Preview(content string) string {
+	const maxPreview = 1500
+	if len(content) <= maxPreview {
+		return content
+	}
+	return Cut(content, maxPreview) + "\n…"
+}

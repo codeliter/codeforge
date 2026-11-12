@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 
 	"github.com/codeliter/codeforge/src/config"
+
+	"github.com/codeliter/codeforge/src/modelconfig"
 )
 
 // prepared is what every mode and every Empryo-bound command needs: where codeforge, Empryo and the repository are,
@@ -27,7 +29,7 @@ func prepare(ctx context.Context, home string, repair repairOptions) (prepared, 
 	if p.globalCfg, err = config.LoadBase(home); err != nil {
 		return p, err
 	}
-	if err := syncAssets(p.empryoDir, maintenanceProfileConfig(p.globalCfg)); err != nil {
+	if err := syncAssets(p.empryoDir, modelconfig.MaintenanceConfig(p.globalCfg)); err != nil {
 		return p, fmt.Errorf("installing profiles: %w", err)
 	}
 	if p.workspace, err = os.Getwd(); err != nil {
@@ -54,7 +56,7 @@ func prepare(ctx context.Context, home string, repair repairOptions) (prepared, 
 // finishRepair completes `codeforge repair`: the project profiles are rebuilt and the repaired version is recorded, so
 // that the automatic repair does not run again for it.
 func (p prepared) finishRepair(w io.Writer) error {
-	if err := syncProjectAgents(p.workspace, maintenanceProfileConfig(p.globalCfg)); err != nil {
+	if err := syncProjectAgents(p.workspace, modelconfig.MaintenanceConfig(p.globalCfg)); err != nil {
 		return err
 	}
 	if Version != "dev" {

@@ -1,4 +1,4 @@
-package src
+package modelconfig
 
 import (
 	"context"
@@ -11,8 +11,12 @@ import (
 	"strings"
 
 	"github.com/codeliter/codeforge/src/config"
+	"github.com/codeliter/codeforge/src/forms"
 
 	"github.com/codeliter/codeforge/src/guard"
+	"github.com/codeliter/codeforge/src/modelcatalog"
+
+	"github.com/codeliter/codeforge/src/fsutil"
 )
 
 var errProviderUsage = errors.New("usage: codeforge provider [show] | provider set [PRIMARY [BACKUP...]] [--for MODEL-GLOB PROVIDER[,PROVIDER...]]... [--no-rules] [--project|--global] | provider clear [--project|--global]")
@@ -77,8 +81,8 @@ func providerRuleArgs(args []string) (rest []string, rules []ruleArg, err error)
 	return rest, rules, nil
 }
 
-// runProvider shows or changes which provider Codeforge uses first and which backups Empryo switches to, in order.
-func runProvider(ctx context.Context, home, bin string, args []string, w io.Writer) error {
+// RunProvider shows or changes which provider Codeforge uses first and which backups Empryo switches to, in order.
+func RunProvider(ctx context.Context, home, bin string, args []string, w io.Writer) error {
 	sub := "show"
 	if len(args) > 0 {
 		sub, args = args[0], args[1:]
@@ -120,7 +124,7 @@ func runProvider(ctx context.Context, home, bin string, args []string, w io.Writ
 		var policy *config.ProviderPolicy
 		inherited := false
 		if sub == "set" {
-			catalog, err := connectedModelCatalog(ctx, bin)
+			catalog, err := modelcatalog.Connected(ctx, bin)
 			if err != nil {
 				return err
 			}
@@ -254,14 +258,14 @@ func saveProviderPolicy(home, root, scope string, policy *config.ProviderPolicy)
 		return fmt.Errorf("%w: this project path is your global configuration; use --global", errProviderUsage)
 	}
 	if err := config.EnsureProjectEditing(home, root, func() bool {
-		return confirm("Replace the unapproved project model file? It is kept if you cancel.")
+		return forms.Agreed("Replace the unapproved project model file? It is kept if you cancel.")
 	}); err != nil {
 		return err
 	}
-	if isSymlinked(root, filepath.Join(".codeforge", "config.yaml")) {
+	if fsutil.Symlinked(root, filepath.Join(".codeforge", "config.yaml")) {
 		return config.ErrConfigSymlink
 	}
-	local, err := config.ReadTrustedProject(home, root, modelTrustApprover())
+	local, err := config.ReadTrustedProject(home, root, TrustApprover())
 	if err != nil {
 		return err
 	}
@@ -295,7 +299,7 @@ func showProviders(ctx context.Context, home, bin, root string, w io.Writer) err
 			fmt.Fprintf(w, "Models %s: %s\n", rule.Match, strings.Join(append([]string{config.ProviderID(rule.Primary)}, rule.Chain().Backups()...), " > "))
 		}
 	}
-	if catalog, err := connectedModelCatalog(ctx, bin); err == nil {
+	if catalog, err := modelcatalog.Connected(ctx, bin); err == nil {
 		fmt.Fprintf(w, "Connected in Empryo: %s\n", strings.Join(catalogProviders(catalog), ", "))
 	}
 	fmt.Fprintln(w, "Change it with: codeforge provider configure, or codeforge provider set PRIMARY [BACKUP...] [--for MODEL-GLOB PROVIDER[,PROVIDER...]]")

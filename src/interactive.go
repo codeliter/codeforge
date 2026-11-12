@@ -1,11 +1,7 @@
 package src
 
-import (
-	"os"
-
-	"golang.org/x/term"
-)
+import "github.com/codeliter/codeforge/src/forms"
 
 func interactive() bool {
-	return term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd()))
+	return forms.Interactive()
 }

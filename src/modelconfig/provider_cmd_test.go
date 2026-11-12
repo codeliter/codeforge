@@ -1,4 +1,4 @@
-package src
+package modelconfig
 
 import (
 	"os"
@@ -7,9 +7,10 @@ import (
 	"testing"
 
 	"github.com/codeliter/codeforge/src/config"
-	"github.com/codeliter/codeforge/src/forms"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/codeliter/codeforge/src/forms"
 )
 
 func TestProviderConfigureHelpers(t *testing.T) {
@@ -33,12 +34,12 @@ func TestProviderConfigureHelpers(t *testing.T) {
 }
 
 func TestProviderConfigureNeedsTerminal(t *testing.T) {
-	if interactive() {
+	if forms.Interactive() {
 		t.Skip("non-interactive behaviour")
 	}
 	var out strings.Builder
-	require.ErrorIs(t, runProvider(t.Context(), t.TempDir(), "/missing", []string{"configure"}, &out), errProviderConfigureTerminal)
-	require.ErrorIs(t, runProvider(t.Context(), t.TempDir(), "/missing", []string{"configure", "copilot"}, &out), errProviderUsage)
+	require.ErrorIs(t, RunProvider(t.Context(), t.TempDir(), "/missing", []string{"configure"}, &out), errProviderConfigureTerminal)
+	require.ErrorIs(t, RunProvider(t.Context(), t.TempDir(), "/missing", []string{"configure", "copilot"}, &out), errProviderUsage)
 }
 
 // scriptedAsker answers the menu's questions in order and records what each one offered.
@@ -203,7 +204,7 @@ case "$1" in
 esac
 `), execPerm))
 	var out strings.Builder
-	require.NoError(t, runProvider(t.Context(), home, bin, []string{"set", "devpass", "copilot", "--global"}, &out))
+	require.NoError(t, RunProvider(t.Context(), home, bin, []string{"set", "devpass", "copilot", "--global"}, &out))
 	require.Contains(t, out.String(), "llmgateway > copilot")
 	cfg, err := config.ReadFile(home)
 	require.NoError(t, err)
@@ -212,16 +213,16 @@ esac
 	require.Equal(t, "Sonnet 5.5", cfg.Model, "other saved choices are kept")
 	require.Equal(t, "Sonnet 5.5", cfg.Routing["editing"])
 	out.Reset()
-	err = runProvider(t.Context(), home, bin, []string{"set", "devpass", "copilot", "openrouter", "--global"}, &out)
+	err = RunProvider(t.Context(), home, bin, []string{"set", "devpass", "copilot", "openrouter", "--global"}, &out)
 	require.ErrorIs(t, err, config.ErrModelName, "openrouter has no frontier model to stand in for GPT 6.1 Sol, so the order is not saved half-working")
 	cfg, err = config.ReadFile(home)
 	require.NoError(t, err)
 	require.Equal(t, []string{"copilot"}, cfg.Providers.Backups(), "a failed set leaves the saved order alone")
 	out.Reset()
-	require.NoError(t, runProvider(t.Context(), home, bin, nil, &out))
+	require.NoError(t, RunProvider(t.Context(), home, bin, nil, &out))
 	require.Contains(t, out.String(), "Primary: llmgateway")
 	require.Contains(t, out.String(), "Backup 1: copilot")
-	require.NoError(t, runProvider(t.Context(), home, bin, []string{"clear", "--global"}, &out))
+	require.NoError(t, RunProvider(t.Context(), home, bin, []string{"clear", "--global"}, &out))
 	cfg, err = config.ReadFile(home)
 	require.NoError(t, err)
 	require.Nil(t, cfg.Providers)
