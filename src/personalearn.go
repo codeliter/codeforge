@@ -71,7 +71,7 @@ type facet struct {
 }
 
 var facets = []facet{
-	{"Voice", "Their tone in everything they write to people: sentence length, tense, words they use and avoid, how they explain a problem. Describe the tone faithfully, but write no rule that asks for padding, hedging or vague wording: every text stays clear, concise and unambiguous, and the persona only shapes how it sounds.",
+	{"Voice", "Their tone in everything they write to people: sentence length, tense, words they use and avoid, how they explain a problem. Write about how the writing sounds, whatever it is in: do not split it by kind of document, and leave out the format of commits, pull requests and review comments, which have sections of their own. Describe the tone faithfully, but write no rule that asks for padding, hedging or vague wording: every text stays clear, concise and unambiguous, and the persona only shapes how it sounds.",
 		map[evidenceKind]int{corrections: 1, commitMessages: 2, pullRequests: 3, reviewsGiven: 3, repliesToReviewers: 2}}, //nolint:mnd // weights
 	{"Commit messages", "Format rules and examples: subject style and length, when they write a body and what goes in it.",
 		map[evidenceKind]int{corrections: 1, commitMessages: 6}}, //nolint:mnd // weights
