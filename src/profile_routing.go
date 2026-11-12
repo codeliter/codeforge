@@ -45,12 +45,7 @@ func renderAgent(body []byte, cfg config.Config) ([]byte, error) {
 		return nil, err
 	}
 	text := strings.NewReplacer("{{expert}}", expert, "{{coder}}", coder, "{{reviewer}}", reviewer).Replace(string(body))
-	routing := make(map[string]string)
-	for job, model := range cfg.Routing {
-		if model != "" {
-			routing[job] = model
-		}
-	}
+	routing := config.EffectiveRouting(cfg)
 	if len(routing) == 0 {
 		return []byte(text), nil
 	}

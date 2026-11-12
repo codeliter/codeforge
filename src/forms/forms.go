@@ -46,6 +46,11 @@ const (
 type Option struct {
 	Label string `json:"label"`
 	Value string `json:"value"`
+	// Group heads the options of a Search that share it: the list then shows each group as a heading that opens and
+	// closes, with its options under it.
+	Group string `json:"group,omitempty"`
+	// Detail is a second column beside a grouped Search's label, such as a model's context size.
+	Detail string `json:"detail,omitempty"`
 }
 
 // Differ says a field's choice must not repeat the choice made in the field Key, with Message as the complaint.
@@ -80,6 +85,10 @@ type Field struct {
 	Header string `json:"header,omitempty"`
 	// Placeholder is what a Search's empty box says.
 	Placeholder string `json:"placeholder,omitempty"`
+	// Multi lets a Search take several options: Values offers the ones ticked first and carries the answer.
+	Multi bool `json:"multi,omitempty"`
+	// Ordered numbers what a Multi Search has ticked and answers in the order ticked, for a choice whose order matters.
+	Ordered bool `json:"ordered,omitempty"`
 }
 
 // When shows a group only while the field Key holds one of Is, or none of IsNot, and And (if any) holds too.
@@ -215,9 +224,10 @@ func Show(name string, a Accordion) (string, []Change, error) {
 // Protocol is the version of what codeforge sends codeforge-forms: 2 added an Accordion's Notes, Edits and Changes,
 // 3 the Search field, 4 the rewrite of a note of several lines, 5 the Changes with any Action key, not only KeySend. The helper answers ProtocolFlag with its own, and one that cannot is 1.
 const (
-	Protocol       = 5
+	Protocol       = 6
 	editsProtocol  = 5 // 4 rewrites a note of several lines; 5 answers the rewrites and deletions with any key
 	searchProtocol = 3
+	pickerProtocol = 6 // a Search with grouped options, or one that takes several
 )
 
 // needProtocol refuses, with ErrOldHelper, a form that needs protocol p when the helper is older. With no helper it
@@ -390,7 +400,11 @@ func Ask(name string, field Field) (Answer, error) {
 		field.Key = "answer"
 	}
 	if field.Kind == Search {
-		if err := needProtocol(name, searchProtocol); err != nil {
+		need := searchProtocol
+		if field.Multi || slices.ContainsFunc(field.Options, func(o Option) bool { return o.Group != "" }) {
+			need = pickerProtocol
+		}
+		if err := needProtocol(name, need); err != nil {
 			return Answer{}, err
 		}
 	}
@@ -404,6 +418,23 @@ func Ask(name string, field Field) (Answer, error) {
 // Choose asks the user to pick one of options; initial is the one offered first.
 func Choose(title, description string, options []Option, initial string) (string, error) {
 	a, err := Ask(title, Field{Kind: Select, Title: title, Description: description, Options: options, Value: initial})
+	return a.Value, err
+}
+
+// Pick asks the user to pick one of options on the grouped picker: each option under its Group, its Detail in a
+// second column, header naming the two columns with a tab between. A helper too old for the picker shows a plain menu.
+func Pick(title, description, header string, options []Option, initial string) (string, error) {
+	a, err := Ask(title, Field{Kind: Search, Title: title, Description: description, Header: header, Options: options, Value: initial})
+	if errors.Is(err, ErrOldHelper) {
+		plain := make([]Option, len(options))
+		for i, o := range options {
+			plain[i] = Option{Label: o.Label, Value: o.Value}
+			if o.Detail != "" {
+				plain[i].Label += ": " + o.Detail
+			}
+		}
+		return Choose(title, description, plain, initial)
+	}
 	return a.Value, err
 }
 

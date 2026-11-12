@@ -7,8 +7,6 @@ import (
 	"github.com/codeliter/codeforge/src/config"
 )
 
-const inheritRouting = "@inherit"
-
 // Keep inherited roles inherited; preserve pre-existing explicit project pins.
 func sameProviderPolicy(a, b *config.ProviderPolicy) bool {
 	if a == nil || b == nil {
@@ -63,24 +61,4 @@ func prepareProjectModelPreview(global, local, baseline config.Config, edited *c
 		delta = projectModelDelta(local, baseline, *edited)
 	}
 	return config.Defaults(config.Merge(global, delta)), nil
-}
-
-func routingPickerValue(routing map[string]string, job string) string {
-	if value, exists := routing[job]; exists {
-		return value
-	}
-	return inheritRouting
-}
-
-func applyRoutingChoices(cfg *config.Config, jobs, values []string) {
-	for i, job := range jobs {
-		if values[i] == inheritRouting {
-			delete(cfg.Routing, job)
-			continue
-		}
-		if cfg.Routing == nil {
-			cfg.Routing = make(map[string]string)
-		}
-		cfg.Routing[job] = values[i]
-	}
 }

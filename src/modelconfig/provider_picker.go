@@ -74,40 +74,19 @@ func pickProviderPolicy(cfg *config.Config, catalog []string) error {
 	} else if primary != "copilot" && slices.Contains(ids, "copilot") {
 		backup = "copilot"
 	}
-	var primaries []forms.Option
-	for _, id := range ids {
-		label := id
-		if id == "llmgateway" {
-			label = "LLM Gateway / DevPass (uses your existing sign-in)"
+	chain := []string{primary}
+	for _, id := range append([]string{backup}, extra...) {
+		if slices.Contains(ids, id) && !slices.Contains(chain, id) {
+			chain = append(chain, id)
 		}
-		primaries = append(primaries, forms.Option{Label: label, Value: id})
 	}
-	if primary, err = forms.Choose("Primary provider", "Codeforge does not change accounts, keys, or subscription billing.", primaries, primary); err != nil {
+	if err := (formAsker{}).order("Provider order", providerOrderHelp+" Codeforge does not change accounts, keys, or subscription billing.", providerOptions(*cfg, ids, catalog), &chain); err != nil {
 		return err
 	}
-	if backup == primary || !slices.Contains(ids, backup) {
-		backup = ""
+	if len(chain) == 0 {
+		return errProviderConfigureCancelled
 	}
-	fallbacks := []forms.Option{{Label: "Keep native Empryo fallback policy (no Codeforge preference)", Value: ""}}
-	for _, id := range ids {
-		if id != primary {
-			fallbacks = append(fallbacks, forms.Option{Label: id, Value: id})
-		}
-	}
-	if backup, err = forms.Choose("First fallback provider", "Empryo switches to it when the primary fails or runs out of quota. Add more, in order, with codeforge provider set.", fallbacks, backup); err != nil {
-		return err
-	}
-	var chain []string
-	if backup != "" {
-		chain = append(chain, backup)
-		// Keep further backups chosen with codeforge provider set, unless they are now primary or disconnected.
-		for _, id := range extra {
-			if id != primary && id != backup && slices.Contains(ids, id) && !slices.Contains(chain, id) {
-				chain = append(chain, id)
-			}
-		}
-	}
-	policy := config.NewProviderPolicy(primary, chain)
+	policy := config.NewProviderPolicy(chain[0], chain[1:])
 	if cfg.Providers != nil {
 		policy.Rules = cfg.Providers.Clone().Rules
 	}

@@ -2,6 +2,8 @@
 package modelconfig
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -84,4 +86,13 @@ func TestRecommendKeeping_AvoidsPreservedCoderFamily(t *testing.T) {
 	require.Equal(t, []string{"x/gpt-6.1-sol"}, rec["model"])
 	require.Equal(t, []string{"x/claude-opus-5.5"}, rec["review.model"])
 	require.NotContains(t, rec["review.second_opinion"], "x/gpt-6.1-sol")
+}
+
+func TestModelsSet_RefusesAFlagInsteadOfSavingItAsAModel(t *testing.T) {
+	home := t.TempDir()
+	for _, args := range [][]string{{"set", "review.second_opinion", "a/b", "--global"}, {"set", "--global", "model", "a/b"}} {
+		require.ErrorIs(t, RunModels(t.Context(), home, "/missing", args), errModelsUsage, args)
+	}
+	_, err := os.Stat(filepath.Join(config.Dir(home), "config.yaml"))
+	require.ErrorIs(t, err, os.ErrNotExist, "nothing is written")
 }

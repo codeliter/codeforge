@@ -3,6 +3,7 @@ package modelconfig
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -16,17 +17,19 @@ import (
 func TestProviderConfigureHelpers(t *testing.T) {
 	catalog := append(threeProviderCatalog(), "small/claude-sonnet-5.5")
 	cfg := config.Config{Model: "Sonnet 5.5", Review: config.ReviewConfig{Model: "GPT 6.1 Sol"}, Expert: "custom/pinned", Routing: map[string]string{"editing": "Sonnet 5.5", "research": ""}}
-	require.Empty(t, missingModels(cfg, "copilot", catalog))
-	require.Equal(t, []string{"GPT 6.1 Sol"}, missingModels(cfg, "small", catalog), "explicit IDs and empty routing never count as missing")
-	require.Equal(t, "small — nothing comparable to GPT 6.1 Sol", providerLabel("small", missingModels(cfg, "small", catalog)))
-	require.Contains(t, providerLabel("llmgateway", nil), "DevPass")
-	var values, labels []string
-	for _, option := range backupOptions(cfg, catalogProviders(catalog), []string{"llmgateway", "copilot"}, catalog) {
+	_, missing := providerCoverage(cfg, "copilot", catalog)
+	require.Empty(t, missing)
+	_, missing = providerCoverage(cfg, "small", catalog)
+	require.Equal(t, []string{"GPT 6.1 Sol"}, missing, "explicit IDs and empty routing never count as missing")
+	require.Equal(t, "nothing comparable to GPT 6.1 Sol", providerDetail(cfg, "small", catalog))
+	require.Contains(t, providerDetail(cfg, "llmgateway", catalog), "DevPass")
+	require.Equal(t, "serves every saved model", providerDetail(cfg, "copilot", catalog))
+	var values []string
+	for _, option := range providerOptions(cfg, catalogProviders(catalog), catalog) {
 		values = append(values, option.Value)
-		labels = append(labels, option.Label)
+		require.Equal(t, "Connected providers", option.Group)
 	}
-	require.Equal(t, []string{providerDone, "openrouter", "small"}, values, "Done first, then providers not yet in the chain")
-	require.Contains(t, labels, "small — nothing comparable to GPT 6.1 Sol")
+	require.Equal(t, []string{"copilot", "llmgateway", "openrouter", "small"}, values, "every connected provider is offered")
 	preview := providerChainPreview("project", []string{"llmgateway", "copilot", "openrouter"})
 	require.Contains(t, preview, "Primary   llmgateway")
 	require.Contains(t, preview, "Backup 2  openrouter")
@@ -44,10 +47,11 @@ func TestProviderConfigureNeedsTerminal(t *testing.T) {
 
 // scriptedAsker answers the menu's questions in order and records what each one offered.
 type scriptedAsker struct {
-	t       *testing.T
-	answers []string
-	asked   []string
-	offered [][]string
+	t        *testing.T
+	answers  []string
+	asked    []string
+	offered  [][]string
+	defaults [][]string // the order each order question started from
 }
 
 func (a *scriptedAsker) next(title string) string {
@@ -72,6 +76,23 @@ func (a *scriptedAsker) choose(title, _ string, options []forms.Option, value *s
 	return nil
 }
 
+// order answers with a comma-separated order; "=" keeps the one offered.
+func (a *scriptedAsker) order(title, _ string, options []forms.Option, values *[]string) error {
+	var offered []string
+	for _, option := range options {
+		offered = append(offered, option.Value)
+	}
+	a.offered = append(a.offered, offered)
+	a.defaults = append(a.defaults, slices.Clone(*values))
+	if answer := a.next(title); answer != "=" {
+		*values = strings.Split(answer, ",")
+		for _, id := range *values {
+			require.Contains(a.t, offered, id, title)
+		}
+	}
+	return nil
+}
+
 func (a *scriptedAsker) confirm(title, _ string, value *bool) error {
 	*value = a.next(title) == "yes"
 	return nil
@@ -82,35 +103,36 @@ func TestProviderConfigureFlow(t *testing.T) {
 	require.NoError(t, config.WriteFile(home, namedRolesConfig()))
 	catalog := append(threeProviderCatalog(), "small/claude-sonnet-5.5")
 	var out strings.Builder
-	ask := &scriptedAsker{t: t, answers: []string{"=", "copilot", "openrouter", providerDone, "yes", "no"}}
+	ask := &scriptedAsker{t: t, answers: []string{"llmgateway,copilot,openrouter", "yes", "no"}}
 	apply, err := pickProviderOrder(ask, home, root, false, "global", catalog, &out)
 	require.NoError(t, err)
 	require.Empty(t, apply, "saying no to apply stops after saving")
-	require.Equal(t, []string{"Primary provider", "Backup 1", "Backup 2", "Backup 3", "Save this provider order?", "Apply it to Empryo now?"}, ask.asked)
-	require.Equal(t, []string{providerDone, "copilot", "openrouter", "small"}, ask.offered[1], "Backup 1 offers every provider except the primary")
-	require.Equal(t, []string{providerDone, "openrouter", "small"}, ask.offered[2], "a chosen backup is not offered again")
+	require.Equal(t, []string{"Provider order", "Save this provider order?", "Apply it to Empryo now?"}, ask.asked)
+	require.Equal(t, []string{"copilot", "llmgateway", "openrouter", "small"}, ask.offered[0], "one screen offers every connected provider")
+	require.Equal(t, []string{"llmgateway"}, ask.defaults[0], "llmgateway is the default primary")
 	cfg, err := config.ReadFile(home)
 	require.NoError(t, err)
-	require.Equal(t, "llmgateway", cfg.Providers.Primary, "llmgateway is the default primary")
-	require.Equal(t, []string{"copilot", "openrouter"}, cfg.Providers.Backups(), "backups are saved in the order picked")
+	require.Equal(t, "llmgateway", cfg.Providers.Primary)
+	require.Equal(t, []string{"copilot", "openrouter"}, cfg.Providers.Backups(), "backups are saved in the order ticked")
 	require.Contains(t, out.String(), "Saved.")
 
-	ask = &scriptedAsker{t: t, answers: []string{"=", "=", "=", "=", "yes", "yes"}}
+	ask = &scriptedAsker{t: t, answers: []string{"=", "yes", "yes"}}
 	apply, err = pickProviderOrder(ask, home, root, false, "global", catalog, &out)
 	require.NoError(t, err)
 	require.Equal(t, "global", apply, "yes to apply hands over to models apply for this scope")
 	cfg, err = config.ReadFile(home)
 	require.NoError(t, err)
-	require.Equal(t, []string{"copilot", "openrouter"}, cfg.Providers.Backups(), "re-running and pressing Enter keeps the saved order")
+	require.Equal(t, []string{"copilot", "openrouter"}, cfg.Providers.Backups(), "re-running and sending it as offered keeps the saved order")
+	require.Equal(t, []string{"llmgateway", "copilot", "openrouter"}, ask.defaults[0], "the saved order is ticked to start with")
 
-	ask = &scriptedAsker{t: t, answers: []string{"=", "small", providerDone}}
+	ask = &scriptedAsker{t: t, answers: []string{"llmgateway,small"}}
 	_, err = pickProviderOrder(ask, home, root, false, "global", catalog, &out)
 	require.ErrorIs(t, err, config.ErrModelName, "a backup with nothing of the same level is refused")
 	cfg, err = config.ReadFile(home)
 	require.NoError(t, err)
 	require.Equal(t, []string{"copilot", "openrouter"}, cfg.Providers.Backups(), "a refused order changes nothing")
 
-	ask = &scriptedAsker{t: t, answers: []string{"=", providerDone, "no"}}
+	ask = &scriptedAsker{t: t, answers: []string{"llmgateway", "no"}}
 	_, err = pickProviderOrder(ask, home, root, false, "global", catalog, &out)
 	require.ErrorIs(t, err, errProviderConfigureCancelled)
 }
@@ -118,7 +140,7 @@ func TestProviderConfigureFlow(t *testing.T) {
 func TestProviderConfigureScopeQuestion(t *testing.T) {
 	home, root := t.TempDir(), t.TempDir()
 	require.NoError(t, config.WriteFile(home, namedRolesConfig()))
-	ask := &scriptedAsker{t: t, answers: []string{"=", "=", providerDone, "yes", "no"}}
+	ask := &scriptedAsker{t: t, answers: []string{"=", "=", "yes", "no"}}
 	var out strings.Builder
 	_, err := pickProviderOrder(ask, home, root, true, "", threeProviderCatalog(), &out)
 	require.NoError(t, err)

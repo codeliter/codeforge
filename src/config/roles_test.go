@@ -17,6 +17,7 @@ func TestApply_RejectsWhatARoleCannotTake(t *testing.T) {
 		{"no models", "model", nil, ErrNoModels},
 		{"two for a single slot", "model", []string{"a/b", "c/d"}, ErrOneModel},
 		{"not a model reference", "judges", []string{"a/b", "not!a/model/ref"}, ErrNotProviderModel},
+		{"a flag", "review.second_opinion", []string{"a/b", "--global"}, ErrNotProviderModel},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

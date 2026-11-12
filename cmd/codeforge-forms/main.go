@@ -56,6 +56,9 @@ func ask(f forms.Form) (forms.Answers, error) {
 		return showAccordion(*f.Accordion)
 	}
 	if len(f.Groups) == 1 && len(f.Groups[0].Fields) == 1 && f.Groups[0].Fields[0].Kind == forms.Search {
+		if grouped(f.Groups[0].Fields[0]) {
+			return showPicker(f.Groups[0].Fields[0])
+		}
 		return showSearch(f.Groups[0].Fields[0])
 	}
 	form, answers := build(f)

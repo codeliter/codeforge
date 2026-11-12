@@ -117,10 +117,11 @@ func pickMode(cfg config.Config, args []string) (string, error) {
 	if promptOf(args) != "" || !interactive() {
 		return modeChat, nil
 	}
-	return forms.Choose("What are we doing?", "", []forms.Option{
-		{Label: "Ticket: take a task to a verified change and draft PR", Value: modeTicket},
-		{Label: "Chat: questions, explanations, small edits", Value: modeChat},
-		{Label: "Work: conversational tasks through implementation and verification", Value: modeWork},
-		{Label: "Review: a PR or my local work", Value: modeReview},
+	const start = "Start"
+	return forms.Pick("What are we doing?", "Pick a mode, or type to search.", "Mode\tWhat it does", []forms.Option{
+		{Label: "Ticket", Detail: "take a task to a verified change and draft PR", Value: modeTicket, Group: start},
+		{Label: "Chat", Detail: "questions, explanations, small edits", Value: modeChat, Group: start},
+		{Label: "Work", Detail: "conversational tasks through implementation and verification", Value: modeWork, Group: start},
+		{Label: "Review", Detail: "a PR or my local work", Value: modeReview, Group: start},
 	}, modeTicket)
 }

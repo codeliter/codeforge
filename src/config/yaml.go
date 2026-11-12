@@ -39,6 +39,41 @@ func ValidModelID(id string) bool {
 	return !strings.ContainsFunc(id, unicode.IsControl)
 }
 
+// Helper jobs Codeforge routes by itself when the configuration does not name them. Reading and summarising go to
+// the first task-sizing model, where a mistake is cheap to spot; checking the work goes to the reviewer, so it is not
+// the coder marking its own. Editing, cleanup and the pre-pass are left to the model the session runs on.
+var (
+	lightJobs = []string{"research", "explore", "web-search", "summaries"}
+	checkJobs = []string{"verify", "review", "goal-review"}
+)
+
+// EffectiveRouting is the model each helper job runs on: what the configuration names, and for the jobs it does not
+// name, the role suited to the job. An empty entry keeps that job on native Empryo routing, so it is left out. Roles
+// not yet resolved to a provider/model ID route nothing: a profile never carries a guessed ID.
+func EffectiveRouting(cfg Config) map[string]string {
+	routing := make(map[string]string)
+	auto := func(jobs []string, model string) {
+		if !ValidModelID(model) {
+			return
+		}
+		for _, job := range jobs {
+			routing[job] = model
+		}
+	}
+	if len(cfg.Judges) > 0 {
+		auto(lightJobs, cfg.Judges[0])
+	}
+	auto(checkJobs, cfg.Review.Model)
+	for job, model := range cfg.Routing {
+		if model == "" {
+			delete(routing, job)
+			continue
+		}
+		routing[job] = model
+	}
+	return routing
+}
+
 func validateRouting(routing map[string]string) error {
 	for job, model := range routing {
 		known := false
@@ -134,12 +169,9 @@ func Merge(base, local Config) Config {
 	if local.Routing != nil && base.Routing == nil {
 		base.Routing = make(map[string]string)
 	}
+	// An empty entry is kept: it says the job stays on native Empryo routing, which no entry at all does not say.
 	for job, model := range local.Routing {
-		if model == "" {
-			delete(base.Routing, job)
-		} else {
-			base.Routing[job] = model
-		}
+		base.Routing[job] = model
 	}
 	return base
 }

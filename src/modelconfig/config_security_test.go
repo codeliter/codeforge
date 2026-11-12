@@ -56,13 +56,12 @@ func TestProjectApprovalUsesSavedBytesNotASecondRead(t *testing.T) {
 
 func TestModelRoutingInheritIsNotAnImplicitReset(t *testing.T) {
 	cfg := config.Config{Routing: map[string]string{"research": "project/reader"}}
-	require.Equal(t, inheritRouting, routingPickerValue(cfg.Routing, "editing"))
-	applyRoutingChoices(&cfg, []string{"editing"}, []string{inheritRouting})
 	merged := config.Merge(config.Config{Routing: map[string]string{"editing": "global/editor"}}, cfg)
-	require.Equal(t, "global/editor", merged.Routing["editing"])
-	applyRoutingChoices(&cfg, []string{"editing"}, []string{""})
+	require.Equal(t, "global/editor", merged.Routing["editing"], "a job the project does not name inherits")
+	cfg.Routing["editing"] = ""
 	merged = config.Merge(config.Config{Routing: map[string]string{"editing": "global/editor"}}, cfg)
-	require.NotContains(t, merged.Routing, "editing")
+	require.Contains(t, merged.Routing, "editing")
+	require.Empty(t, merged.Routing["editing"], "the reset replaces the global model and is kept as a reset")
 }
 
 func TestModelTrustPreviewCannotHideReviewersBehindComments(t *testing.T) {

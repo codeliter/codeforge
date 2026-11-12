@@ -17,21 +17,35 @@ import (
 var errProviderConfigureTerminal = errors.New("provider configure needs a terminal; use codeforge provider set PRIMARY [BACKUP...] instead")
 var errProviderConfigureCancelled = errors.New("provider configuration cancelled; nothing saved")
 
-const providerDone = ""
+// providerOrderHelp says how the order picker is read.
+const providerOrderHelp = "Tick providers in the order Empryo should try them: 1 runs every model name first, the rest are backups for when the one before fails or runs out of quota. Connect more with /login in Empryo."
 
-// providerLabel names a provider and says how it covers the saved models, so the choice is clear before it is picked.
-func providerLabel(id string, missing []string, standIns ...string) string {
-	label := id
+// providerDetail says how a provider covers the saved models, so the choice is clear before it is ticked.
+func providerDetail(cfg config.Config, id string, catalog []string) string {
+	standIns, missing := providerCoverage(cfg, id, catalog)
+	var parts []string
 	if id == "llmgateway" {
-		label = "llmgateway (LLM Gateway / DevPass)"
+		parts = append(parts, "LLM Gateway / DevPass")
 	}
 	if len(standIns) > 0 {
-		label += " — uses " + strings.Join(standIns, ", ")
+		parts = append(parts, "uses "+strings.Join(standIns, ", "))
 	}
 	if len(missing) > 0 {
-		label += " — nothing comparable to " + strings.Join(missing, ", ")
+		parts = append(parts, "nothing comparable to "+strings.Join(missing, ", "))
 	}
-	return label
+	if len(standIns)+len(missing) == 0 {
+		parts = append(parts, "serves every saved model")
+	}
+	return strings.Join(parts, " — ")
+}
+
+// providerOptions offers every connected provider to the order picker.
+func providerOptions(cfg config.Config, connected, catalog []string) []forms.Option {
+	options := make([]forms.Option, 0, len(connected))
+	for _, id := range connected {
+		options = append(options, forms.Option{Label: id, Detail: providerDetail(cfg, id, catalog), Value: id, Group: "Connected providers"})
+	}
+	return options
 }
 
 // savedModelNames lists the model names the config resolves through providers; explicit provider/model IDs never move.
@@ -68,28 +82,6 @@ func providerCoverage(cfg config.Config, provider string, catalog []string) (sta
 	return standIns, missing
 }
 
-// missingModels lists the saved model names a provider has nothing comparable for.
-func missingModels(cfg config.Config, provider string, catalog []string) []string {
-	_, missing := providerCoverage(cfg, provider, catalog)
-	return missing
-}
-
-func coverageLabel(cfg config.Config, id string, catalog []string) string {
-	standIns, missing := providerCoverage(cfg, id, catalog)
-	return providerLabel(id, missing, standIns...)
-}
-
-// backupOptions offers every connected provider not already in the chain, plus Done to stop adding.
-func backupOptions(cfg config.Config, connected, chain []string, catalog []string) []forms.Option {
-	options := []forms.Option{{Label: "Done — no more backups", Value: providerDone}}
-	for _, id := range connected {
-		if !slices.Contains(chain, id) {
-			options = append(options, forms.Option{Label: coverageLabel(cfg, id, catalog), Value: id})
-		}
-	}
-	return options
-}
-
 // providerChainPreview shows the order as Empryo will try it.
 func providerChainPreview(scope string, chain []string, rules ...config.ProviderRule) string {
 	var text strings.Builder
@@ -114,6 +106,8 @@ func providerChainPreview(scope string, chain []string, rules ...config.Provider
 type providerAsker interface {
 	choose(title, description string, options []forms.Option, value *string) error
 	confirm(title, description string, value *bool) error
+	// order asks for several of options in the order they are to be used; values offers the order to start from.
+	order(title, description string, options []forms.Option, values *[]string) error
 }
 
 type formAsker struct{}
@@ -127,6 +121,18 @@ func (formAsker) choose(title, description string, options []forms.Option, value
 	return nil
 }
 
+func (formAsker) order(title, description string, options []forms.Option, values *[]string) error {
+	a, err := forms.Ask(title, forms.Field{
+		Kind: forms.Search, Title: title, Description: description, Header: "Provider\tYour saved models",
+		Options: options, Values: *values, Multi: true, Ordered: true,
+	})
+	if err != nil {
+		return err
+	}
+	*values = a.Values
+	return nil
+}
+
 func (formAsker) confirm(title, description string, value *bool) error {
 	a, err := forms.Ask(title, forms.Field{Kind: forms.Confirm, Title: title, Description: description, Yes: *value})
 	if err != nil {
@@ -136,7 +142,7 @@ func (formAsker) confirm(title, description string, value *bool) error {
 	return nil
 }
 
-// configureProviders is the interactive form for provider set: scope, primary, then backups one at a time, in order.
+// configureProviders is the interactive form for provider set: scope, then the providers ticked in order.
 func configureProviders(ctx context.Context, home, bin, root string, inGit bool, args []string, w io.Writer) error {
 	ids, scope, err := providerArgs(args)
 	if err != nil || len(ids) > 0 {
@@ -184,41 +190,25 @@ func pickProviderOrder(ask providerAsker, home, root string, inGit bool, scope s
 	if cfg.Providers != nil && cfg.Providers.Primary != "" {
 		current = append([]string{config.ProviderID(cfg.Providers.Primary)}, cfg.Providers.Backups()...)
 	}
-	primary := connected[0]
-	if len(current) > 0 && slices.Contains(connected, current[0]) {
-		primary = current[0]
-	} else if slices.Contains(connected, "llmgateway") {
-		primary = "llmgateway"
+	chain := slices.DeleteFunc(slices.Clone(current), func(id string) bool { return !slices.Contains(connected, id) })
+	if len(chain) < len(current) {
+		fmt.Fprintln(w, "codeforge: a saved provider is not connected now and is left out of the order offered; leave the screen with Esc to keep the saved order.")
 	}
-	var primaries []forms.Option
-	for _, id := range connected {
-		primaries = append(primaries, forms.Option{Label: providerLabel(id, missingModels(cfg, id, catalog)), Value: id})
+	if len(chain) == 0 {
+		chain = []string{connected[0]}
+		if slices.Contains(connected, "llmgateway") {
+			chain[0] = "llmgateway"
+		}
 	}
-	description := "Every model name runs here first. Connect more providers with /login in Empryo."
+	description := providerOrderHelp
 	if len(current) > 0 {
 		description = "Current order: " + strings.Join(current, " > ") + ". " + description
 	}
-	if err := ask.choose("Primary provider", description, primaries, &primary); err != nil {
+	if err := ask.order("Provider order", description, providerOptions(cfg, connected, catalog), &chain); err != nil {
 		return "", err
 	}
-	chain := []string{primary}
-	for len(chain) < len(connected) {
-		pick := providerDone
-		// Preselect the next backup from the saved order, so re-running keeps it with a few presses of Enter.
-		for _, id := range current[min(1, len(current)):] {
-			if !slices.Contains(chain, id) && slices.Contains(connected, id) {
-				pick = id
-				break
-			}
-		}
-		help := "Empryo switches to it, in this order, when the provider before it fails or runs out of quota. A provider without one of your models uses its closest model of the same level instead."
-		if err := ask.choose(fmt.Sprintf("Backup %d", len(chain)), "Order so far: "+strings.Join(chain, " > ")+"\n"+help, backupOptions(cfg, connected, chain, catalog), &pick); err != nil {
-			return "", err
-		}
-		if pick == providerDone {
-			break
-		}
-		chain = append(chain, pick)
+	if len(chain) == 0 {
+		return "", errProviderConfigureCancelled
 	}
 	policy, err := providerChain(chain, connected)
 	if err != nil {

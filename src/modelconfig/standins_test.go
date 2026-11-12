@@ -21,7 +21,7 @@ func TestProviderBackupUsesClosestModelInsteadOfFailing(t *testing.T) {
 	standIns, missing := providerCoverage(cfg, "copilot", catalog)
 	require.Equal(t, []string{"Sonnet 5.5 → claude-sonnet-5"}, standIns)
 	require.Empty(t, missing)
-	require.Equal(t, "copilot — uses Sonnet 5.5 → claude-sonnet-5", coverageLabel(cfg, "copilot", catalog))
+	require.Equal(t, "uses Sonnet 5.5 → claude-sonnet-5", providerDetail(cfg, "copilot", catalog))
 	exact, err := config.ResolveModelReference("model", "Sonnet 5.5", policy, append(catalog, "copilot/claude-sonnet-5.5"))
 	require.NoError(t, err)
 	require.Equal(t, []string{"copilot/claude-sonnet-5.5"}, exact.Fallbacks, "the exact model always wins over a stand-in")

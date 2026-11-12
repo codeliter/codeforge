@@ -98,12 +98,15 @@ func runModelConfigure(ctx context.Context, home, bin string, args []string) err
 	}
 	baseline := config.Defaults(config.Clone(cfg))
 	cfg = config.Clone(baseline)
-	editor := editModelChoices
+	contexts := modelcatalog.Contexts(ctx, bin)
+	editor := func(edited *config.Config, catalog []string) error {
+		return editModelChoicesPreview(edited, catalog, contexts, nil)
+	}
 	var approvers []func(string, string) error
 	if scope == "project" {
 		cfg.Routing = config.Clone(local).Routing
 		editor = func(edited *config.Config, catalog []string) error {
-			if err := editModelChoicesPreview(edited, catalog, func(choices *config.Config) (config.Config, error) {
+			if err := editModelChoicesPreview(edited, catalog, contexts, func(choices *config.Config) (config.Config, error) {
 				return prepareProjectModelPreview(global, local, baseline, choices, catalog)
 			}); err != nil {
 				return err
@@ -211,52 +214,15 @@ func seedModelChoices(cfg *config.Config, catalog []string) {
 	}
 }
 
-func editModelChoices(cfg *config.Config, catalog []string) error {
-	return editModelChoicesPreview(cfg, catalog, nil)
-}
-func editModelChoicesPreview(cfg *config.Config, catalog []string, prepare func(*config.Config) (config.Config, error)) error {
+// editModelChoicesPreview asks for the provider order and each role's model, shows the resolved plan and asks before
+// saving. contexts is each model's context size, shown beside it; prepare, when set, turns the choices into what the
+// plan is resolved from.
+func editModelChoicesPreview(cfg *config.Config, catalog []string, contexts map[string]string, prepare func(*config.Config) (config.Config, error)) error {
 	if err := pickProviderPolicy(cfg, catalog); err != nil {
 		return err
 	}
 	seedModelChoices(cfg, catalog)
-	noModels := config.ErrNoModels.Error()
-	answers, err := forms.Run(forms.Page("configure models",
-		forms.Field{Key: "model", Kind: forms.Select, Title: "Coding model", Description: "Writes code in work, chat and ticket mode.", Options: providerModelOptions(catalog, cfg.Providers, cfg.Model), Value: cfg.Model},
-		forms.Field{Key: "expert", Kind: forms.Select, Title: "Expert delegate (on demand)", Description: "Use Opus for difficult delegated work, not routine calls.", Options: providerModelOptions(catalog, cfg.Providers, cfg.Expert), Value: cfg.Expert},
-		forms.Field{Key: "judges", Kind: forms.MultiSelect, Title: "Task sizing models", Description: "Fast helpers that choose how much thinking a task needs.", Options: providerModelOptions(catalog, cfg.Providers, cfg.Judges...), Values: cfg.Judges, Required: noModels},
-		forms.Field{Key: "review", Kind: forms.Select, Title: "Review model", Description: "Checks changes with a different model from the coder.", Options: providerModelOptions(catalog, cfg.Providers, cfg.Review.Model), Value: cfg.Review.Model,
-			Differs: []forms.Differ{{Key: "model", Message: config.ErrReviewerIsCoder.Error()}}},
-		forms.Field{Key: "second", Kind: forms.MultiSelect, Title: "Extra reviewers", Description: "Second opinions for larger or riskier changes.", Options: providerModelOptions(catalog, cfg.Providers, cfg.Review.SecondOpinion...), Values: cfg.Review.SecondOpinion, Required: noModels,
-			Differs: []forms.Differ{{Key: "model", Message: config.ErrSecondOpinionIsCoder.Error()}, {Key: "review", Message: config.ErrSecondOpinionIsReviewer.Error()}}},
-		forms.Field{Key: "init", Kind: forms.Select, Title: "Persona model", Description: "Learns your conventions during init.", Options: providerModelOptions(catalog, cfg.Providers, cfg.Init), Value: cfg.Init},
-		forms.Field{Key: "helpers", Kind: forms.Confirm, Title: "Also configure Empryo helper routing?", Description: "Only Codeforge profiles change; other Empryo sessions keep their routing."},
-	))
-	if err != nil {
-		return err
-	}
-	cfg.Model, cfg.Expert, cfg.Judges = answers.String("model"), answers.String("expert"), answers.Strings("judges")
-	cfg.Review.Model, cfg.Review.SecondOpinion, cfg.Init = answers.String("review"), answers.Strings("second"), answers.String("init")
-	if answers.Bool("helpers") {
-		values := make([]string, len(config.RoutingJobs))
-		var routingFields []forms.Field
-		for i, job := range config.RoutingJobs {
-			values[i] = routingPickerValue(cfg.Routing, job)
-			if !config.SuggestedModel(values[i]) {
-				values[i] = inheritRouting
-			}
-			options := append([]forms.Option{{Label: "Inherit global Codeforge / existing routing", Value: inheritRouting}, {Label: "Use native Empryo routing (reset)", Value: ""}}, providerModelOptions(catalog, cfg.Providers, values[i])...)
-			routingFields = append(routingFields, forms.Field{Key: job, Kind: forms.Select, Title: "Helper: " + job, Options: options, Value: values[i]})
-		}
-		routing, err := forms.Run(forms.Page("configure helper models", routingFields...))
-		if err != nil {
-			return err
-		}
-		for i, job := range config.RoutingJobs {
-			values[i] = routing.String(job)
-		}
-		applyRoutingChoices(cfg, config.RoutingJobs, values)
-	}
-	if err := config.Validate(*cfg); err != nil {
+	if err := chooseModels(cfg, catalog, contexts); err != nil {
 		return err
 	}
 	preview := *cfg

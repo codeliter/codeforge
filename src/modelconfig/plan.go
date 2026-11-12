@@ -68,7 +68,7 @@ func MaintenanceConfig(cfg config.Config) config.Config {
 		cfg.Review.Model = config.DefaultReviewModel
 	}
 	for job, ref := range cfg.Routing {
-		if !config.ValidModelID(ref) {
+		if ref != "" && !config.ValidModelID(ref) { // an empty entry opts the job out and stays
 			delete(cfg.Routing, job)
 		}
 	}

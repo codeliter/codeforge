@@ -190,7 +190,8 @@ func ValidModelReference(ref string) bool {
 	if ValidModelID(ref) {
 		return true
 	}
-	if ref == "" || strings.TrimSpace(ref) == "" || strings.Contains(ref, "/") {
+	// A name starting with a dash is a flag that strayed into a list of models, never a model.
+	if ref == "" || strings.TrimSpace(ref) == "" || strings.Contains(ref, "/") || strings.HasPrefix(ref, "-") {
 		return false
 	}
 	for _, c := range ref {

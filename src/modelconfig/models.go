@@ -129,6 +129,10 @@ func RunModels(ctx context.Context, home, bin string, args []string) error {
 			return fmt.Errorf("%w; roles: %s", errModelsUsage, config.RoleKeys())
 		}
 		key, models := rest[0], rest[1:]
+		// A flag is never a model: saved as one, it left a configuration no later command could resolve.
+		if flag := slices.IndexFunc(rest, func(a string) bool { return strings.HasPrefix(a, "-") }); flag >= 0 {
+			return fmt.Errorf("%w; it takes no flags (%s) and always writes the global configuration", errModelsUsage, rest[flag])
+		}
 		if err := config.Apply(&cfg, key, models); err != nil {
 			return err
 		}

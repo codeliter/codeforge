@@ -115,6 +115,19 @@ flowchart TD
   the newly created file; changed or unfamiliar files need approval before being injected as system context.
 - Persona history is input data, not instructions. The distillation prompt asks for evidence-based rules
   and excludes secrets and identifying examples. Inspect a learned persona before committing it.
+- A persona is learned one activity at a time: voice, commit messages, pull requests, review comments, replies to
+  reviewers and code style each get their own section, drafted from only the history that shows that activity (how
+  you review is in the reviews you gave, not in your diffs) and then checked against it. The history is your commit
+  messages and diffs and, on GitHub, up to 50 of your pull requests, your reviews on up to 100 others' and your replies
+  on your own, plus the corrections you accepted in Codeforge sessions, which stand as rules. Each repository gets the
+  same room. "Do and don't" and the opening are drawn from the sections.
+- Relearning (`codeforge init --global`) reads this repository and those the persona was learned from before. It shows
+  which sections changed and replaces only the ones you tick; sections of your own, such as personal notes, are never
+  deleted, and the persona it replaces is kept as `~/.codeforge/persona.previous.md`. Without a terminal there is nobody to
+  tick, so every changed section is taken; a section the history showed nothing for is never replaced either way. `codeforge persona` says how many
+  commits you have made since it was learned.
+- The reviewing profiles (`codeforge-review`, `codeforge-reviewer`, `codeforge-gate`) load `codeforge-persona-review`: the same
+  persona without its sections on commit messages, pull requests and replies to reviewers. Every other mode loads all of it.
 - `repair` (`reinit` is an alias) reinstalls managed assets without model calls or sign-in.
   It runs automatically once per released version, before any command, when `~/.codeforge/repaired-version`
   differs from the running version. Development builds and agent shells inside a session (`CODEFORGE_LAUNCH=1`) never trigger it.
@@ -312,7 +325,9 @@ Roles, explicit helper routing, environment model references and CLI model argum
 See the complete [example configuration](config.example.yaml). The `routing` map accepts the supported Empryo profile jobs:
 `research`, `editing`, `explore`, `web-search`, `cleanup`, `verify`, `review`, `goal-review`, `summaries`, and `marionette`.
 Project routing entries replace the corresponding global Codeforge routing entries; an empty string resets a job to native Empryo routing.
-The wizard distinguishes inheriting global routing (no entry) from explicitly resetting to native Empryo (an empty string).
+Jobs the configuration does not name are routed by Codeforge itself: `research`, `explore`, `web-search` and `summaries` to the first
+task-sizing model, `verify`, `review` and `goal-review` to the review model; `editing`, `cleanup` and `marionette` stay on the session's model.
+`codeforge models configure` does not ask about routing; name a job in `routing` to override it, or give it an empty string to opt out.
 Project saves record changed model roles rather than copying all global values, so future global changes still propagate.
 Existing explicit project pins and routing reset entries are preserved when other roles are edited.
 

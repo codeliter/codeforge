@@ -40,7 +40,9 @@ init: Sonnet 5.5
 # Explicit provider/model values are advanced overrides; they keep native fallback.
 # expert: copilot/claude-fable-5.2
 
-# Optional profile routing. Omitted project jobs inherit global Codeforge routing.
+# Optional profile routing. Codeforge routes the jobs you leave out by itself: research, explore, web-search and
+# summaries to the first judge; verify, review and goal-review to the review model. Name a job only to override that.
+# Omitted project jobs inherit global Codeforge routing.
 # In a project override, an empty string resets that job to native Empryo routing.
 # Route only work whose mistakes are cheap to spot (research, summaries, search) to smaller models; edits stay on
 # the coding model.

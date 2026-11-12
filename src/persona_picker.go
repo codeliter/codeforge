@@ -42,5 +42,9 @@ func pickStarter() (string, error) {
 		}
 		return "", fmt.Errorf("%w: --persona needs a name without a terminal. Available choices:\n%s", errInitUsage, descriptions.String())
 	}
-	return forms.Choose("Pick a starter persona", "Choose with the arrow keys, then press Enter.", starterOptions(choices), choices[0].Name)
+	options := make([]forms.Option, 0, len(choices))
+	for _, choice := range choices {
+		options = append(options, forms.Option{Label: choice.Name, Detail: choice.Description, Value: choice.Name, Group: "Starter personas"})
+	}
+	return forms.Pick("Pick a starter persona", "A starting point you can edit later in ~/.codeforge/persona.md.", "Persona\tHow it works", options, choices[0].Name)
 }

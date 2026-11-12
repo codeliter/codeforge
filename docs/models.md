@@ -76,7 +76,7 @@ Connected to more than one provider? Choose which one Codeforge uses first, and 
 codeforge provider configure
 ```
 
-It asks where to save (this project or all projects), then for the primary provider, then for backups one at a time in order. Pick **Done** when you have enough. Each provider shows which stand-in it would use for a model it doesn't have, so you know what you get before you choose. It shows the final order, saves it when you confirm, and offers to run `models apply` straight away.
+It asks where to save (this project or all projects), then shows every connected provider on one screen. Tick them with Enter in the order Empryo should try them: the ticks are numbered, 1 is the primary and the rest are backups. Press Ctrl+S when the order is right. Each provider shows which stand-in it would use for a model it doesn't have, so you know what you get before you choose. It shows the final order, saves it when you confirm, and offers to run `models apply` straight away.
 
 Prefer one line? This does the same without the menu:
 

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"slices"
@@ -133,7 +134,8 @@ func runSessions(ctx context.Context, home string, args []string, w io.Writer) (
 func pickSession(sessions []sessionInfo, now time.Time, all bool, wd string) (int, error) {
 	options := make([]forms.Option, len(sessions))
 	for i, s := range sessions {
-		options[i] = forms.Option{Label: sessionLabel(s, now, all), Value: strconv.Itoa(i)}
+		label, detail := splitDetails(sessionLabel(s, now, all), all)
+		options[i] = forms.Option{Label: label, Detail: detail, Value: strconv.Itoa(i), Group: sessionDay(s.Updated, now)}
 	}
 	where := "in " + filepath.Base(wd)
 	if all {
@@ -142,7 +144,7 @@ func pickSession(sessions []sessionInfo, now time.Time, all bool, wd string) (in
 	a, err := forms.Ask("sessions", forms.Field{
 		Kind: forms.Search, Title: "Open a session",
 		Description: fmt.Sprintf("%s %s, newest first. * ran headless (a review or a gate).", plural(len(sessions), "session"), where),
-		Header:      sessionHeader(all),
+		Header:      strings.Join(headerParts(all), "\t"),
 		Placeholder: "Type to search by title, mode, project, model, day or ID",
 		Options:     options, Value: "0",
 	})
@@ -157,6 +159,47 @@ func pickSession(sessions []sessionInfo, now time.Time, all bool, wd string) (in
 		return -1, fmt.Errorf("%w: the picker answered %q", errSessionPick, a.Value)
 	}
 	return i, nil
+}
+
+// splitDetails splits a session line into its columns and the details after them. The columns are a fixed width, so
+// the split is at that width, whatever the title holds.
+func splitDetails(line string, withProject bool) (columns, details string) {
+	width := whenWidth + 1 + modeWidth + 1 + titleWidth
+	if withProject {
+		width += projectWidth + 1
+	}
+	r := []rune(line)
+	if len(r) <= width {
+		return strings.TrimRight(line, " "), ""
+	}
+	return strings.TrimRight(string(r[:width]), " "), strings.TrimLeft(string(r[width:]), " ")
+}
+
+func headerParts(all bool) []string {
+	columns, details := splitDetails(sessionHeader(all), all)
+	return []string{columns, details}
+}
+
+// sessionDay heads the sessions last used on the same day: today, yesterday, earlier this week, or before that.
+func sessionDay(t, now time.Time) string {
+	const (
+		hoursPerDay = 24
+		daysPerWeek = 7
+	)
+	midnight := func(x time.Time) time.Time {
+		y, m, d := x.In(now.Location()).Date()
+		return time.Date(y, m, d, 0, 0, 0, 0, now.Location())
+	}
+	switch days := int(math.Round(midnight(now).Sub(midnight(t)).Hours() / hoursPerDay)); {
+	case days <= 0:
+		return "Today"
+	case days == 1:
+		return "Yesterday"
+	case days < daysPerWeek:
+		return "This week"
+	default:
+		return "Earlier"
+	}
 }
 
 // listAllSessions reads the sessions codeforge started in every project it has a record of, newest first. A session
