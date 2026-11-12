@@ -47,6 +47,32 @@ func TestInstallPersonaSkill(t *testing.T) {
 		"the clarity baseline comes before the persona, which builds on it")
 }
 
+func TestInstallPersonaSkill_ReviewersGetOnlyWhatReviewingNeeds(t *testing.T) {
+	home := t.TempDir()
+	review := filepath.Join(home, ".empryo", "skills", reviewPersonaSkill, "SKILL.md")
+	require.NoError(t, installPersonaSkill(home))
+	got, err := os.ReadFile(review)
+	require.NoError(t, err)
+	require.Contains(t, string(got), "No persona yet.", "the skill exists before there is a persona, so the profiles resolve")
+
+	_, err = savePersona(home, []byte("# Persona\n\nCareful.\n\n## Voice\nPlain.\n\n## Commit messages\nImperative.\n\n## Pull requests\nShort.\n\n## Review comments\nOne finding each.\n\n## Replies to reviewers\nOne line.\n\n## Code style\nEarly returns.\n\n## Do and don't\n- Do test.\n\n## Personal notes\nTickets look like ABC-1.\n"))
+	require.NoError(t, err)
+	got, err = os.ReadFile(review)
+	require.NoError(t, err)
+	text := string(got)
+	require.Contains(t, text, "name: "+reviewPersonaSkill)
+	require.Contains(t, text, clarityBaseline)
+	for _, kept := range []string{"Careful.", "## Voice", "## Review comments", "## Code style", "## Do and don't", "## Personal notes"} {
+		require.Contains(t, text, kept)
+	}
+	for _, dropped := range []string{"## Commit messages", "## Pull requests", "## Replies to reviewers", "Imperative."} {
+		require.NotContains(t, text, dropped)
+	}
+	full, err := os.ReadFile(filepath.Join(home, ".empryo", "skills", "codeforge-persona", "SKILL.md"))
+	require.NoError(t, err)
+	require.Contains(t, string(full), "## Commit messages", "the other modes still get all of it")
+}
+
 func TestInstallPersonaSkillHandlesEmptyPersona(t *testing.T) {
 	home := t.TempDir()
 	require.NoError(t, os.MkdirAll(config.Dir(home), privateDir))

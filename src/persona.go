@@ -2,37 +2,37 @@ package src
 
 import (
 	"bytes"
-	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path"
 	"path/filepath"
 	"slices"
 	"strings"
 
 	"github.com/codeliter/codeforge/src/config"
+	"github.com/codeliter/codeforge/src/fsutil"
 
 	"github.com/codeliter/codeforge/assets"
-	"github.com/codeliter/codeforge/src/review"
-	"github.com/codeliter/codeforge/src/text"
 )
 
 const (
-	maxCorpusBytes = 300_000
-	maxDiffBytes   = 120_000
-	maxStderrBytes = 300
-	personaHeader  = "---\nname: codeforge-persona\ndescription: The user's own voice, PR format and code style, set by `codeforge init`. Overrides codeforge-voice and codeforge-code where they differ, except for the clarity baseline.\n---\n\n" + clarityBaseline + "\n\n"
+	personaHeader = "---\nname: codeforge-persona\ndescription: The user's own voice, PR format and code style, set by `codeforge init`. Overrides codeforge-voice and codeforge-code where they differ, except for the clarity baseline.\n---\n\n" + clarityBaseline + "\n\n"
 	// clarityBaseline is the floor under every persona, learned, starter or per repository: the persona decides tone,
 	// format and wording, never whether a text is clear.
 	clarityBaseline = "Baseline for every text, whatever the persona says: clear, concise and free of ambiguity. " +
 		"One meaning per sentence, no filler, no hedging, and every ask stated as an ask. " +
 		"The persona below sets tone, format and wording on top of this; it never lowers it."
+	// reviewPersonaSkill is the persona skill of the profiles that only review.
+	reviewPersonaSkill  = "codeforge-persona-review"
+	reviewPersonaHeader = "---\nname: " + reviewPersonaSkill + "\ndescription: The user's persona for reviewing: voice, review comments and code style, set by `codeforge init`. Overrides codeforge-voice and codeforge-code where they differ, except for the clarity baseline.\n---\n\n" +
+		"This is `codeforge-persona` as a reviewer needs it. Wherever an instruction names `codeforge-persona`, it means this.\n\n" + clarityBaseline + "\n\n"
 	emptyPersona = personaHeader + "No persona yet. Follow codeforge-voice and codeforge-code, and suggest running `codeforge init`.\n"
 )
+
+// notForReview are the persona sections about work a reviewer never does.
+var notForReview = []string{"Commit messages", "Pull requests", "Replies to reviewers"}
 
 var (
 	errNoHistory      = errors.New("found none of your commits, PRs or reviews; pick a repository you have worked in, or a starter persona")
@@ -95,51 +95,8 @@ func starterPersona(name string) ([]byte, error) {
 	return data, nil
 }
 
-// learnPersona mines the user's own history in each repo and asks Empryo to distil it into a persona.
-func learnPersona(ctx context.Context, bin, model string, repos []string) ([]byte, error) {
-	var corpus bytes.Buffer
-	for _, repo := range repos {
-		fmt.Fprintf(os.Stderr, "codeforge: reading your history in %s\n", repo)
-		if err := collect(ctx, review.ExecRunner{}, repo, &corpus); err != nil {
-			return nil, fmt.Errorf("reading %s: %w", repo, err)
-		}
-	}
-	if corpus.Len() == 0 {
-		return nil, errNoHistory
-	}
-
-	fmt.Fprintln(os.Stderr, "codeforge: learning your style, this takes a minute or two")
-	return distil(ctx, bin, model, text.Cut(corpus.String(), maxCorpusBytes))
-}
-
-func distil(ctx context.Context, bin, model, corpus string) ([]byte, error) {
-	args := []string{"--headless", "--json", "--no-profile", "--no-genome", "--effort", "high", "--max-steps", "2"}
-	if model != "" {
-		args = append(args, "--model", model)
-	}
-	args = append(args, "--system", assets.InitPrompt, "<history>\n"+corpus+"\n</history>")
-
-	var stderr bytes.Buffer
-	cmd := exec.CommandContext(ctx, bin, args...)
-	cmd.Stderr = &stderr
-	out, err := cmd.Output()
-	if err != nil {
-		return nil, fmt.Errorf("running empryo: %w: %s", err, text.Cut(stderr.String(), maxStderrBytes))
-	}
-
-	var res struct {
-		Output string `json:"output"`
-		Error  string `json:"error"`
-	}
-	if err := json.Unmarshal(out, &res); err != nil {
-		return nil, fmt.Errorf("decoding empryo result: %w", err)
-	}
-	if res.Error != "" || strings.TrimSpace(res.Output) == "" {
-		return nil, fmt.Errorf("%w: %s", errEmptyPersona, res.Error)
-	}
-	return []byte(strings.TrimSpace(res.Output) + "\n"), nil
-}
-
+// savePersona writes the global persona, keeping the one it replaces beside it. Readers see the old persona or the new
+// one, never a part of either.
 func savePersona(home string, persona []byte) (string, error) {
 	if strings.TrimSpace(string(persona)) == "" {
 		return "", errEmptyPersona
@@ -149,7 +106,24 @@ func savePersona(home string, persona []byte) (string, error) {
 	}
 
 	p := filepath.Join(config.Dir(home), "persona.md")
-	if err := os.WriteFile(p, persona, privateFile); err != nil {
+	old, err := os.ReadFile(p)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return "", fmt.Errorf("reading the persona to keep a copy of it: %w", err)
+	}
+	if strings.TrimSpace(string(old)) != "" && !bytes.Equal(old, persona) {
+		if err := fsutil.AtomicWriteFile(filepath.Join(config.Dir(home), previousPersonaFile), old, privateFile); err != nil {
+			return "", fmt.Errorf("keeping the previous persona: %w", err)
+		}
+		// Where that persona came from is kept with it, so a revert puts both back.
+		source, err := os.ReadFile(filepath.Join(config.Dir(home), personaSourceFile))
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return "", fmt.Errorf("reading the persona's source to keep a copy of it: %w", err)
+		}
+		if err := fsutil.AtomicWriteFile(filepath.Join(config.Dir(home), previousSourceFile), source, privateFile); err != nil {
+			return "", fmt.Errorf("keeping the previous persona's source: %w", err)
+		}
+	}
+	if err := fsutil.AtomicWriteFile(p, persona, privateFile); err != nil {
 		return "", fmt.Errorf("writing persona: %w", err)
 	}
 	return p, installPersonaSkill(home)
@@ -168,54 +142,22 @@ func installPersonaSkill(home string) error {
 		return fmt.Errorf("reading persona: %w", err)
 	}
 
-	return writeFile(filepath.Join(home, ".empryo"), "skills/codeforge-persona/SKILL.md", []byte(body), privateFile)
+	if err := writeFile(filepath.Join(home, ".empryo"), "skills/codeforge-persona/SKILL.md", []byte(body), privateFile); err != nil {
+		return err
+	}
+	review := reviewPersonaHeader + "No persona yet. Follow codeforge-voice and codeforge-code.\n"
+	if body != emptyPersona {
+		review = reviewPersonaHeader + reviewPersona(string(data))
+	}
+	return writeFile(filepath.Join(home, ".empryo"), "skills/"+reviewPersonaSkill+"/SKILL.md", []byte(review), privateFile)
 }
 
-func collect(ctx context.Context, r review.Runner, repo string, w *bytes.Buffer) error {
-	git := func(args ...string) string {
-		out, err := r.Run(ctx, "git", append([]string{"-C", repo}, args...)...)
-		if err != nil {
-			return ""
-		}
-		return strings.TrimSpace(string(out))
-	}
-	gh := func(args ...string) string {
-		out, err := r.Run(ctx, "gh", args...)
-		if err != nil {
-			return ""
-		}
-		return strings.TrimSpace(string(out))
-	}
-
-	email := git("config", "user.email")
-	if email == "" {
-		return errNoEmail
-	}
-
-	name := filepath.Base(git("rev-parse", "--show-toplevel"))
-	slug := repoSlug(git("remote", "get-url", "origin"))
-
-	section := func(title, body string) {
-		if body != "" {
-			fmt.Fprintf(w, "\n## %s: %s\n%s\n", name, title, body)
-		}
-	}
-
-	section("commit subjects", git("log", "--author="+email, "--no-merges", "-n", "300", "--pretty=%s"))
-	section("code you wrote (recent diffs)", text.Cut(git("log", "--author="+email, "--no-merges", "-n", "25", "-p", "--unified=2", "--pretty=### %s"), maxDiffBytes))
-	if slug == "" {
-		return nil
-	}
-
-	section("your pull requests", gh("pr", "list", "--repo", slug, "--author", "@me", "--state", "all", "--limit", "30", "--json", "title,body"))
-
-	me := gh("api", "user", "--jq", ".login")
-	nums := gh("api", "-X", "GET", "search/issues", "-f", "q=is:pr reviewed-by:@me repo:"+slug, "-f", "per_page=10", "--jq", ".items[].number")
-	for _, n := range strings.Fields(nums) {
-		section("your review comments on PR "+n, gh("api", "repos/"+slug+"/pulls/"+n+"/comments",
-			"--jq", `.[] | select(.user.login=="`+me+`") | "- " + .body`))
-	}
-	return nil
+// reviewPersona is the persona as the reviewing profiles load it: without the sections on work a reviewer never does,
+// so the rules on reviewing are not diluted by rules on commits and pull requests. The opening and the sections the
+// user added themselves stay.
+func reviewPersona(doc string) string {
+	sections := slices.DeleteFunc(splitPersona(doc), func(s personaSection) bool { return slices.Contains(notForReview, s.title) })
+	return joinPersona(sections)
 }
 
 // repoSlug turns an origin URL into owner/name, or "" when the remote is not on GitHub.

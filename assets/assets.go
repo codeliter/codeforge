@@ -13,6 +13,16 @@ var Personas embed.FS
 //go:embed prompts/init.md
 var InitPrompt string
 
+// PersonaCheckPrompt has a drafted persona checked against the history it was drafted from.
+//
+//go:embed prompts/persona-check.md
+var PersonaCheckPrompt string
+
+// PersonaSummaryPrompt draws a persona's opening and its short rules from its learned sections.
+//
+//go:embed prompts/persona-summary.md
+var PersonaSummaryPrompt string
+
 //go:embed prompts/review-rubric.md
 var ReviewRubric string
 

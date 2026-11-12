@@ -78,6 +78,9 @@ func doctorItems(ctx context.Context, home string) []doctorItem {
 		}
 	}
 	items = append(items, doctorModels(home, root))
+	if note := personaStale(ctx, home, time.Now()); note != "" {
+		items = append(items, doctorItem{check: check{name: "global persona", note: note}, warn: true, fix: "codeforge persona update"})
+	}
 	return append(items, doctorRepo(home, root)...)
 }
 

@@ -3,7 +3,7 @@ name: codeforge-gate
 description: One reviewer in the codeforge review gate, alone for simple changes or as a juror for complicated ones. Reviews a prepared brief and returns a structured verdict. Read-only, no helpers.
 forgeMode: plan
 effort: medium
-skills: [codeforge-persona]
+skills: [codeforge-persona-review]
 disallowedTools: [dispatch, background_dispatch, council, advisor, orchestrate, explore, plan, edit_file, multi_edit, ast_edit, structural_edit, refactor, undo_edit, agent_create, agent_send]
 ---
 

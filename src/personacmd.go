@@ -13,13 +13,15 @@ import (
 	"time"
 
 	"github.com/codeliter/codeforge/src/config"
+	"github.com/codeliter/codeforge/src/fsutil"
+	"github.com/codeliter/codeforge/src/review"
 )
 
 // `codeforge persona describe` shows the personas codeforge writes as: the global one with where it came from (a
 // built-in starter, or learned from the user's history in some repositories), and this repository's own, which
 // overrides it where they differ. It only reads.
 
-var errPersonaUsage = errors.New("usage: codeforge persona [describe] [--full]")
+var errPersonaUsage = errors.New("usage: codeforge persona [describe] [--full] | update [--section NAME]... [REPO...] | revert")
 
 // personaSourceFile records where the global persona came from, beside it.
 const personaSourceFile = "persona.source.json"
@@ -27,10 +29,12 @@ const personaSourceFile = "persona.source.json"
 // personaSource is where the global persona came from.
 type personaSource struct {
 	// Kind is "starter" or "learned".
-	Kind    string    `json:"kind"`
-	Starter string    `json:"starter,omitempty"`
-	Repos   []string  `json:"repos,omitempty"`
-	At      time.Time `json:"at"`
+	Kind    string   `json:"kind"`
+	Starter string   `json:"starter,omitempty"`
+	Repos   []string `json:"repos,omitempty"`
+	// Model is the model that learned it.
+	Model string    `json:"model,omitempty"`
+	At    time.Time `json:"at"`
 }
 
 // The kinds of persona source.
@@ -39,14 +43,16 @@ const (
 	sourceKindLearned = "learned"
 )
 
-// savePersonaSource records where the global persona just saved came from.
+// savePersonaSource records where the global persona just saved came from, as of now unless s says when.
 func savePersonaSource(home string, s personaSource) error {
-	s.At = time.Now().UTC()
+	if s.At.IsZero() {
+		s.At = time.Now().UTC()
+	}
 	data, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {
 		return fmt.Errorf("recording the persona's source: %w", err)
 	}
-	if err := os.WriteFile(filepath.Join(config.Dir(home), personaSourceFile), append(data, '\n'), privateFile); err != nil {
+	if err := fsutil.AtomicWriteFile(filepath.Join(config.Dir(home), personaSourceFile), append(data, '\n'), privateFile); err != nil {
 		return fmt.Errorf("recording the persona's source: %w", err)
 	}
 	return nil
@@ -84,6 +90,12 @@ func (s personaSource) describe(known bool) string {
 
 // runPersona prints the personas in effect here and where each came from.
 func runPersona(ctx context.Context, home string, args []string, w io.Writer) error {
+	if len(args) > 0 && args[0] == "revert" {
+		if len(args) > 1 {
+			return errPersonaUsage
+		}
+		return revertPersona(ctx, home, w)
+	}
 	full := false
 	for _, a := range args {
 		switch a {
@@ -112,6 +124,9 @@ func runPersona(ctx context.Context, home string, args []string, w io.Writer) er
 		fmt.Fprintf(w, "Global persona: %s\nSource: %s\n", global, src.describe(known))
 		if known && !src.At.IsZero() {
 			fmt.Fprintf(w, "Set: %s\n", src.At.UTC().Format("2 Jan 2006 15:04 UTC"))
+			if n := commitsSince(ctx, src); n > 0 {
+				fmt.Fprintf(w, "Since then: %s by you where it was learned. Refresh it with codeforge persona update.\n", plural(n, "new commit"))
+			}
 		}
 		fmt.Fprintf(w, "\n%s\n", show(strings.TrimSpace(string(data))))
 	}
@@ -139,6 +154,30 @@ func runPersona(ctx context.Context, home string, args []string, w io.Writer) er
 	}
 	fmt.Fprintf(w, "\nRepository persona: %s\nSource: this repository (%s)\n\n%s\n", p, state, show(repo))
 	return nil
+}
+
+// commitsSince counts the commits the user has made, since a persona was learned, in the repositories it was learned
+// from: how much the persona has not seen. A repository that cannot be read counts for nothing.
+func commitsSince(ctx context.Context, src personaSource) int {
+	if src.Kind != sourceKindLearned {
+		return 0
+	}
+	n := 0
+	for _, repo := range src.Repos {
+		git := func(args ...string) string {
+			out, err := review.ExecRunner{}.Run(ctx, "git", append([]string{"-C", repo}, args...)...)
+			if err != nil {
+				return ""
+			}
+			return strings.TrimSpace(string(out))
+		}
+		email := git("config", "user.email")
+		if email == "" {
+			continue
+		}
+		n += len(strings.Fields(git("log", "--author="+email, "--no-merges", "--since="+src.At.Format(time.RFC3339), "--pretty=%h")))
+	}
+	return n
 }
 
 // maxSummaryWords bounds the opening a summary quotes.

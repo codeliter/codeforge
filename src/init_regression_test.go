@@ -118,7 +118,7 @@ func TestInitExplicitGlobalScope(t *testing.T) {
 func TestDistilAllowsTheFinalResponseToFinish(t *testing.T) {
 	engine := filepath.Join(t.TempDir(), "empryo")
 	require.NoError(t, os.WriteFile(engine, []byte(personaEngine), execPerm))
-	data, err := distil(t.Context(), engine, "fixture/model", "commit history")
+	data, err := distil(t.Context(), engine, "fixture/model", "instructions", "commit history")
 	require.NoError(t, err)
 	require.Contains(t, string(data), "# Persona")
 }

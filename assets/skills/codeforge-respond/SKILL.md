@@ -29,7 +29,7 @@ Write the verdict table first (thread, verdict, one-line evidence), then act. Ne
 Use `codeforge-code`. One commit per logical fix, in the user's commit style. Run build, lint and tests. Then run `codeforge gate` so the fixes are reviewed before they leave.
 
 ## 4. Reply in the user's voice
-Follow the review-reply section of `codeforge-persona`; where it is silent, use `codeforge-voice`. Keep replies short and specific:
+Follow the "Replies to reviewers" section of `codeforge-persona` (in an older persona, the replies part of "Review comments"); where it is silent, use `codeforge-voice`. Keep replies short and specific:
 - Fixed: `Fixed in <sha>: <what changed>.`
 - Pushing back: one or two sentences with the evidence and, if useful, `path:line`.
 - Question: the answer, plainly.

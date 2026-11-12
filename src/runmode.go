@@ -57,11 +57,14 @@ func runMode(ctx context.Context, p prepared, args []string) error {
 	switch cmd {
 	case "init":
 		return runInit(ctx, p.home, bin, cfg, rest)
+	case "persona":
+		return runPersonaUpdate(ctx, p.home, bin, cfg, rest[1:])
 	case "gate":
 		return runGate(ctx, p.home, bin, cfg, os.Stdout)
 	case "respond":
 		return respondLaunch(ctx, p.home, bin, cfg, rest)
 	case modeTicket, "start", modeChat, modeWork, modeReview:
+		staleNotice(ctx, p.home, os.Stderr)
 	default:
 		cmd, rest = "", args
 	}
@@ -202,7 +205,7 @@ func isModeWord(args []string) bool {
 		return false
 	}
 	switch args[0] {
-	case "init", "gate", "respond", modeTicket, "start", modeChat, modeWork, modeReview:
+	case "init", "gate", "respond", "persona", modeTicket, "start", modeChat, modeWork, modeReview:
 		return true
 	}
 	return false

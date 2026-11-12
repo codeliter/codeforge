@@ -77,23 +77,41 @@ func runInit(ctx context.Context, home, bin string, cfg config.Config, args []st
 		return initRepo(ctx, home, bin, cfg.Init, ans)
 	}
 
-	persona, err := buildPersona(ctx, bin, cfg.Init, ans)
+	if ans.source == sourceLearn {
+		ans.repos = strings.Join(learnFrom(home, config.SplitList(ans.repos)), ",")
+	}
+	before, err := personaSnapshot(home)
+	if err != nil {
+		return err
+	}
+	persona, err := buildPersona(ctx, home, bin, cfg.Init, ans)
 	if err != nil {
 		return err
 	}
 	if ans.notes != "" {
 		persona = append(persona, []byte("\n## Personal notes\n"+ans.notes+"\n")...)
 	}
-
-	p, err := savePersona(home, persona)
+	fitted, err := reconcilePersona(home, before, persona)
 	if err != nil {
 		return err
 	}
-	src := personaSource{Kind: sourceKindLearned, Repos: config.SplitList(ans.repos)}
-	if ans.source == sourceStarter {
-		src = personaSource{Kind: sourceKindStarter, Starter: ans.starter}
+	if fitted.keep {
+		fmt.Fprintln(os.Stderr, "codeforge: your persona is unchanged.")
+		return nil
 	}
-	if err := savePersonaSource(home, src); err != nil {
+
+	p, err := commitPersona(ctx, home, fitted, func() error {
+		if ans.source == sourceStarter {
+			// Sections learned earlier that the starter did not replace still come from where they were learned, so
+			// that record stands and a later update revisits those repositories.
+			if old, known := globalPersonaSource(home, nil); known && old.Kind == sourceKindLearned && !fitted.fresh {
+				return nil
+			}
+			return savePersonaSource(home, personaSource{Kind: sourceKindStarter, Starter: ans.starter})
+		}
+		return recordLearned(home, absolutePaths(config.SplitList(ans.repos)), cfg.Init, fitted.fresh)
+	})
+	if err != nil {
 		return err
 	}
 
@@ -121,7 +139,7 @@ func initRepo(ctx context.Context, home, bin, model string, ans initAnswers) err
 	if ans.source == sourceBlank {
 		persona, err = repoPersonaSeed("")
 	} else {
-		persona, err = buildPersona(ctx, bin, model, ans)
+		persona, err = buildPersona(ctx, home, bin, model, ans)
 	}
 	if err != nil {
 		return err
@@ -215,9 +233,9 @@ func askInit() (initAnswers, error) {
 	return ans, nil
 }
 
-func buildPersona(ctx context.Context, bin, model string, ans initAnswers) ([]byte, error) {
+func buildPersona(ctx context.Context, home, bin, model string, ans initAnswers) ([]byte, error) {
 	if ans.source == sourceStarter {
 		return starterPersona(ans.starter)
 	}
-	return learnPersona(ctx, bin, model, config.SplitList(ans.repos))
+	return learnPersona(ctx, home, bin, model, config.SplitList(ans.repos))
 }

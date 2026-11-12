@@ -4,7 +4,7 @@ description: Independent read-only reviewer for an existing work or chat convers
 model: {{reviewer}}
 forgeMode: plan
 effort: high
-skills: [codeforge-persona, codeforge-code, codeforge-review]
+skills: [codeforge-persona-review, codeforge-code, codeforge-review]
 tools: [read, grep, find, navigate, final_response]
 ---
 

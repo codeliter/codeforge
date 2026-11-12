@@ -102,8 +102,9 @@ func Run(ctx context.Context, args []string) error {
 		return noSuchCommand(args)
 	}
 
-	// persona only reads, like doctor below, so it runs before anything is repaired or prepared.
-	if first(args) == "persona" {
+	// persona only reads or swaps two files, like doctor below, so it runs before anything is repaired or prepared.
+	// Only its update needs Empryo: that goes on to runMode, as init does.
+	if first(args) == "persona" && (len(args) < 2 || args[1] != "update") {
 		return runPersona(ctx, home, args[1:], os.Stdout)
 	}
 
