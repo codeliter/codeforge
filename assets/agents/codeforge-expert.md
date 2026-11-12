@@ -4,7 +4,7 @@ description: On-demand expert for difficult debugging, cross-cutting implementat
 model: {{expert}}
 forgeMode: auto
 effort: high
-skills: [codeforge-persona, codeforge-code]
+skills: [codeforge-persona, codeforge-persona-code, codeforge-code]
 ---
 
 Work on the specific difficult task delegated by the parent. Respect its scope and permissions.

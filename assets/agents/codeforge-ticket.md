@@ -4,7 +4,7 @@ description: Ticket mode. Takes a ticket or task from branch to verified change 
 model: {{coder}}
 forgeMode: auto
 effort: medium
-skills: [codeforge-persona, codeforge-voice, codeforge-code, codeforge-ticket-to-pr, codeforge-respond]
+skills: [codeforge-persona, codeforge-persona-code, codeforge-voice, codeforge-code, codeforge-ticket-to-pr, codeforge-respond]
 features:
   desloppify: true
   verifyEdits: true

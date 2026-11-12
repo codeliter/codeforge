@@ -4,7 +4,7 @@ description: Work mode. Conversational help that owns implementation through ver
 model: {{coder}}
 forgeMode: auto
 effort: medium
-skills: [codeforge-persona, codeforge-voice, codeforge-code, codeforge-review-handoff]
+skills: [codeforge-persona, codeforge-persona-code, codeforge-voice, codeforge-code, codeforge-review-handoff]
 features:
   verifyEdits: true
 ---

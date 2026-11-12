@@ -133,8 +133,13 @@ flowchart TD
   trust-gated as before and wins over your own where they differ; both win over the global persona.
 - A `.codeforge/persona.md` already in a repository, from an earlier Codeforge or a teammate, keeps working unchanged as the shared
   persona. `codeforge persona list` shows the private ones kept under `~/.codeforge/repos/` and `codeforge persona forget` removes one.
-- The reviewing profiles (`codeforge-review`, `codeforge-reviewer`, `codeforge-gate`) load `codeforge-persona-review`: the same
-  persona without its sections on commit messages, pull requests and replies to reviewers. Every other mode loads all of it.
+- The global persona is one file a section under `~/.codeforge/persona/` (`about.md`, `voice.md`, `code-style.md`, …); a file you
+  add is a section of your own. A single `~/.codeforge/persona.md` from an earlier version is read as it is and becomes the
+  directory the next time it is saved.
+- It is installed as several skills, so a session carries only what its work needs. `codeforge-persona` (the opening, voice,
+  rules and your own sections) is always loaded and lists the rest: `codeforge-persona-code`, `-commits`, `-prs`, `-reviewing`
+  and `-replies`, each loaded before the work it covers. Work, ticket and expert profiles preload the code part; the reviewing
+  profiles preload the code and reviewing parts, since they cannot load skills themselves.
 - `repair` (`reinit` is an alias) reinstalls managed assets without model calls or sign-in.
   It runs automatically once per released version, before any command, when `~/.codeforge/repaired-version`
   differs from the running version. Development builds and agent shells inside a session (`CODEFORGE_LAUNCH=1`) never trigger it.

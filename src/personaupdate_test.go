@@ -27,16 +27,16 @@ func TestRevertPersona_SwapsWithTheEarlierOne(t *testing.T) {
 	var out strings.Builder
 	require.ErrorIs(t, revertPersona(t.Context(), home, &out), errNoPrevious)
 
-	p, err := savePersona(home, []byte("# First\n"))
+	_, err := savePersona(home, []byte("# First\n"))
 	require.NoError(t, err)
 	_, err = savePersona(home, []byte("# Second\n"))
 	require.NoError(t, err)
 	require.NoError(t, runPersona(t.Context(), home, []string{"revert"}, &out))
-	data, err := os.ReadFile(p)
+	data, err := readPersona(home)
 	require.NoError(t, err)
 	require.Equal(t, "# First\n", string(data))
 	require.NoError(t, revertPersona(t.Context(), home, &out), "a second revert undoes the first")
-	data, err = os.ReadFile(p)
+	data, err = readPersona(home)
 	require.NoError(t, err)
 	require.Equal(t, "# Second\n", string(data))
 	require.ErrorIs(t, runPersona(t.Context(), home, []string{"revert", "x"}, &out), errPersonaUsage)
@@ -164,7 +164,6 @@ func TestSplitPersona_AHeadingInsideAFenceIsNotASection(t *testing.T) {
 	merged := mergePersona(doc, "## Voice\nBlunt.\n", func(string) bool { return true })
 	require.Contains(t, merged, "Blunt.")
 	require.Contains(t, merged, "```markdown\n## Voice\nNot a section.\n```", "the user's example is left whole")
-	require.Contains(t, reviewPersona(doc), "Not a section.")
 }
 
 func TestSplitPersona_FencesCloseOnlyOnAFenceAsLongAndOfTheSameKind(t *testing.T) {
@@ -187,15 +186,15 @@ func TestSplitPersona_FencesCloseOnlyOnAFenceAsLongAndOfTheSameKind(t *testing.T
 
 func TestCommitPersona_AFailedRecordPutsEverythingBack(t *testing.T) {
 	home := t.TempDir()
-	p, err := savePersona(home, []byte("# First\n"))
+	_, err := savePersona(home, []byte("# First\n"))
 	require.NoError(t, err)
 	require.NoError(t, savePersonaSource(home, personaSource{Kind: sourceKindStarter, Starter: "oss"}))
-	base, err := os.ReadFile(p)
+	base, err := readPersona(home)
 	require.NoError(t, err)
 
 	_, err = commitPersona(t.Context(), home, reconciled{persona: []byte("# Second\n"), base: base}, func() error { return os.ErrPermission })
 	require.ErrorIs(t, err, os.ErrPermission)
-	now, err := os.ReadFile(p)
+	now, err := readPersona(home)
 	require.NoError(t, err)
 	require.Equal(t, "# First\n", string(now), "the persona is not left beside another's source")
 	src, known := globalPersonaSource(home, nil)

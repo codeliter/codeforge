@@ -4,7 +4,7 @@ description: Review mode. Reviews a PR or your local work like a senior colleagu
 model: {{reviewer}}
 forgeMode: plan
 effort: high
-skills: [codeforge-persona-review, codeforge-voice, codeforge-code, codeforge-review]
+skills: [codeforge-persona, codeforge-persona-reviewing, codeforge-persona-code, codeforge-voice, codeforge-code, codeforge-review]
 disallowedTools: [edit_file, multi_edit, ast_edit, structural_edit, refactor]
 ---
 

@@ -54,8 +54,9 @@ func TestPersonaPickerWithoutTerminalListsChoicesAndWritesNothing(t *testing.T) 
 	for _, choice := range starters() {
 		require.Contains(t, err.Error(), choice.Name+": "+choice.Description)
 	}
-	_, err = os.Stat(filepath.Join(home, ".codeforge", "persona.md"))
-	require.True(t, os.IsNotExist(err))
+	saved, err := readPersona(home)
+	require.NoError(t, err)
+	require.Nil(t, saved)
 	_, err = os.Stat(filepath.Join(repo, repoPersonaPath))
 	require.True(t, os.IsNotExist(err))
 }

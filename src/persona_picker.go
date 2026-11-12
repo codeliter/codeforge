@@ -46,5 +46,5 @@ func pickStarter() (string, error) {
 	for _, choice := range choices {
 		options = append(options, forms.Option{Label: choice.Name, Detail: choice.Description, Value: choice.Name, Group: "Starter personas"})
 	}
-	return forms.Pick("Pick a starter persona", "A starting point you can edit later in ~/.codeforge/persona.md.", "Persona\tHow it works", options, choices[0].Name)
+	return forms.Pick("Pick a starter persona", "A starting point you can edit later in ~/.codeforge/persona/.", "Persona\tHow it works", options, choices[0].Name)
 }

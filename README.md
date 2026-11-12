@@ -41,7 +41,7 @@ Codeforge checks what it needs, helps you sign in, and offers to install Empryo 
 you work in this project and keeps it under `~/.codeforge/repos/`, outside the repository, so there is nothing to check in. Run `codeforge persona share` to put it in the repository as `.codeforge/persona.md` for your team; a shared persona wins over your own.
 
 No history yet? `codeforge init --persona` lets you start from **oss**, **pragmatic**, **regulated** or **startup**.
-For rules that apply to every project, use `codeforge init --global` (`~/.codeforge/persona.md`).
+For rules that apply to every project, use `codeforge init --global` (`~/.codeforge/persona/`, one file a section).
 
 ## Use it
 

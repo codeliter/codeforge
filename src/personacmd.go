@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -127,10 +126,10 @@ func runPersona(ctx context.Context, home string, args []string, w io.Writer) er
 		}
 		return personaSummary(text) + "\n(codeforge persona describe --full shows all of it)"
 	}
-	global := filepath.Join(config.Dir(home), "persona.md")
-	data, err := os.ReadFile(global)
+	global := personaPath(home)
+	data, err := readPersona(home)
 	switch {
-	case errors.Is(err, fs.ErrNotExist):
+	case err == nil && data == nil:
 		fmt.Fprintln(w, "Global persona: none. Set one with codeforge init --global.")
 	case err != nil:
 		return fmt.Errorf("reading the global persona: %w", err)

@@ -58,15 +58,15 @@ func runInit(ctx context.Context, home, bin string, cfg config.Config, args []st
 		}
 	}
 	if ans.scope == scopeGlobal {
-		_, statErr := os.Stat(filepath.Join(config.Dir(home), "persona.md"))
-		if statErr != nil && !errors.Is(statErr, fs.ErrNotExist) {
-			return fmt.Errorf("checking persona: %w", statErr)
+		existing, err := readPersona(home)
+		if err != nil {
+			return fmt.Errorf("checking persona: %w", err)
 		}
-		if len(args) == 0 && statErr == nil {
+		if len(args) == 0 && existing != nil {
 			fmt.Fprintln(os.Stderr, "codeforge: outside a Git repository; keeping your global persona. Use `codeforge init --global` to replace it.")
 			return nil
 		}
-		if len(args) == 0 && interactive() && statErr != nil {
+		if len(args) == 0 && interactive() && existing == nil {
 			if ans, err = askInit(); err != nil {
 				return err
 			}

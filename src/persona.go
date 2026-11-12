@@ -24,15 +24,8 @@ const (
 	clarityBaseline = "Baseline for every text, whatever the persona says: clear, concise and free of ambiguity. " +
 		"One meaning per sentence, no filler, no hedging, and every ask stated as an ask. " +
 		"The persona below sets tone, format and wording on top of this; it never lowers it."
-	// reviewPersonaSkill is the persona skill of the profiles that only review.
-	reviewPersonaSkill  = "codeforge-persona-review"
-	reviewPersonaHeader = "---\nname: " + reviewPersonaSkill + "\ndescription: The user's persona for reviewing: voice, review comments and code style, set by `codeforge init`. Overrides codeforge-voice and codeforge-code where they differ, except for the clarity baseline.\n---\n\n" +
-		"This is `codeforge-persona` as a reviewer needs it. Wherever an instruction names `codeforge-persona`, it means this.\n\n" + clarityBaseline + "\n\n"
 	emptyPersona = personaHeader + "No persona yet. Follow codeforge-voice and codeforge-code, and suggest running `codeforge init`.\n"
 )
-
-// notForReview are the persona sections about work a reviewer never does.
-var notForReview = []string{"Commit messages", "Pull requests", "Replies to reviewers"}
 
 var (
 	errNoHistory      = errors.New("found none of your commits, PRs or reviews; pick a repository you have worked in, or a starter persona")
@@ -95,8 +88,8 @@ func starterPersona(name string) ([]byte, error) {
 	return data, nil
 }
 
-// savePersona writes the global persona, keeping the one it replaces beside it. Readers see the old persona or the new
-// one, never a part of either.
+// savePersona writes the global persona, keeping the one it replaces, as one document, beside it. Readers see the old
+// persona or the new one, never a part of either. It returns where the persona is kept.
 func savePersona(home string, persona []byte) (string, error) {
 	if strings.TrimSpace(string(persona)) == "" {
 		return "", errEmptyPersona
@@ -104,10 +97,8 @@ func savePersona(home string, persona []byte) (string, error) {
 	if err := os.MkdirAll(config.Dir(home), privateDir); err != nil {
 		return "", fmt.Errorf("creating config dir: %w", err)
 	}
-
-	p := filepath.Join(config.Dir(home), "persona.md")
-	old, err := os.ReadFile(p)
-	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+	old, err := readPersona(home)
+	if err != nil {
 		return "", fmt.Errorf("reading the persona to keep a copy of it: %w", err)
 	}
 	if strings.TrimSpace(string(old)) != "" && !bytes.Equal(old, persona) {
@@ -123,41 +114,10 @@ func savePersona(home string, persona []byte) (string, error) {
 			return "", fmt.Errorf("keeping the previous persona's source: %w", err)
 		}
 	}
-	if err := fsutil.AtomicWriteFile(p, persona, privateFile); err != nil {
-		return "", fmt.Errorf("writing persona: %w", err)
+	if err := writePersona(home, persona); err != nil {
+		return "", err
 	}
-	return p, installPersonaSkill(home)
-}
-
-// installPersonaSkill installs the persona, or a placeholder so the profile's skill list always resolves.
-func installPersonaSkill(home string) error {
-	body := emptyPersona
-	data, err := os.ReadFile(filepath.Join(config.Dir(home), "persona.md"))
-	switch {
-	case err == nil:
-		if strings.TrimSpace(string(data)) != "" {
-			body = personaHeader + string(data)
-		}
-	case !errors.Is(err, fs.ErrNotExist):
-		return fmt.Errorf("reading persona: %w", err)
-	}
-
-	if err := writeFile(filepath.Join(home, ".empryo"), "skills/codeforge-persona/SKILL.md", []byte(body), privateFile); err != nil {
-		return err
-	}
-	review := reviewPersonaHeader + "No persona yet. Follow codeforge-voice and codeforge-code.\n"
-	if body != emptyPersona {
-		review = reviewPersonaHeader + reviewPersona(string(data))
-	}
-	return writeFile(filepath.Join(home, ".empryo"), "skills/"+reviewPersonaSkill+"/SKILL.md", []byte(review), privateFile)
-}
-
-// reviewPersona is the persona as the reviewing profiles load it: without the sections on work a reviewer never does,
-// so the rules on reviewing are not diluted by rules on commits and pull requests. The opening and the sections the
-// user added themselves stay.
-func reviewPersona(doc string) string {
-	sections := slices.DeleteFunc(splitPersona(doc), func(s personaSection) bool { return slices.Contains(notForReview, s.title) })
-	return joinPersona(sections)
+	return personaDir(home), installPersonaSkill(home)
 }
 
 // repoSlug turns an origin URL into owner/name, or "" when the remote is not on GitHub.

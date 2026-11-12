@@ -13,7 +13,7 @@ import (
 
 func TestRepairRestoresManagedFilesWithoutChangingUserData(t *testing.T) {
 	home, wd, bins := t.TempDir(), t.TempDir(), t.TempDir()
-	global, err := savePersona(home, []byte("# My global persona\nKeep this.\n"))
+	_, err := savePersona(home, []byte("# My global persona\nKeep this.\n"))
 	require.NoError(t, err)
 	local := writeRepoPersona(t, wd, "# My local persona\nKeep this too.\n")
 	brokenConfig := filepath.Join(wd, ".codeforge", "config.yaml")
@@ -47,7 +47,7 @@ func TestRepairRestoresManagedFilesWithoutChangingUserData(t *testing.T) {
 			require.NoFileExists(t, shimPath, "the gh shim is removed")
 		})
 	}
-	data, err := os.ReadFile(global)
+	data, err := readPersona(home)
 	require.NoError(t, err)
 	require.Contains(t, string(data), "Keep this.")
 	data, err = os.ReadFile(local)

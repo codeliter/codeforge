@@ -226,7 +226,7 @@ func TestReconcilePersona_WithNobodyToAskEveryChangeIsTakenAndNotesAreKept(t *te
 	require.True(t, first.fresh)
 	require.Equal(t, "# Persona\n\n## Voice\nPlain.\n", string(first.persona), "with nothing saved the new persona is used as it is")
 
-	p, err := savePersona(home, []byte("# Persona\n\n## Voice\nPlain.\n\n## Code style\nEarly returns.\n\n## Personal notes\nMine.\n"))
+	_, err = savePersona(home, []byte("# Persona\n\n## Voice\nPlain.\n\n## Code style\nEarly returns.\n\n## Personal notes\nMine.\n"))
 	require.NoError(t, err)
 	saved, err := personaSnapshot(home)
 	require.NoError(t, err)
@@ -248,13 +248,13 @@ func TestReconcilePersona_WithNobodyToAskEveryChangeIsTakenAndNotesAreKept(t *te
 	previous, err := os.ReadFile(filepath.Join(config.Dir(home), previousPersonaFile))
 	require.NoError(t, err)
 	require.Contains(t, string(previous), "Plain.", "the persona a save replaces is kept beside it")
-	now, err := os.ReadFile(p)
+	now, err := readPersona(home)
 	require.NoError(t, err)
 	require.Contains(t, string(now), "Blunt.")
 
 	_, err = commitPersona(t.Context(), home, fitted, func() error { return nil })
 	require.ErrorIs(t, err, errPersonaChanged, "a persona saved since this one was fitted is not overwritten")
-	now, err = os.ReadFile(p)
+	now, err = readPersona(home)
 	require.NoError(t, err)
 	require.Contains(t, string(now), "Blunt.")
 }

@@ -195,14 +195,7 @@ var errPersonaChanged = errors.New("your persona changed while this was learning
 
 // personaSnapshot is the saved global persona as it is now, nil when there is none.
 func personaSnapshot(home string) ([]byte, error) {
-	data, err := os.ReadFile(filepath.Join(config.Dir(home), "persona.md"))
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil, nil //nolint:nilnil // no persona is a state, not a failure
-	}
-	if err != nil {
-		return nil, fmt.Errorf("reading the saved persona: %w", err)
-	}
-	return data, nil
+	return readPersona(home)
 }
 
 // reconcilePersona fits a new global persona to the one already saved: the user ticks the changed sections to take,
@@ -289,9 +282,9 @@ func commitPersona(ctx context.Context, home string, r reconciled, record func()
 		return "", fmt.Errorf("saving the persona: %w", err)
 	}
 	defer unlock()
-	now, err := os.ReadFile(filepath.Join(config.Dir(home), "persona.md"))
-	if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return "", fmt.Errorf("reading the saved persona: %w", err)
+	now, err := personaSnapshot(home)
+	if err != nil {
+		return "", err
 	}
 	if !bytes.Equal(now, r.base) {
 		return "", errPersonaChanged
@@ -309,7 +302,11 @@ func commitPersona(ctx context.Context, home string, r reconciled, record func()
 // allOrNothing runs a change to the persona and its records and, when it fails part of the way, puts every one of
 // those files back as it was and reinstalls the persona skill, so a persona is never left beside another's source.
 func allOrNothing(home string, change func() error) error {
-	names := []string{"persona.md", personaSourceFile, previousPersonaFile, previousSourceFile}
+	persona, err := personaSnapshot(home)
+	if err != nil {
+		return err
+	}
+	names := []string{personaSourceFile, previousPersonaFile, previousSourceFile}
 	before := make([][]byte, len(names))
 	had := make([]bool, len(names))
 	for i, name := range names {
@@ -321,9 +318,14 @@ func allOrNothing(home string, change func() error) error {
 			return fmt.Errorf("reading %s before changing the persona: %w", name, err)
 		}
 	}
-	err := change()
+	err = change()
 	if err == nil {
 		return nil
+	}
+	if persona == nil {
+		err = errors.Join(err, removePersona(home))
+	} else {
+		err = errors.Join(err, writePersona(home, persona))
 	}
 	for i, name := range names {
 		path := filepath.Join(config.Dir(home), name)
