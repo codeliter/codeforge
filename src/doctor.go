@@ -165,16 +165,31 @@ func doctorRepo(ctx context.Context, home, root string) []doctorItem {
 	if err != nil {
 		return []doctorItem{{check: check{name: "trust", note: err.Error()}, fix: "remove the unreadable file in ~/.codeforge"}}
 	}
-	persona := doctorFile("persona", filepath.Join(root, repoPersonaPath), ledger, "codeforge init", "codeforge trust")
+	persona := doctorSharedPersona(root, ledger)
 	// A persona of the user's own for this repository is as good as one in it.
 	switch private, err := loadPrivateRepoPersona(ctx, home, root); {
 	case err != nil:
-		persona = doctorItem{check: check{name: "persona", note: err.Error()}, warn: true, fix: "fix or remove " + privateRepoPersonaPath(ctx, home, root)}
+		persona = doctorItem{check: check{name: "persona", note: err.Error()}, warn: true, fix: "fix or remove " + privatePersonaWhere(ctx, home, root)}
 	case private != "" && persona.fix == "codeforge init":
 		persona = doctorItem{check: check{name: "persona", ok: true, note: "yours alone, kept outside the repository"}}
 	}
 	project := doctorFile("config", config.ProjectPath(root), ledger, "", "codeforge trust --models")
 	return slices.DeleteFunc([]doctorItem{persona, project}, func(d doctorItem) bool { return d.name == "" })
+}
+
+// doctorSharedPersona reports the persona shared in the repository, in either form, and whether it is approved.
+func doctorSharedPersona(root string, ledger config.Store) doctorItem {
+	content, err := loadRepoPersona(root)
+	path := sharedPersonaPath(root)
+	switch {
+	case err != nil:
+		return doctorItem{check: check{name: "persona", note: err.Error()}, warn: true, fix: "check " + path}
+	case content == "":
+		return doctorItem{check: check{name: "persona", note: "none for this project"}, warn: true, fix: "codeforge init"}
+	case ledger[path] == config.Digest(content):
+		return doctorItem{check: check{name: "persona", ok: true, note: "approved"}}
+	}
+	return doctorItem{check: check{name: "persona", note: "new or changed since you approved it; ignored until approved"}, warn: true, fix: "codeforge trust"}
 }
 
 // doctorFile reports one repository file. A missing persona is a warning; a missing config is normal.

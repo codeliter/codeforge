@@ -4,9 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io/fs"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/codeliter/codeforge/src/config"
@@ -125,19 +123,16 @@ func initRepo(ctx context.Context, home, bin, model string, ans initAnswers) err
 	if err != nil {
 		return err
 	}
-	p := filepath.Join(root, repoPersonaPath)
-	if existing, err := os.ReadFile(p); err == nil {
-		if !unfinishedRepoPersona(existing) {
-			fmt.Fprintf(os.Stderr, "codeforge: repository persona already exists at %s; left unchanged.\n", p)
-			return nil
-		}
-	} else if !errors.Is(err, fs.ErrNotExist) {
-		return fmt.Errorf("reading repository persona: %w", err)
+	if existing, err := loadRepoPersona(root); err != nil {
+		return err
+	} else if existing != "" && !unfinishedRepoPersona([]byte(existing)) {
+		fmt.Fprintf(os.Stderr, "codeforge: repository persona already exists at %s; left unchanged.\n", sharedPersonaPath(root))
+		return nil
 	}
 	if existing, err := loadPrivateRepoPersona(ctx, home, root); err != nil {
 		return err
 	} else if existing != "" && !unfinishedRepoPersona([]byte(existing)) {
-		fmt.Fprintf(os.Stderr, "codeforge: you already have a persona for this repository at %s; left unchanged.\n", privateRepoPersonaPath(ctx, home, root))
+		fmt.Fprintf(os.Stderr, "codeforge: you already have a persona for this repository at %s; left unchanged.\n", privatePersonaWhere(ctx, home, root))
 		return nil
 	}
 	fmt.Fprintf(os.Stderr, "codeforge: setting up the persona for %s; your global persona is unchanged.\n", root)
@@ -154,15 +149,11 @@ func initRepo(ctx context.Context, home, bin, model string, ans initAnswers) err
 		persona = append(persona, []byte("\n## Team notes\n"+ans.notes+"\n")...)
 	}
 
-	p, err = saveRepoPersona(ctx, home, root, persona)
+	p, err := saveRepoPersona(ctx, home, root, persona)
 	if err != nil {
 		return err
 	}
 
-	if p == filepath.Join(root, repoPersonaPath) {
-		fmt.Fprintf(os.Stderr, "codeforge: repository persona written to %s. Edit it, then commit it to share with your team.\n", p)
-		return nil
-	}
 	fmt.Fprintf(os.Stderr, "codeforge: persona for this repository written to %s. It is yours alone and nothing was added to the repository; codeforge persona share puts it there for your team.\n", p)
 	return nil
 }

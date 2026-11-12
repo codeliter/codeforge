@@ -150,14 +150,15 @@ func TestPersonaStore_SavingNeverTouchesWhatIsNotASectionFile(t *testing.T) {
 	dir, err := savePersona(home, []byte(first))
 	require.NoError(t, err)
 	files := map[string]string{
-		"code-style.md": "## Code style\nEarly returns.\n\nNo globals.\n",
-		"voice.md":      "## VOICE\nLoud.\n",
-		"voice~2.md":    "## Voice\nPlain.\n",
+		"code-style.md":   "## Code style\nEarly returns.\n",
+		"code-style~2.md": "## Code style\nNo globals.\n",
+		"voice.md":        "## VOICE\nLoud.\n",
+		"voice~2.md":      "## Voice\nPlain.\n",
 	}
 	for name, want := range files {
 		data, err := os.ReadFile(filepath.Join(dir, name))
 		require.NoError(t, err, name)
-		require.Equal(t, want, string(data), "one title is one file; two titles are two, whatever their file names")
+		require.Equal(t, want, string(data), "every section has a file of its own, whatever its title or file name")
 	}
 
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, "pull-requests.md", "keep"), privateDir))
@@ -171,7 +172,15 @@ func TestPersonaStore_SavingNeverTouchesWhatIsNotASectionFile(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, string(before), string(after), "and refused whole: nothing was written")
 
+	require.NoError(t, os.WriteFile(filepath.Join(dir, orderFile), []byte("my own list\n"), privateFile))
+	_, err = savePersona(home, []byte("# Other\n"))
+	require.ErrorIs(t, err, errPersonaStore, "with the order's place taken a save is refused, so sections never come back rearranged")
+	kept, err := os.ReadFile(filepath.Join(dir, orderFile))
+	require.NoError(t, err)
+	require.Equal(t, "my own list\n", string(kept), "a file of that name that is not codeforge's is neither replaced nor removed")
 	require.NoError(t, removePersona(home))
+	_, err = os.Stat(filepath.Join(dir, orderFile))
+	require.NoError(t, err)
 	_, err = os.Stat(filepath.Join(dir, "pull-requests.md", "keep"))
 	require.NoError(t, err, "removing the persona leaves what is not a section file")
 	_, err = os.Lstat(filepath.Join(dir, "linked.md"))

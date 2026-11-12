@@ -102,7 +102,7 @@ func launchCommand(ctx context.Context, home, bin, mode string, args []string) (
 		}
 	}
 	userSystem := hasFlag(args, "--system")
-	if args, err = withRepoPersona(ctx, home, args); err != nil {
+	if args, err = withRepoPersonaFor(ctx, home, mode, args); err != nil {
 		return nil, nil, err
 	}
 	if mode == modeReview && !resume {

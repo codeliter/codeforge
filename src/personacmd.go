@@ -161,16 +161,16 @@ func runPersona(ctx context.Context, home string, args []string, w io.Writer) er
 	if err != nil {
 		return err
 	}
-	sharedInUse := repo != "" && ts[filepath.Join(root, repoPersonaPath)] == config.Digest(repo)
+	sharedInUse := repo != "" && ts[sharedPersonaPath(root)] == config.Digest(repo)
 	if private != "" {
 		state := "in use"
 		if sharedInUse {
 			state = "in use; the shared one below wins where they differ"
 		}
 		fmt.Fprintf(w, "\nYour persona for this repository: %s\nSource: yours alone, not in the repository (%s). Share it with codeforge persona share.\n\n%s\n",
-			privateRepoPersonaPath(ctx, home, root), state, show(private))
+			privatePersonaWhere(ctx, home, root), state, show(private))
 	}
-	p := filepath.Join(root, repoPersonaPath)
+	p := sharedPersonaPath(root)
 	if repo == "" {
 		if private == "" {
 			fmt.Fprintf(w, "\nRepository persona: none for %s. Add one with codeforge init --repo.\n", root)

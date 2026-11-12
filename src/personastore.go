@@ -24,6 +24,12 @@ const (
 	openingFile = "about.md"
 	// storeLockFile is locked, shared to read and alone to write, so a reader gets one whole persona.
 	storeLockFile = "persona.lock"
+	// orderFile lists a persona's section files in the order its author wrote them, which file names do not keep.
+	orderFile = ".codeforge-order"
+	// orderHeader opens that list, so a file of the same name that is not one is neither read nor replaced.
+	orderHeader = "# codeforge: the order of this persona's sections\n"
+	// maxOrder bounds that list for the reader and the writer alike.
+	maxOrder = 1 << 20
 	// savingFile holds the whole persona being saved, from before the first section file is written until after the
 	// last: a save cut short is finished from it, and until then it is what readers are given.
 	savingFile = "persona.saving.md"
@@ -74,23 +80,48 @@ func sectionFile(title string) string {
 	return slug + ".md"
 }
 
-// readPersonaDir reads the section files of the persona's directory; none when it does not exist.
-func readPersonaDir(dir string) ([]personaSection, error) {
+// readPersonaDir reads the section files of the persona's directory; none when it does not exist. They come in the
+// order the directory records, files it does not list after those; ordered says whether it records one.
+func readPersonaDir(dir string) (sections []personaSection, ordered bool, err error) {
 	entries, err := os.ReadDir(dir)
 	if errors.Is(err, fs.ErrNotExist) {
-		return nil, nil
+		return nil, false, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("reading the persona: %w", err)
+		return nil, false, fmt.Errorf("reading the persona: %w", err)
 	}
-	var sections []personaSection
+	// The order is a short list of file names in a regular file. A link, a device or a list too long to be one is
+	// not opened at all.
+	if info, err := os.Lstat(filepath.Join(dir, orderFile)); err == nil && info.Mode().IsRegular() && info.Size() <= maxOrder {
+		order, err := os.ReadFile(filepath.Join(dir, orderFile))
+		// Only a list codeforge wrote, which says so on its first line, is taken for one.
+		if rest, ours := strings.CutPrefix(string(order), orderHeader); err == nil && ours && len(order) <= maxOrder {
+			at := make(map[string]int)
+			for _, name := range strings.Fields(rest) {
+				if _, seen := at[name]; !seen {
+					at[name] = len(at)
+				}
+			}
+			pos := func(e fs.DirEntry) int {
+				if e.Name() == openingFile {
+					return -1 // the opening is first whether or not the list has it
+				}
+				if i, ok := at[e.Name()]; ok {
+					return i
+				}
+				return len(at)
+			}
+			slices.SortStableFunc(entries, func(a, b fs.DirEntry) int { return pos(a) - pos(b) })
+			ordered = true
+		}
+	}
 	for _, e := range entries {
 		if !isSectionFile(e) {
 			continue
 		}
 		data, err := os.ReadFile(filepath.Join(dir, e.Name()))
 		if err != nil {
-			return nil, fmt.Errorf("reading the persona: %w", err)
+			return nil, false, fmt.Errorf("reading the persona: %w", err)
 		}
 		body := strings.TrimSpace(string(data))
 		if e.Name() == openingFile {
@@ -104,7 +135,7 @@ func readPersonaDir(dir string) ([]personaSection, error) {
 		}
 		sections = append(sections, personaSection{title: title, body: body})
 	}
-	return sections, nil
+	return sections, ordered, nil
 }
 
 // lockStore locks the persona store, shared for readers and exclusive for a writer, and returns how to let go. The
@@ -150,7 +181,7 @@ func readPersona(home string) ([]byte, error) {
 	} else if !errors.Is(err, fs.ErrNotExist) {
 		return nil, fmt.Errorf("reading the persona: %w", err)
 	}
-	sections, err := readPersonaDir(personaDir(home))
+	sections, ordered, err := readPersonaDir(personaDir(home))
 	if err != nil {
 		return nil, err
 	}
@@ -164,6 +195,15 @@ func readPersona(home string) ([]byte, error) {
 		}
 		return data, nil
 	}
+	if !ordered {
+		sections = orderSections(sections)
+	}
+	return []byte(joinPersona(sections)), nil
+}
+
+// orderSections puts sections read from files in the order a persona has them: the opening, the learned sections in
+// their order, then any others as they came.
+func orderSections(sections []personaSection) []personaSection {
 	rank := func(s personaSection) int {
 		if s.title == "" {
 			return -1
@@ -174,28 +214,36 @@ func readPersona(home string) ([]byte, error) {
 		return len(personaSections)
 	}
 	slices.SortStableFunc(sections, func(a, b personaSection) int { return rank(a) - rank(b) })
-	return []byte(joinPersona(sections)), nil
+	return sections
 }
 
-// sectionFiles lays a document out as the files it is saved in, in order. Sections with the same title are one file,
-// in the order they came; two titles that read the same as file names get a file each.
+// sectionFiles lays a document out as the files it is saved in, in order. A section straight after one of the same
+// title shares its file; any other gets a file of its own, so every section keeps its place.
 func sectionFiles(doc []byte) (names []string, texts map[string]string) {
 	texts = make(map[string]string)
 	titles := make(map[string]string)
+	last := ""
 	for _, s := range splitPersona(string(doc)) {
-		name := sectionFile(s.title)
+		base := sectionFile(s.title)
+		name, joined := base, false
 		for n := 2; ; n++ {
-			if title, used := titles[name]; !used || title == s.title {
+			title, used := titles[name]
+			if !used {
 				break
 			}
-			// "~" sorts after ".", so the later title's file is read after the earlier one's.
-			name = fmt.Sprintf("%s~%d.md", strings.TrimSuffix(sectionFile(s.title), ".md"), n)
+			// Only a section straight after one of the same title joins it: joined to an earlier one, it would move.
+			if title == s.title && name == last {
+				texts[name] = strings.TrimSpace(texts[name]) + "\n\n" + s.body + "\n"
+				joined = true
+				break
+			}
+			// "~" sorts after ".", so a later file of the name is read after the earlier one.
+			name = fmt.Sprintf("%s~%d.md", strings.TrimSuffix(base, ".md"), n)
 		}
-		if have, ok := texts[name]; ok {
-			texts[name] = strings.TrimSpace(have) + "\n\n" + s.body + "\n"
+		if joined {
 			continue
 		}
-		names, titles[name] = append(names, name), s.title
+		names, titles[name], last = append(names, name), s.title, name
 		texts[name] = s.body + "\n"
 		if s.title != "" {
 			texts[name] = "## " + s.title + "\n" + texts[name]
@@ -224,6 +272,13 @@ func writePersona(home string, doc []byte) error {
 			return fmt.Errorf("%w: %s is in the way of a section file", errPersonaStore, filepath.Join(personaDir(home), name))
 		}
 	}
+	// Nor is a save begun whose order could not be kept or read back: the sections would come back rearranged.
+	if !ownOrder(personaDir(home)) {
+		return fmt.Errorf("%w: %s is in the way of the section order", errPersonaStore, filepath.Join(personaDir(home), orderFile))
+	}
+	if len(orderList(names)) > maxOrder {
+		return fmt.Errorf("%w: %d sections are too many to keep in order", errPersonaStore, len(names))
+	}
 	if err := fsutil.AtomicWriteFile(filepath.Join(config.Dir(home), savingFile), doc, privateFile); err != nil {
 		return fmt.Errorf("writing the persona: %w", err)
 	}
@@ -238,6 +293,11 @@ func applySaving(home string, doc []byte) error {
 	names, texts := sectionFiles(doc)
 	for _, name := range names {
 		if err := fsutil.AtomicWriteFile(filepath.Join(dir, name), []byte(texts[name]), privateFile); err != nil {
+			return fmt.Errorf("writing the persona: %w", err)
+		}
+	}
+	if ownOrder(dir) {
+		if err := fsutil.AtomicWriteFile(filepath.Join(dir, orderFile), orderList(names), privateFile); err != nil {
 			return fmt.Errorf("writing the persona: %w", err)
 		}
 	}
@@ -262,6 +322,30 @@ func applySaving(home string, doc []byte) error {
 	return nil
 }
 
+// orderList is the order file for sections saved under names.
+func orderList(names []string) []byte {
+	return []byte(orderHeader + strings.Join(names, "\n") + "\n")
+}
+
+// ownOrder reports whether the order file in dir is codeforge's to write: there is none, or it is one it wrote.
+func ownOrder(dir string) bool {
+	info, err := os.Lstat(filepath.Join(dir, orderFile))
+	if errors.Is(err, fs.ErrNotExist) {
+		return true
+	}
+	if err != nil || !info.Mode().IsRegular() {
+		return false
+	}
+	f, err := os.Open(filepath.Join(dir, orderFile))
+	if err != nil {
+		return false
+	}
+	defer f.Close() //nolint:errcheck // read only
+	head := make([]byte, len(orderHeader))
+	n, _ := f.Read(head) //nolint:errcheck // a short read is simply not the header
+	return string(head[:n]) == orderHeader
+}
+
 // removePersona removes the global persona in either form: its section files, never anything else the user keeps in
 // the directory, which goes only when that leaves it empty.
 func removePersona(home string) error {
@@ -281,6 +365,9 @@ func removePersona(home string) error {
 				return fmt.Errorf("removing the persona: %w", err)
 			}
 		}
+	}
+	if ownOrder(dir) {
+		_ = os.Remove(filepath.Join(dir, orderFile)) //nolint:errcheck // ours, and of no use without sections
 	}
 	_ = os.Remove(dir) //nolint:errcheck // stays when the user keeps other things in it
 	for _, name := range []string{legacyPersonaFile, savingFile} {

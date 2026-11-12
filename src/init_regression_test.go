@@ -48,10 +48,10 @@ esac
 	_, err := savePersona(home, []byte("# Existing starter\nGeneric conventions.\n"))
 	require.NoError(t, err)
 	require.NoError(t, runInit(t.Context(), home, engine, config.Config{}, nil))
-	local := privateRepoPersonaPath(t.Context(), home, repo)
-	data, err := os.ReadFile(local)
+	local := filepath.Join(privateRepoPersonaDir(t.Context(), home, repo), openingFile)
+	data, err := loadPrivateRepoPersona(t.Context(), home, repo)
 	require.NoError(t, err)
-	require.Contains(t, string(data), "Use evidence from the current repository.")
+	require.Contains(t, data, "Use evidence from the current repository.")
 	global, err := readPersona(home)
 	require.NoError(t, err)
 	require.Equal(t, "# Existing starter\nGeneric conventions.\n", string(global))
@@ -63,9 +63,9 @@ esac
 	require.NoError(t, os.WriteFile(local, []byte("# Team conventions\nKeep our changes.\n"), privateFile))
 	require.NoError(t, os.Remove(engine))
 	require.NoError(t, runInit(t.Context(), home, engine, config.Config{}, nil))
-	data, err = os.ReadFile(local)
+	data, err = loadPrivateRepoPersona(t.Context(), home, repo)
 	require.NoError(t, err)
-	require.Contains(t, string(data), "Keep our changes.")
+	require.Contains(t, data, "Keep our changes.")
 }
 
 func TestInitFindsRepositoryRootAndKeepsGlobalPersona(t *testing.T) {
@@ -80,10 +80,11 @@ func TestInitFindsRepositoryRootAndKeepsGlobalPersona(t *testing.T) {
 	require.NoError(t, runInit(t.Context(), home, "/missing-model-binary", config.Config{}, []string{"--persona", "oss"}))
 	resolved, err := filepath.EvalSymlinks(root)
 	require.NoError(t, err)
-	local, err := os.ReadFile(privateRepoPersonaPath(t.Context(), home, resolved))
+	local, err := loadPrivateRepoPersona(t.Context(), home, resolved)
 	require.NoError(t, err)
-	require.Contains(t, string(local), "Open-source maintainer")
-	_, err = os.Stat(filepath.Join(root, repoPersonaPath))
+	require.Contains(t, local, "Open-source maintainer")
+	require.True(t, hasSections(privateRepoPersonaDir(t.Context(), home, resolved)), "it is kept one file a section")
+	_, err = os.Stat(filepath.Join(root, ".codeforge"))
 	require.True(t, os.IsNotExist(err), "nothing is added to the repository")
 	data, err := readPersona(home)
 	require.NoError(t, err)
@@ -92,7 +93,7 @@ func TestInitFindsRepositoryRootAndKeepsGlobalPersona(t *testing.T) {
 	require.True(t, os.IsNotExist(err))
 }
 
-func TestInitCanFillUntouchedRepositoryTemplates(t *testing.T) {
+func TestInitLeavesAScaffoldInTheRepositoryAlone(t *testing.T) {
 	for _, body := range []string{"", " \n", "template"} {
 		t.Run(body, func(t *testing.T) {
 			home, root := t.TempDir(), t.TempDir()
@@ -103,10 +104,11 @@ func TestInitCanFillUntouchedRepositoryTemplates(t *testing.T) {
 				body = string(seed)
 			}
 			p := writeRepoPersona(t, root, body)
-			require.NoError(t, runInit(t.Context(), home, "/missing-model-binary", config.Config{}, []string{"--repo", "--persona", "oss"}))
+			err := runInit(t.Context(), home, "/missing-model-binary", config.Config{}, []string{"--repo", "--persona", "oss"})
+			require.ErrorIs(t, err, errRepoPersonaExists)
 			data, err := os.ReadFile(p)
 			require.NoError(t, err)
-			require.Contains(t, string(data), "Open-source maintainer")
+			require.Equal(t, body, string(data), "what is in the repository is never replaced")
 		})
 	}
 }

@@ -93,10 +93,11 @@ flowchart TD
     Git -->|yes| Local
     Git -->|no| Global
     Local --> Existing{Existing local conventions?}
-    Existing -->|filled-in file| Keep[Preserve the file]
-    Existing -->|missing, empty or untouched scaffold| Source[Learn from current repository or use a starter]
-    Source --> LocalFile[Repository root: .codeforge/persona.md]
-    Global --> GlobalFile[Home: .codeforge/persona.md]
+    Existing -->|anything in the repository or your own store| Keep[Leave it as it is]
+    Existing -->|nothing yet| Source[Learn from current repository or use a starter]
+    Source --> LocalFile[Your own store: ~/.codeforge/repos/hash/persona/]
+    LocalFile -->|codeforge persona share| Shared[Repository: .codeforge/persona/]
+    Global --> GlobalFile[Home: .codeforge/persona/]
     Repair[codeforge repair / reinit] --> Managed[Rebuild managed startup assets]
     Managed --> CF[Home: .empryo/hooks/cf]
     Managed --> Preserve[Keep personas, sessions, logins and unrelated hooks]
@@ -108,8 +109,8 @@ flowchart TD
 - `init --persona` opens a selector with the available starter names and short descriptions.
   An explicit name, such as `--persona oss`, skips the selector. Non-interactive callers must
   supply a name; otherwise the command lists the choices and stops without writing a persona.
-- Existing, filled-in repository personas are not overwritten. Empty files and an unchanged
-  repository scaffold can be populated. Failed generation does not replace a persona with an empty result.
+- Existing, filled-in repository personas are not overwritten. An empty file or unchanged
+  scaffold in the repository is left for you to fill in or remove. Failed generation does not replace a persona with an empty result.
 - Local rules take precedence over generic/global style where they differ, but never override safety rules.
   A repository persona is trusted by content hash, not merely by its path. User-initiated init trusts
   the newly created file; changed or unfamiliar files need approval before being injected as system context.
@@ -126,13 +127,19 @@ flowchart TD
   deleted, and the persona it replaces is kept as `~/.codeforge/persona.previous.md`. Without a terminal there is nobody to
   tick, so every changed section is taken; a section the history showed nothing for is never replaced either way. `codeforge persona` says how many
   commits you have made since it was learned.
-- A repository persona is yours alone by default: `codeforge init --repo` keeps it under `~/.codeforge/repos/<hash>/persona.md`,
+- A repository persona is yours alone by default: `codeforge init --repo` keeps it under `~/.codeforge/repos/<hash>/persona/`,
   keyed by a hash of the origin URL exactly as git has it, so clones with the same URL share it (the path when there is no remote), and it needs no approval because you wrote it.
-  `codeforge persona share` copies it, whole, into the repository as `.codeforge/persona.md` to commit; your own copy stays until
+  `codeforge persona share` copies it, whole, into the repository as `.codeforge/persona/` to commit; your own copy stays until
   `codeforge persona forget`. An https and an ssh clone of one repository have different URLs, so each has its own. A shared persona is
   trust-gated as before and wins over your own where they differ; both win over the global persona.
 - A `.codeforge/persona.md` already in a repository, from an earlier Codeforge or a teammate, keeps working unchanged as the shared
   persona. `codeforge persona list` shows the private ones kept under `~/.codeforge/repos/` and `codeforge persona forget` removes one.
+- Repository personas are kept the same way: `.codeforge/persona/` in the repository when shared, and a `persona/` directory
+  in your own store otherwise; a single `persona.md` from before is read as it is. Nothing already in the repository is ever replaced: an unfilled template there is yours to fill in or remove.
+  At launch, what applies to everything goes into
+  the system instructions, and each other part is installed in your own `~/.empryo/skills`, never in the checkout, as a skill named after its content
+  (`codeforge-repo-persona-code-<hash>` and so on, never rewritten, removed after 30 days unused) holding the team's part and yours, loaded for the work it covers. Review mode gets
+  the reviewing and code parts in its instructions. A shared directory is approved as a whole, by a digest of its sections.
 - The global persona is one file a section under `~/.codeforge/persona/` (`about.md`, `voice.md`, `code-style.md`, …); a file you
   add is a section of your own. A single `~/.codeforge/persona.md` from an earlier version is read as it is and becomes the
   directory the next time it is saved.
