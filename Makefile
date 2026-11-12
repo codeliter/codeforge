@@ -16,7 +16,7 @@ cover:
 	go tool cover -func=coverage.out | tail -1
 
 vuln:
-	go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+	go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
 
 # What CI runs on every pull request.
 check: lint test vuln

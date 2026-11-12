@@ -21,7 +21,7 @@ func TestApply_RejectsWhatARoleCannotTake(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := Defaults(Config{})
-			before := cfg
+			before := Clone(cfg)
 			require.ErrorIs(t, Apply(&cfg, tt.key, tt.models), tt.want)
 			require.Equal(t, before, cfg, "a rejected change leaves the configuration alone")
 		})
