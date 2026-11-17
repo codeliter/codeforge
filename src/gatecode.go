@@ -6,6 +6,7 @@ import (
 	"io"
 	"math"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -16,6 +17,7 @@ import (
 	"github.com/alecthomas/chroma/v2/formatters"
 	"github.com/alecthomas/chroma/v2/lexers"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/rivo/uniseg"
 	"golang.org/x/term"
 )
 
@@ -44,6 +46,9 @@ const (
 	// maxContextLines is the most lines a snippet grows to so it shows the whole construct a finding sits in; a longer
 	// construct is shown as the window around the finding with its header on top.
 	maxContextLines = 40
+	// maxAddedLines is the most lines of a declaration the change adds whole that are shown; a longer one is shown as
+	// any other code is.
+	maxAddedLines = 150
 )
 
 // codeStyle is how the report is drawn: the Codeforge Steel palette and highlighting only on a terminal that wants
@@ -111,6 +116,9 @@ func codeAroundFocus(repo, file string, fc focus, st codeStyle) string {
 type focus struct {
 	Line, End int
 	Hints     []string
+	// Added is the lines of the file that the change under review adds, when that is known: a declaration the change
+	// adds whole is shown whole.
+	Added map[int]bool
 }
 
 // codeSnippetFocus renders the lines of content, the text of file, around a finding, as codeAround describes. Every
@@ -140,6 +148,10 @@ func codeSnippetFocus(content, file string, fc focus, st codeStyle) string {
 	// one, so the reader sees where it starts and ends instead of a fixed slice cut mid-way.
 	if from, to := enclosingSpan(all, lo, hi); from > 0 {
 		first, last = min(first, from), max(last, to)
+	}
+	// A function, type or block the change adds whole is all new to the reader, so all of it is shown, not a slice.
+	if from, to := addedDeclaration(file, all, lo, hi, fc.Added); from > 0 {
+		first, last = from, to
 	}
 	header := enclosingHeader(all, lo)
 	switch {
@@ -174,13 +186,20 @@ func codeSnippetFocus(content, file string, fc focus, st codeStyle) string {
 	avail := max(minCodeWidth, st.width-(numWidth+len("  >  | ")))
 	var s strings.Builder
 	for i, n := range nums {
+		parts := wrapColumns(code[i], avail)
 		switch {
 		case n == gapRow:
 			fmt.Fprintf(&s, "    %*s ⋮\n", numWidth, "")
 		case marked[n]:
-			fmt.Fprintf(&s, "  > %*d | %s\n", numWidth, n, cutColumns(code[i], avail))
+			fmt.Fprintf(&s, "  > %*d | %s\n", numWidth, n, parts[0])
 		default:
-			fmt.Fprintf(&s, "    %*d | %s\n", numWidth, n, cutColumns(code[i], avail))
+			fmt.Fprintf(&s, "    %*d | %s\n", numWidth, n, parts[0])
+		}
+		// A line too long for the width goes on under itself, with no number: nothing of it is cut off.
+		if n != gapRow {
+			for _, more := range parts[1:] {
+				fmt.Fprintf(&s, "    %*s | %s\n", numWidth, "", more)
+			}
 		}
 	}
 	return s.String()
@@ -249,9 +268,6 @@ func codeCard(place, file string, marked map[int]bool, nums []int, code []string
 	width := min(maxCardWidth, max(minCodeWidth, st.width-len(margin)))
 	gutter := len("▌") + numWidth + len(beforeCode)
 	avail := max(minCodeWidth, width-gutter-pad)
-	for i := range code {
-		code[i] = cutColumns(code[i], avail)
-	}
 	shown := highlight(file, code, st.pal.code)
 	row := func(bg, text string) string {
 		// Every reset inside the highlighted text would also end the background; carry it across them.
@@ -266,9 +282,22 @@ func codeCard(place, file string, marked map[int]bool, nums []int, code []string
 		case n == gapRow:
 			s.WriteString(row(st.pal.card, st.pal.dim+fmt.Sprintf(" %*s ⋮", numWidth, "")+ansiReset))
 		case marked[n]:
-			s.WriteString(row(st.pal.cardLine, st.pal.accent+"▌"+fmt.Sprintf("%*d", numWidth, n)+ansiReset+beforeCode+shown[i]))
+			// A line too long for the card goes on under itself, with no number: nothing of it is cut off.
+			for k, part := range wrapStyled(shown[i], avail) {
+				num := fmt.Sprintf("%*d", numWidth, n)
+				if k > 0 {
+					num = strings.Repeat(" ", numWidth)
+				}
+				s.WriteString(row(st.pal.cardLine, st.pal.accent+"▌"+num+ansiReset+beforeCode+part))
+			}
 		default:
-			s.WriteString(row(st.pal.card, st.pal.dim+" "+fmt.Sprintf("%*d", numWidth, n)+ansiReset+beforeCode+shown[i]))
+			for k, part := range wrapStyled(shown[i], avail) {
+				num := fmt.Sprintf("%*d", numWidth, n)
+				if k > 0 {
+					num = strings.Repeat(" ", numWidth)
+				}
+				s.WriteString(row(st.pal.card, st.pal.dim+" "+num+ansiReset+beforeCode+part))
+			}
 		}
 	}
 	return s.String()
@@ -301,6 +330,383 @@ func enclosingHeader(all []string, line int) int {
 		target = indentOf(l) // an outer statement; keep looking for what contains it
 	}
 	return block
+}
+
+// isDeclaration reports whether l starts a declaration: declLine's keyword as a whole word, and not the start of an
+// assignment or call that only begins like one ("data := load()", "functionCall()").
+func isDeclaration(l string) bool {
+	t := strings.TrimSpace(l)
+	word := leadingWord.FindString(t)
+	// A whole declaration by its shape, whatever its name: "const f = (", "name() {", "key:". A branch of a
+	// statement ("else:", "default:") has that shape and is none.
+	if declWhole.MatchString(l) {
+		return !branchWords[strings.TrimSuffix(t, ":")]
+	}
+	after, known := declKeywords[word]
+	if !known {
+		return false
+	}
+	// The keyword alone is not enough: what follows must be what a declaration has there, a name for most, a quoted
+	// label for a Terraform block or a test. "data.foo()", "test()" and "type = 3" are statements.
+	return after.MatchString(strings.TrimSpace(t[len(word):]))
+}
+
+var (
+	branchWords = map[string]bool{"else": true, "try": true, "finally": true, "except": true, "default": true, "do": true}
+	leadingWord = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*`)
+	declWhole   = regexp.MustCompile(`^\s*(const\s+\w+\s*=\s*(async\s*)?\(|[\w.]+\s*\(\)\s*\{|[\w.-]+:\s*$)`)
+	// declKeywords is, for each keyword that starts a declaration, what must follow it.
+	declKeywords = func() map[string]*regexp.Regexp {
+		named := regexp.MustCompile(`^[\p{L}_*<]`)
+		set := map[string]*regexp.Regexp{
+			"func":   regexp.MustCompile(`^[\p{L}_(]`), // a name, or a method's receiver
+			"locals": regexp.MustCompile(`^\{`),
+		}
+		// What a module exports is a declaration; "export PATH=/bin" in a shell script is an assignment.
+		set["export"] = regexp.MustCompile(`^(default|const|let|var|function|class|async|interface|type|enum|abstract|declare|namespace)\b|^[{*]`)
+		for _, w := range strings.Fields("def class function fn pub impl trait interface struct enum type module public private protected static async") {
+			set[w] = named
+		}
+		for _, w := range strings.Fields("resource data variable") {
+			set[w] = regexp.MustCompile(`^"`)
+		}
+		for _, w := range strings.Fields("describe it test") {
+			// A test block: a quoted name, and a body that opens on the same line. A plain call has no body.
+			set[w] = regexp.MustCompile("^\\(\\s*[\"'`].*(\\{|\\(|=>|\\bdo)$")
+		}
+		return set
+	}()
+)
+
+// declarationEnd is the last line of the declaration that starts at line start, and whether that is certain. A body
+// in braces ends where its brace closes, however its lines are indented; any other ends by indentation. Its header
+// may run over several lines (parameters one a line), which blockEnd alone takes for the end.
+func declarationEnd(file string, all, code []string, literal []bool, start int) (int, bool) {
+	if end, ok, braces := braceEnd(file, all, start); braces {
+		return end, ok
+	}
+	end := indentedEnd(code, start)
+	for end < len(all) && literal[end] {
+		end++ // a literal the declaration ends with is part of it to its last line
+	}
+	return end, true
+}
+
+// scanLines returns the lines with those that continue a literal or comment of several lines (a raw string, a
+// here-document, a string in triple quotes) left blank, and how many brackets are open where each begins.
+func scanLines(file string, all []string) (code []string, depth []int, literal []bool) {
+	code, depth, literal = make([]string, len(all)), make([]int, len(all)), make([]bool, len(all))
+	scan := newBraceScan(file)
+	for i, l := range all {
+		if literal[i] = scan.inLiteral(); !literal[i] {
+			code[i] = l
+		}
+		depth[i] = scan.depth
+		scan.line(l)
+	}
+	return code, depth, literal
+}
+
+// unindentedStart is the line of the declaration whose brackets hold line n when n is written at the margin, where
+// indentation tells nothing: the line that opens the outermost of them, or the one before a brace on a line of its
+// own. It returns 0 when line n is inside no bracket.
+func unindentedStart(code []string, depth []int, n int) int {
+	if depth[n-1] <= 0 {
+		return 0
+	}
+	for m := n - 1; m >= 1; m-- {
+		if depth[m-1] != 0 || strings.TrimSpace(code[m-1]) == "" {
+			continue
+		}
+		for onlyBrace(code[m-1]) && m > 1 {
+			m--
+		}
+		return m
+	}
+	return 0
+}
+
+// braceEnd is the line that closes the body a declaration at line start opens with a brace: at the end of its header
+// or on a line of its own after it. braces is false when it has no such body, and ok is false when its brackets do not
+// pair up, so where it ends is not known.
+func braceEnd(file string, all []string, start int) (end int, ok, braces bool) {
+	scan := newBraceScan(file)
+	header := true // still in the header; false once it has ended without a brace
+	for n := start; n <= len(all); n++ {
+		last := scan.line(all[n-1])
+		switch {
+		case last == 0 && scan.depth >= 0:
+			continue // blank, or all comment
+		case scan.depth < 0:
+			return 0, false, braces
+		case braces:
+			if scan.depth == 0 {
+				return n, closesDeclaration(all, start, n), true
+			}
+		case header && scan.outer() == '{':
+			braces = true // the body opens in the header, with code after its brace ("f() { step();")
+		case last == '{' && (header || scan.code == 1 && indentOf(all[n-1]) == indentOf(all[start-1])):
+			if scan.depth == 0 {
+				return 0, false, true // the brace closed something the scan did not see open
+			}
+			braces = true
+		case !header:
+			return 0, false, false
+		case scan.depth == 0:
+			header = false // the next line of code says whether a brace on a line of its own follows
+		}
+	}
+	return 0, false, braces
+}
+
+// closesDeclaration reports whether line end reads as the close of the declaration at line start: a closing brace at
+// its indentation, with nothing deeper straight after it. Where the scan was misled by a literal it does not know (a
+// regular expression, a quote of another language), the line it stopped at does not read so.
+func closesDeclaration(all []string, start, end int) bool {
+	indent := indentOf(all[start-1])
+	if !strings.HasPrefix(strings.TrimSpace(all[end-1]), "}") || indentOf(all[end-1]) != indent {
+		return false
+	}
+	for n := end + 1; n <= len(all); n++ {
+		if strings.TrimSpace(all[n-1]) != "" {
+			return indentOf(all[n-1]) <= indent
+		}
+	}
+	return true
+}
+
+// heredocOpen matches the start of a here-document, and captures the word that ends it.
+var heredocOpen = regexp.MustCompile(`^<<[-~]?["']?([A-Za-z_]\w*)["']?`)
+
+// shiftOnly are the languages where "<<" shifts a value and never opens a here-document.
+var shiftOnly = map[string]bool{
+	".go": true, ".js": true, ".jsx": true, ".ts": true, ".tsx": true, ".mjs": true, ".cjs": true, ".py": true,
+	".java": true, ".kt": true, ".c": true, ".h": true, ".cc": true, ".cpp": true, ".hpp": true, ".rs": true,
+	".cs": true, ".swift": true,
+}
+
+// newBraceScan is a scan for the language the file is written in, by its name.
+func newBraceScan(file string) *braceScan {
+	ext := strings.ToLower(filepath.Ext(file))
+	return &braceScan{plainRaw: ext == ".go", noHeredoc: shiftOnly[ext]}
+}
+
+// braceScan counts the brackets left open over lines of code, those in strings and comments aside.
+type braceScan struct {
+	depth   int
+	raw     bool   // inside a raw string that runs over lines
+	comment bool   // inside a /* comment */
+	heredoc string // inside a here-document that this word ends
+	triple  string // inside a string in these triple quotes
+	code    int    // how many characters of code the last line had
+	open    []rune // the brackets left open, outermost first
+
+	plainRaw  bool // a raw string has no escapes and ends at its first backtick, as in Go
+	noHeredoc bool // "<<" is never a here-document
+}
+
+// inLiteral reports whether the next line continues a literal or comment begun on an earlier one.
+func (b *braceScan) inLiteral() bool {
+	return b.raw || b.comment || b.heredoc != "" || b.triple != ""
+}
+
+// outer is the outermost bracket left open, 0 when none is.
+func (b *braceScan) outer() rune {
+	if len(b.open) == 0 {
+		return 0
+	}
+	return b.open[0]
+}
+
+// line reads one line and returns the last character of its code, 0 when it has none.
+func (b *braceScan) line(s string) rune {
+	var last rune
+	b.code = 0
+	if b.heredoc != "" {
+		if strings.TrimSpace(s) == b.heredoc {
+			b.heredoc = ""
+		}
+		return 0
+	}
+	if b.triple != "" {
+		_, rest, closed := strings.Cut(s, b.triple)
+		if !closed {
+			return 0
+		}
+		s, b.triple = rest, ""
+	}
+	r := []rune(s)
+	for i := 0; i < len(r); i++ {
+		c := r[i]
+		next := rune(0)
+		if i+1 < len(r) {
+			next = r[i+1]
+		}
+		switch {
+		case b.comment:
+			if c == '*' && next == '/' {
+				b.comment = false
+				i++
+			}
+			continue
+		case b.raw:
+			if c == '\\' && !b.plainRaw {
+				i++ // an escaped character of a template
+			}
+			b.raw = c != '`'
+			continue
+		case c == '/' && next == '/':
+			return last
+		case c == '#' && (i == 0 || unicode.IsSpace(r[i-1])) && (next == 0 || next == ' '):
+			return last
+		case c == '<' && next == '<' && !b.noHeredoc && !unicode.IsLetter(last) && !unicode.IsDigit(last) && !strings.ContainsRune(")]_", last):
+			// After a value "<<" shifts it; anywhere else it opens a here-document, from the next line on.
+			if m := heredocOpen.FindStringSubmatch(string(r[i:])); m != nil {
+				b.heredoc = m[1]
+			}
+		case c == '/' && next == '*':
+			b.comment = true
+			i++
+			continue
+		case c == '`':
+			b.raw = true
+		case (c == '"' || c == '\'') && next == c && i+2 < len(r) && r[i+2] == c:
+			quotes := string(r[i : i+3])
+			_, rest, closed := strings.Cut(string(r[i+3:]), quotes)
+			if !closed {
+				b.triple = quotes
+				return c
+			}
+			i = len(r) - len([]rune(rest)) - 1
+		case c == '"' || c == '\'':
+			if end := closingQuote(r, i); end > 0 {
+				i = end
+			} else if c == '"' {
+				return c
+			}
+		case c == '/' && (last == 0 || strings.ContainsRune("=(,:[!&|?{};", last)):
+			// Where a value is expected, a slash opens a regular expression, not a division.
+			if end := closingQuote(r, i); end > 0 {
+				i = end
+			}
+		case strings.ContainsRune("([{", c):
+			b.depth++
+			b.open = append(b.open, c)
+		case strings.ContainsRune(")]}", c):
+			b.depth--
+			if len(b.open) > 0 {
+				b.open = b.open[:len(b.open)-1]
+			}
+		}
+		if !unicode.IsSpace(c) {
+			last = c
+			b.code++
+		}
+	}
+	return last
+}
+
+// closingQuote is the index of the quote that closes the one at r[open], or -1 when the line has none.
+func closingQuote(r []rune, open int) int {
+	for i := open + 1; i < len(r); i++ {
+		switch r[i] {
+		case '\\':
+			i++
+		case r[open]:
+			return i
+		}
+	}
+	return -1
+}
+
+// onlyBrace reports whether a line is an opening brace alone, a comment after it aside.
+func onlyBrace(l string) bool {
+	return strings.TrimSpace(trailingComment.ReplaceAllString(l, "")) == "{"
+}
+
+// indentedEnd is the last line of a declaration whose body is told by indentation.
+func indentedEnd(all []string, start int) int {
+	end := blockEnd(all, start)
+	for {
+		next := end
+		t := strings.TrimSpace(all[end-1])
+		switch {
+		case end > start && opensBlock(t, "{", ":", "("):
+			next = blockEnd(all, end) // the header's closing line opens the body
+		default:
+			for n := end + 1; n <= len(all); n++ {
+				if b := strings.TrimSpace(all[n-1]); b != "" {
+					if onlyBrace(b) && indentOf(all[n-1]) == indentOf(all[start-1]) {
+						next = blockEnd(all, n) // the brace on its own line
+					}
+					break
+				}
+			}
+		}
+		if next <= end {
+			return end
+		}
+		end = next
+	}
+}
+
+// addedDeclaration returns the first and last line of the declaration (function, method, type, resource) that lines
+// lo to hi sit in, or that starts at lo, when the change adds every line of it and it has at most maxAddedLines
+// lines: the outermost such one, so a new method's new class when that fits and the method alone when it does not.
+// It returns 0, 0 when there is none, or when what the change adds is not known.
+func addedDeclaration(file string, all []string, lo, hi int, added map[int]bool) (from, to int) {
+	if len(added) == 0 {
+		return 0, 0
+	}
+	// What a literal of several lines holds is text, not code: its indentation says nothing of the code around it.
+	src := all
+	all, depth, literal := scanLines(file, src)
+	var starts []int // innermost first
+	label := marginLabel(all, lo)
+	if !label && isDeclaration(all[lo-1]) {
+		starts = append(starts, lo)
+	}
+	if n := unindentedStart(all, depth, lo); n > 0 && n < lo && indentOf(all[lo-1]) == 0 && isDeclaration(all[n-1]) {
+		starts = append(starts, n)
+	}
+	target := indentOf(all[lo-1])
+	switch t := strings.TrimSpace(all[lo-1]); {
+	case t == "":
+		target = math.MaxInt
+	case closesBlock(t) || onlyBrace(t) || label:
+		target++ // a declaration's own closing line, or its brace: it starts at this indentation, further up
+	}
+	for n := lo - 1; n >= 1 && target > 0; n-- {
+		l := all[n-1]
+		if strings.TrimSpace(l) == "" || indentOf(l) >= target {
+			continue
+		}
+		target = indentOf(l)
+		if t := strings.TrimSpace(l); closesBlock(t) || onlyBrace(t) || marginLabel(all, n) {
+			// The closing line of a header written over several lines (") error {"), or a brace on a line of its
+			// own: the declaration starts at the same indentation, further up.
+			target++
+			continue
+		}
+		if isDeclaration(l) {
+			starts = append(starts, n)
+		}
+	}
+	for i := len(starts) - 1; i >= 0; i-- {
+		start := starts[i]
+		end, sure := declarationEnd(file, src, all, literal, start)
+		if !sure || end < hi || end-start+1 > maxAddedLines {
+			continue
+		}
+		whole := true
+		for n := start; n <= end && whole; n++ {
+			whole = strings.TrimSpace(src[n-1]) == "" || added[n]
+		}
+		if whole {
+			return start, end
+		}
+	}
+	return 0, 0
 }
 
 // enclosingSpan returns the first and last line of the largest construct around lines lo to hi that has at most
@@ -337,9 +743,11 @@ func enclosingSpan(all []string, lo, hi int) (from, to int) {
 // closing line at its own indentation (a brace, bracket, end, fi or done) that follows them.
 func blockEnd(all []string, start int) int {
 	indent, last := indentOf(all[start-1]), start
+	// In a block that opens with a brace, a label ("retry:") is written at the margin and is still inside it.
+	braces := opensBlock(all[start-1], "{")
 	for n := start + 1; n <= len(all); n++ {
 		t := strings.TrimSpace(all[n-1])
-		if t == "" {
+		if t == "" || (braces && codeLabel.MatchString(t)) {
 			continue
 		}
 		if indentOf(all[n-1]) <= indent {
@@ -351,6 +759,39 @@ func blockEnd(all []string, start int) int {
 		last = n
 	}
 	return last
+}
+
+// marginLabel reports whether line n is a label written at the margin inside a block with braces ("retry:" in a Go
+// function), not a key that heads a block of its own: what follows it ends at a closing brace no deeper than it.
+func marginLabel(all []string, n int) bool {
+	if !codeLabel.MatchString(strings.TrimSpace(all[n-1])) {
+		return false
+	}
+	for m := n + 1; m <= len(all); m++ {
+		t := strings.TrimSpace(all[m-1])
+		if t == "" || indentOf(all[m-1]) > indentOf(all[n-1]) || codeLabel.MatchString(t) {
+			continue
+		}
+		return strings.HasPrefix(t, "}")
+	}
+	return false
+}
+
+// codeLabel matches a label: a name, in any script, and a colon, alone or with a statement or comment after it.
+var codeLabel = regexp.MustCompile(`^[\p{L}_][\p{L}\p{N}_]*:($|\s)`)
+
+// trailingComment matches a comment that ends a line of code.
+var trailingComment = regexp.MustCompile(`\s*(//.*|/\*.*\*/)\s*$`)
+
+// opensBlock reports whether the line t ends by opening a block, a comment after it aside.
+func opensBlock(t string, openers ...string) bool {
+	t = strings.TrimSpace(trailingComment.ReplaceAllString(t, ""))
+	for _, o := range openers {
+		if strings.HasSuffix(t, o) {
+			return true
+		}
+	}
+	return false
 }
 
 func closesBlock(t string) bool {
@@ -372,6 +813,64 @@ func cutColumns(s string, width int) string {
 		return s
 	}
 	return string([]rune(s)[:max(0, width-1)]) + "…"
+}
+
+// wrapColumns splits s into pieces of at most width terminal columns, so a long line of code is shown whole over
+// several rows. It counts what the terminal draws: a wide character takes two columns, and a character with its
+// combining marks is never split. There is always at least one piece.
+func wrapColumns(s string, width int) []string {
+	width = max(1, width)
+	var out []string
+	var cur strings.Builder
+	n, state := 0, -1
+	for len(s) > 0 {
+		var cluster string
+		var w int
+		cluster, s, w, state = uniseg.FirstGraphemeClusterInString(s, state)
+		if n > 0 && n+w > width {
+			out = append(out, cur.String())
+			cur.Reset()
+			n = 0
+		}
+		cur.WriteString(cluster)
+		n += w
+	}
+	return append(out, cur.String())
+}
+
+var sgr = regexp.MustCompile(`^\x1b\[[0-9;]*m`)
+
+// wrapStyled is wrapColumns for highlighted text: colour escapes take no room, each piece ends with a reset, and the
+// colours in force where a piece ends start the next one.
+func wrapStyled(s string, width int) []string {
+	width = max(1, width)
+	var out, active []string
+	var cur strings.Builder
+	n, state := 0, -1
+	for len(s) > 0 {
+		if esc := sgr.FindString(s); esc != "" {
+			if esc == ansiReset || esc == "\x1b[m" {
+				active = nil
+			} else {
+				active = append(active, esc)
+			}
+			cur.WriteString(esc)
+			s, state = s[len(esc):], -1
+			continue
+		}
+		var cluster string
+		var w int
+		cluster, s, w, state = uniseg.FirstGraphemeClusterInString(s, state)
+		if n > 0 && n+w > width {
+			out = append(out, cur.String()+ansiReset)
+			cur.Reset()
+			cur.WriteString(strings.Join(active, ""))
+			n = 0
+		}
+		cur.WriteString(cluster)
+		n += w
+	}
+	return append(out, cur.String())
 }
 
 // span is a run of text in one colour (code is a palette escape, "" for none).

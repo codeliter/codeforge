@@ -224,6 +224,7 @@ func reviewArgs(ctx context.Context, bin string, rc config.ReviewConfig, judges 
 			fmt.Fprintln(os.Stderr, note)
 		}
 		review.DisplayOf(ctx).Local()
+		review.DisplayOf(ctx).SetDiff(l.Diff)
 		// The changed files and their callers come with the brief, as for the gate and PRs, so the reviewer and the
 		// jurors read instead of fetching and still reach a verdict.
 		packed := ""
@@ -270,6 +271,7 @@ func reviewArgs(ctx context.Context, bin string, rc config.ReviewConfig, judges 
 		return nil, fmt.Errorf("loading PR %s: %w", number, err)
 	}
 	review.DisplayOf(ctx).PR(b.HeadRef, repo, b.PR.HeadRefOid)
+	review.DisplayOf(ctx).SetDiff(b.Diff)
 	cctx, ccancel := context.WithTimeout(ctx, review.LoadLimit)
 	defer ccancel()
 	tier, _ := review.Classify(cctx, judges, b.Diff, b.Files())

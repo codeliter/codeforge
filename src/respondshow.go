@@ -273,16 +273,22 @@ func fixDiff(ctx context.Context, commit, path string, st codeStyle) string {
 			b.WriteString(findingIndent + diffIndent + st.paint(st.pal.dim, "…") + "\n")
 			return b.String()
 		}
-		line := cutColumns(strings.ReplaceAll(l, "\t", strings.Repeat(" ", tabWidth)), max(minCodeWidth, st.width-len(findingIndent+diffIndent)))
+		colour := ""
 		switch {
 		case strings.HasPrefix(l, "@@"):
-			line = st.paint(st.pal.dim, line)
+			colour = st.pal.dim
 		case strings.HasPrefix(l, "+"):
-			line = st.paint(st.pal.added, line)
+			colour = st.pal.added
 		case strings.HasPrefix(l, "-"):
-			line = st.paint(st.pal.removed, line)
+			colour = st.pal.removed
 		}
-		b.WriteString(findingIndent + diffIndent + line + "\n")
+		// A line too long for the width goes on under itself: nothing of it is cut off.
+		for _, part := range wrapColumns(strings.ReplaceAll(l, "\t", strings.Repeat(" ", tabWidth)), max(minCodeWidth, st.width-len(findingIndent+diffIndent))) {
+			if colour != "" {
+				part = st.paint(colour, part)
+			}
+			b.WriteString(findingIndent + diffIndent + part + "\n")
+		}
 		shown++
 	}
 	return b.String()

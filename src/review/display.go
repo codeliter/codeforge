@@ -8,8 +8,30 @@ import (
 // Display says where the code a review talks about can be read, so the review can be shown with the lines around each
 // finding: the working tree for local work, or the PR's fetched head ref. A PR whose head was not fetched has neither.
 type Display struct {
-	mu  sync.Mutex
-	src Source
+	mu    sync.Mutex
+	src   Source
+	added map[string]map[int]bool
+}
+
+// SetDiff records the change under review, so the code shown with a finding can tell what the change added.
+func (d *Display) SetDiff(diff string) {
+	if d == nil {
+		return
+	}
+	added := AddedLines(diff)
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.added = added
+}
+
+// Added reports the lines of file that the change under review adds; nil when that is not known.
+func (d *Display) Added(file string) map[int]bool {
+	if d == nil {
+		return nil
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.added[file]
 }
 
 // Source is where a review's code can be read: the working tree (Local), a fetched git ref (HeadRef), or, when the PR

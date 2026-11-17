@@ -900,3 +900,19 @@ func TestEngineFailure_SaysWhyInWords(t *testing.T) {
 		require.Equal(t, tt.want, EngineFailure([]byte(tt.raw)), tt.raw)
 	}
 }
+
+func TestAddedLines(t *testing.T) {
+	diff := "diff --git a/a.go b/a.go\n--- a/a.go\n+++ b/a.go\n@@ -1,3 +1,4 @@\n package a\n-old\n+new\n+more\n ctx\ndiff --git a/gone.go b/gone.go\n--- a/gone.go\n+++ /dev/null\n@@ -1 +0,0 @@\n-x\n"
+	require.Equal(t, map[string]map[int]bool{"a.go": {2: true, 3: true}}, AddedLines(diff))
+	require.Empty(t, AddedLines(""))
+	quoted := "diff --git \"a/\\303\\251.go\" \"b/\\303\\251.go\"\n--- \"a/\\303\\251.go\"\n+++ \"b/\\303\\251.go\"\n@@ -0,0 +1 @@\n+x\n"
+	require.Equal(t, map[string]map[int]bool{"é.go": {1: true}}, AddedLines(quoted), "a path git quotes is read back to the path itself")
+	require.Equal(t, "a \"b\".go", newPath(`+++ "b/a \"b\".go"`))
+	var d *Display
+	d.SetDiff(diff)
+	require.Nil(t, d.Added("a.go"))
+	d = &Display{}
+	require.Nil(t, d.Added("a.go"), "not known until the change is recorded")
+	d.SetDiff(diff)
+	require.Equal(t, map[int]bool{2: true, 3: true}, d.Added("a.go"))
+}

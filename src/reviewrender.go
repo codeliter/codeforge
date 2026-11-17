@@ -165,18 +165,24 @@ func renderFence(block []string, st codeStyle) string {
 	}
 	code := make([]string, len(body))
 	for i, l := range body {
-		code[i] = cutColumns(strings.ReplaceAll(l, "\t", strings.Repeat(" ", tabWidth)), max(minCodeWidth, st.width-len("    │ ")))
+		code[i] = strings.ReplaceAll(l, "\t", strings.Repeat(" ", tabWidth))
 	}
 	code = trimSharedIndent(code)
 	if st.color {
 		code = highlightLang(lang, code, st.pal.code)
 	}
+	// A line too long for the width goes on under itself behind the same gutter: nothing of it is cut off.
+	avail := max(minCodeWidth, st.width-len("    │ "))
 	var b strings.Builder
 	for _, l := range code {
 		if st.color {
-			b.WriteString("    " + st.paint(st.pal.dim, "│") + " " + l + "\n")
-		} else {
-			b.WriteString("    | " + l + "\n")
+			for _, part := range wrapStyled(l, avail) {
+				b.WriteString("    " + st.paint(st.pal.dim, "│") + " " + part + "\n")
+			}
+			continue
+		}
+		for _, part := range wrapColumns(l, avail) {
+			b.WriteString("    | " + part + "\n")
 		}
 	}
 	return b.String()
@@ -300,7 +306,10 @@ func reviewCode(ctx context.Context, st codeStyle, text string) codeSource {
 		if err != nil {
 			return nil
 		}
-		return func(file string, fc focus) string { return codeAroundFocus(root, file, fc, st) }
+		return func(file string, fc focus) string {
+			fc.Added = review.DisplayOf(ctx).Added(strings.TrimPrefix(file, "./"))
+			return codeAroundFocus(root, file, fc, st)
+		}
 	case src.HeadRef != "":
 		read = func(ctx context.Context, file string) ([]byte, error) {
 			return codeRunner.Run(ctx, "git", "show", src.HeadRef+":"+file)
@@ -321,6 +330,7 @@ func reviewCode(ctx context.Context, st codeStyle, text string) codeSource {
 		if !ok {
 			return ""
 		}
+		fc.Added = review.DisplayOf(ctx).Added(strings.TrimPrefix(file, "./"))
 		return codeSnippetFocus(content, file, fc, st)
 	}
 }

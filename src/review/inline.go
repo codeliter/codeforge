@@ -65,10 +65,54 @@ var (
 	headingLine = regexp.MustCompile("^\\s*(?:#{1,6}\\s+.*|\\*\\*[^*]+\\*\\*:?|`?[\\w.@+-]+(?:/[\\w.@+-]+)*\\.\\w+`?:?)\\s*$")
 )
 
+// AddedLines lists, per file, the lines of the new version that the diff adds.
+func AddedLines(diff string) map[string]map[int]bool {
+	out := map[string]map[int]bool{}
+	eachNewLine(diff, func(file string, line int, added bool) {
+		if added {
+			if out[file] == nil {
+				out[file] = map[int]bool{}
+			}
+			out[file][line] = true
+		}
+	})
+	return out
+}
+
 // diffLines lists, per file, the lines of the new version that the diff shows: the only lines GitHub accepts an inline
 // comment on.
 func diffLines(diff string) map[string]map[int]bool {
 	out := map[string]map[int]bool{}
+	eachNewLine(diff, func(file string, line int, _ bool) {
+		if out[file] == nil {
+			out[file] = map[int]bool{}
+		}
+		out[file][line] = true
+	})
+	return out
+}
+
+// newPath is the file a diff's "+++ " line names, "" for none. Git quotes a path with unusual characters, as in
+// "b/\303\251.go"; that is read back to the path itself.
+func newPath(header string) string {
+	p := strings.TrimPrefix(header, "+++ ")
+	if strings.HasPrefix(p, `"`) {
+		if unquoted, err := strconv.Unquote(strings.TrimRight(p, "\t ")); err == nil {
+			p = unquoted
+		}
+	} else {
+		p, _, _ = strings.Cut(p, "\t") // git ends a path that has spaces with a tab
+	}
+	p = strings.TrimPrefix(p, "b/")
+	if p == "/dev/null" {
+		return ""
+	}
+	return p
+}
+
+// eachNewLine calls fn for every line of the new version that the diff shows, with its file, its number there and
+// whether the diff adds it.
+func eachNewLine(diff string, fn func(file string, line int, added bool)) {
 	file, line, inHunk := "", 0, false
 	for _, l := range strings.Split(strings.TrimSuffix(diff, "\n"), "\n") {
 		switch {
@@ -76,10 +120,7 @@ func diffLines(diff string) map[string]map[int]bool {
 			file, inHunk = "", false
 			continue
 		case !inHunk && strings.HasPrefix(l, "+++ "):
-			file = strings.TrimPrefix(strings.TrimPrefix(l, "+++ "), "b/")
-			if file == "/dev/null" {
-				file = ""
-			}
+			file = newPath(l)
 			continue
 		case strings.HasPrefix(l, "@@ "):
 			m := newHunkHeader.FindStringSubmatch(l)
@@ -95,17 +136,13 @@ func diffLines(diff string) map[string]map[int]bool {
 		}
 		switch {
 		case l == "" || l[0] == ' ' || l[0] == '+':
-			if out[file] == nil {
-				out[file] = map[int]bool{}
-			}
-			out[file][line] = true
+			fn(file, line, l != "" && l[0] == '+')
 			line++
 		case l[0] == '-' || l[0] == '\\':
 		default:
 			inHunk = false
 		}
 	}
-	return out
 }
 
 // preambleWords match a whole sentence written to the user about delivering the review, never one that says anything

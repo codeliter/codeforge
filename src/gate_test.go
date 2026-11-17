@@ -174,12 +174,21 @@ func TestCodeAround_DrawsACardOnATerminal(t *testing.T) {
 		require.Equal(t, 2+100-2, ansi.StringWidth(l), "every row of the card has the same width: row %d", i)
 		require.True(t, strings.HasSuffix(l, ansiReset), "the background ends with the row")
 	}
-	require.Len(t, lines, 1+2+11, "title, header and gap, and lines 49 to 59")
+	require.Len(t, lines, 1+2+11+1, "title, header and gap, lines 49 to 59, and the rest of line 55, which is too long for one row")
+	require.Contains(t, card, pal.cardLine+pal.accent+"▌  "+ansiReset, "the rest of a long line sits under it, marked the same and without a number")
+	require.NotContains(t, ansi.Strip(card), "…", "nothing of the code is cut off")
 }
 
 func TestCutColumns_CountsCharacters(t *testing.T) {
 	require.Equal(t, "ééé", cutColumns("ééé", 3), "three accented characters fit three columns")
 	require.Equal(t, "éé…", cutColumns("éééé", 3))
+	require.Equal(t, []string{"ééé", "é"}, wrapColumns("éééé", 3), "a long line is shown whole, over several rows")
+	require.Equal(t, []string{""}, wrapColumns("", 3))
+	require.Equal(t, []string{"\x1b[31mab" + ansiReset, "\x1b[31mc" + ansiReset + "d"}, wrapStyled("\x1b[31mabc"+ansiReset+"d", 2), "the colour in force carries on to the next row")
+	require.Equal(t, []string{"ab"}, wrapStyled("ab", 2))
+	require.Equal(t, []string{"\u754c\u754c", "\u754c"}, wrapColumns("\u754c\u754c\u754c", 4), "a wide character takes two columns")
+	require.Equal(t, []string{"\u754c" + ansiReset, "\u754c"}, wrapStyled("\u754c\u754c", 3))
+	require.Equal(t, []string{"e\u0301a", "b"}, wrapColumns("e\u0301ab", 2), "a character is never split from its combining mark")
 }
 
 func TestWrapFinding_StaysWithinTheWidth(t *testing.T) {
@@ -233,4 +242,210 @@ func TestReviewerFor_LightModelOnlyForLightTiers(t *testing.T) {
 	require.Equal(t, "strong/reviewer", reviewerFor(review.TierStandard, rc))
 	require.Equal(t, "strong/reviewer", reviewerFor(review.TierRisky, rc))
 	require.Equal(t, "strong/reviewer", reviewerFor(review.TierSmall, config.ReviewConfig{Model: "strong/reviewer"}), "no light model set: nothing changes")
+}
+
+func TestCodeSnippet_ADeclarationTheChangeAddsIsShownWhole(t *testing.T) {
+	var b strings.Builder
+	b.WriteString("package p\n\nfunc old() {\n\tstep()\n}\n\nfunc added() error {\n")
+	for range 60 {
+		b.WriteString("\tstep()\n")
+	}
+	b.WriteString("\treturn nil\n}\n\nfunc after() {}\n")
+	content := b.String()
+	all := map[int]bool{}
+	for n := 7; n <= 69; n++ {
+		all[n] = true
+	}
+	st := codeStyle{width: 100}
+
+	whole := codeSnippetFocus(content, "p.go", focus{Line: 40, Added: all}, st)
+	require.Contains(t, whole, " 7 | func added() error {", "the new function is shown from its first line")
+	require.Contains(t, whole, "69 | }", "to its last")
+	require.NotContains(t, whole, "⋮", "with nothing left out")
+	require.NotContains(t, whole, "func old()")
+	require.NotContains(t, whole, "func after()")
+
+	onHeader := codeSnippetFocus(content, "p.go", focus{Line: 7, Added: all}, st)
+	require.Contains(t, onHeader, "69 | }", "a finding on the declaration's own line shows it whole too")
+
+	unknown := codeSnippetFocus(content, "p.go", focus{Line: 40}, st)
+	require.Contains(t, unknown, "⋮", "without the change to go by, a long function is shown as a window")
+	require.NotContains(t, unknown, "69 | }")
+
+	delete(all, 20)
+	changed := codeSnippetFocus(content, "p.go", focus{Line: 40, Added: all}, st)
+	require.NotContains(t, changed, "69 | }", "a function the change only touches is not new, and is shown as a window")
+
+	long := map[int]bool{}
+	for n := 1; n <= 400; n++ {
+		long[n] = true
+	}
+	huge := "func big() {\n" + strings.Repeat("\tstep()\n", 300) + "}\n"
+	require.NotContains(t, codeSnippetFocus(huge, "p.go", focus{Line: 150, Added: long}, st), "func big()", "one too long to read at once is not")
+}
+
+func TestAddedDeclaration_FindsTheWholeDeclarationHoweverItIsWritten(t *testing.T) {
+	added := func(n int) map[int]bool {
+		m := map[int]bool{}
+		for i := 1; i <= n; i++ {
+			m[i] = true
+		}
+		return m
+	}
+	lines := func(s string) []string { return strings.Split(s, "\n") }
+
+	goFn := lines("func run(\n    a int,\n    b int,\n) error {\n    data := load()\n    functionCall()\n    typeName := load()\n    return nil\n}")
+	from, to := addedDeclaration("", goFn, 5, 5, added(9))
+	require.Equal(t, []int{1, 9}, []int{from, to}, "a statement that begins like a keyword is not a declaration; parameters over several lines are part of the header")
+	from, to = addedDeclaration("", goFn, 1, 1, added(9))
+	require.Equal(t, []int{1, 9}, []int{from, to}, "a finding on the first line of a multi-line header shows the function, not the signature")
+
+	js := lines("function run()\n{\n    step();\n}")
+	from, to = addedDeclaration("", js, 3, 3, added(4))
+	require.Equal(t, []int{1, 4}, []int{from, to}, "a brace on its own line opens the body")
+
+	py := lines("class A:\n    def old(self):\n        pass\n\n    def new(self):\n        x = 1\n        return x")
+	onlyMethod := map[int]bool{1: true, 5: true, 6: true, 7: true}
+	from, to = addedDeclaration("", py, 6, 6, onlyMethod)
+	require.Equal(t, []int{5, 7}, []int{from, to}, "when the class is only partly new, the new method alone is shown")
+	from, to = addedDeclaration("", py, 6, 6, added(7))
+	require.Equal(t, []int{1, 7}, []int{from, to}, "when the class is new too and fits, all of it is")
+
+	var big strings.Builder
+	big.WriteString("class Big:\n    def long(self):\n")
+	for range 120 {
+		big.WriteString("        step()\n")
+	}
+	for range 80 {
+		big.WriteString("    y = 1\n")
+	}
+	all := lines(strings.TrimSuffix(big.String(), "\n"))
+	from, to = addedDeclaration("", all, 110, 110, added(len(all)))
+	require.Equal(t, []int{2, 122}, []int{from, to}, "a method far below its header is still found when its class is too long")
+
+	require.True(t, isDeclaration("data \"aws_s3_bucket\" \"b\" {"))
+	require.True(t, isDeclaration("  it('works', () => {"))
+	require.True(t, isDeclaration("build() {"))
+	from, to = addedDeclaration("", goFn, 9, 9, added(9))
+	require.Equal(t, []int{1, 9}, []int{from, to}, "a finding on the closing brace is in the function")
+	from, to = addedDeclaration("", goFn, 4, 4, added(9))
+	require.Equal(t, []int{1, 9}, []int{from, to}, "as is one on the last line of its header")
+	from, to = addedDeclaration("", js, 2, 2, added(4))
+	require.Equal(t, []int{1, 4}, []int{from, to}, "or on its opening brace")
+	labelled := lines("func run() {\nretry:\n    step()\n    goto retry\n}")
+	from, to = addedDeclaration("", labelled, 3, 3, added(5))
+	require.Equal(t, []int{1, 5}, []int{from, to}, "a label at the margin does not end the function")
+	from, to = addedDeclaration("", labelled, 2, 2, added(5))
+	require.Equal(t, []int{1, 5}, []int{from, to}, "a finding on the label itself is in the function")
+	for _, spelling := range []string{"r\u00e9essayer:", "retry: // retry work", "retry: step()"} {
+		other := lines("func run() {\n" + spelling + "\n    step()\n    goto retry\n}")
+		from, to = addedDeclaration("", other, 3, 3, added(5))
+		require.Equal(t, []int{1, 5}, []int{from, to}, spelling)
+	}
+	for _, tail := range []string{") error { // work", ") error { /* work */"} {
+		commented := lines("func run(\n    a int,\n" + tail + "\n    step()\n    return nil\n}")
+		from, to = addedDeclaration("", commented, 1, 1, added(6))
+		require.Equal(t, []int{1, 6}, []int{from, to}, tail)
+		from, to = addedDeclaration("", commented, 4, 4, added(6))
+		require.Equal(t, []int{1, 6}, []int{from, to}, tail)
+	}
+	require.True(t, isDeclaration("func \u00c9mettre() {"))
+	require.True(t, isDeclaration("class \u00c9metteur:"))
+	for _, open := range []string{"{", "{ // body", "{ /* body */"} {
+		own := lines("function run()\n" + open + "\n    step();\n}")
+		from, to = addedDeclaration("", own, 1, 1, added(4))
+		require.Equal(t, []int{1, 4}, []int{from, to}, open)
+		from, to = addedDeclaration("", own, 3, 3, added(4))
+		require.Equal(t, []int{1, 4}, []int{from, to}, open)
+	}
+	raw := lines("func run() {\n    q := `select\nfrom t\nwhere a = '{'`\n    use(q)\n}")
+	from, to = addedDeclaration("", raw, 1, 1, added(6))
+	require.Equal(t, []int{1, 6}, []int{from, to}, "a raw string's lines are indented as they please")
+	loop := lines("func run() {\nretry: for {\n    step()\n}\n    finish()\n}")
+	from, to = addedDeclaration("", loop, 1, 1, added(6))
+	require.Equal(t, []int{1, 6}, []int{from, to}, "a labelled loop's brace is not the function's")
+	odd := lines("fn f<'a>(x: &'a str) -> &'a str {\n    if x {\n        y()\n    }\n    x\n}")
+	from, to = addedDeclaration("", odd, 1, 1, added(6))
+	require.Equal(t, []int{0, 0}, []int{from, to}, "brackets that do not pair up: the end is not known")
+	for name, src := range map[string]string{
+		"a regular expression": "function run() {\n    const re = /}/;\n    step();\n}",
+		"a here-document":      "locals {\n  text = <<EOF\n}\nEOF\n  other = 1\n}",
+		"a default in braces":  "def run(\n    options={\n        \"a\": 1,\n    },\n):\n    step()",
+	} {
+		unsure := lines(src)
+		from, to = addedDeclaration("", unsure, 1, 1, added(len(unsure)))
+		if from != 0 {
+			require.Equal(t, []int{1, len(unsure)}, []int{from, to}, name)
+		}
+	}
+	for _, src := range []string{
+		"function run()\n{ /* body\n*/\n    step();\n}",
+		"function run() {\n    const s = `a\\`}`;\n    step();\n}",
+	} {
+		whole := lines(src)
+		from, to = addedDeclaration("", whole, 1, 1, added(len(whole)))
+		require.Equal(t, []int{1, len(whole)}, []int{from, to}, src)
+	}
+	for _, src := range []string{
+		"function run() { step();\nfinish();\n}",
+		"function run() {\nif (ready) {\nconst re = /}/;\n}\nfinish();\n}",
+		"function run() {\nif (ready) {\nconst re = /[}]/;\n}\nfinish();\n}",
+	} {
+		flat := lines(src)
+		from, to = addedDeclaration("", flat, 1, 1, added(len(flat)))
+		require.Equal(t, []int{1, len(flat)}, []int{from, to}, src)
+	}
+	py = lines("def run():\n    text = \"\"\"hello\nworld\n\"\"\"\n    publish(text)")
+	from, to = addedDeclaration("", py, 1, 1, added(5))
+	require.Equal(t, []int{1, 5}, []int{from, to}, "a string in triple quotes is text")
+	from, to = addedDeclaration("", py, 5, 5, added(5))
+	require.Equal(t, []int{1, 5}, []int{from, to})
+	from, to = addedDeclaration("", raw, 5, 5, added(6))
+	require.Equal(t, []int{1, 6}, []int{from, to}, "found from below a raw string's unindented lines")
+	py = lines("def run():\n    text = \"\"\"hello\nworld\n\"\"\"")
+	from, to = addedDeclaration("", py, 1, 1, added(4))
+	require.Equal(t, []int{1, 4}, []int{from, to}, "a literal that ends the declaration")
+	py = lines("def run():\n    mask = 1<<bits\n    publish(mask)")
+	from, to = addedDeclaration("", py, 1, 1, added(3))
+	require.Equal(t, []int{1, 3}, []int{from, to}, "a shift is no here-document")
+	slash := lines("func a() {\n    p := `C:\\`\n}\n\nfunc b() {\n    step()\n}")
+	from, to = addedDeclaration("a.go", slash, 6, 6, added(7))
+	require.Equal(t, []int{5, 7}, []int{from, to}, "a raw string of Go ends at its backtick")
+	flat := lines("function run() {\nfirst();\nsecond();\n}")
+	from, to = addedDeclaration("", flat, 3, 3, added(4))
+	require.Equal(t, []int{1, 4}, []int{from, to}, "a body written at the margin")
+	py = lines("def run():\n    text = \"\"\"hello\n\nworld\n\"\"\"")
+	from, to = addedDeclaration("a.py", py, 1, 1, added(5))
+	require.Equal(t, []int{1, 5}, []int{from, to}, "a blank line inside the literal")
+	for _, shift := range []string{"mask = 1 << BITS", "marker = \"<<EOF\"", "x = 1  # <<EOF", "mask = n<<EOF"} {
+		py = lines("def run():\n    " + shift + "\n\n    publish(mask)")
+		from, to = addedDeclaration("a.py", py, 1, 1, added(4))
+		require.Equal(t, []int{1, 4}, []int{from, to}, shift)
+	}
+	slash = lines("func a() {\n    p := `C:\\` + `x`\n}\n\nfunc b() {\n    step()\n}")
+	from, to = addedDeclaration("a.go", slash, 6, 6, added(7))
+	require.Equal(t, []int{5, 7}, []int{from, to})
+	tpl := lines("function a() {\n    const s = `a\\`\n}`;\n    step();\n}")
+	from, to = addedDeclaration("a.js", tpl, 1, 1, added(5))
+	require.Equal(t, []int{1, 5}, []int{from, to}, "a template's escaped backtick at the end of a line")
+	require.False(t, isDeclaration("    else:"))
+	require.False(t, isDeclaration("default:"))
+	require.True(t, isDeclaration("jobs:"))
+	yaml := lines("jobs:\n  build:\n    steps:\n      - run: x")
+	from, to = addedDeclaration("", yaml, 4, 4, added(4))
+	require.Equal(t, []int{1, 4}, []int{from, to}, "a key that heads its own block is still a declaration")
+	rb := lines("def run\n  step\nend")
+	from, to = addedDeclaration("", rb, 3, 3, added(3))
+	require.Equal(t, []int{1, 3}, []int{from, to})
+	require.True(t, isDeclaration("func (r *T) run() {"))
+	for _, shell := range []string{"test() {", "it() {", "describe() {", "async() {", "data() {", "variable() {", "locals() {", "type() {"} {
+		require.True(t, isDeclaration(shell), shell)
+	}
+	require.True(t, isDeclaration(`describe("the thing", function () {`))
+	require.True(t, isDeclaration("export const run = 1"))
+	require.True(t, isDeclaration("export default function run() {"))
+	for _, not := range []string{"data := load()", "items := load()", "functionCall()", "testValue := load()", "typeName := load()", "variable = 3",
+		`test("value")`, `it("value")`, `describe("value")`, "export PATH=/bin", "data.foo()", "data[0] = value", "data == other", "test()", "it()", "describe()", "async()", "variable()", "data, err := f()", "fn(x)", "type = 3"} {
+		require.False(t, isDeclaration(not), not)
+	}
 }
