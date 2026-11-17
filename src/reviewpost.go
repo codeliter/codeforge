@@ -21,6 +21,7 @@ import (
 var (
 	errCommentNeedsPR = errors.New("--comment posts on a pull request: use codeforge review <number|url> --comment")
 	errCommentValue   = errors.New("--comment takes no value except --comment=yes")
+	errCommentBoth    = errors.New("--comment and --no-comment cannot be used together")
 	errCommentJSON    = errors.New("--comment reads the run as JSON itself, so it cannot be combined with --json")
 	errCommentResume  = errors.New("--comment applies to a new PR review, not to a resumed session")
 	// errCommentUnavailable means the review has no way to post: a bug in how it was started, not a choice.
@@ -92,19 +93,38 @@ func runShownReview(ctx context.Context, argv, env []string, limit time.Time, st
 		engineCtx = withEngineStderr(ctx, &chatter)
 	}
 	var out bytes.Buffer
-	if err := runEngineTo(engineCtx, argv, env, limit, &out); err != nil {
-		fmt.Fprint(os.Stderr, chatter.String())
-		fmt.Fprint(os.Stdout, out.String())
-		return err
-	}
+	runErr := runEngineTo(engineCtx, argv, env, limit, &out)
 	text, err := review.EngineOutput(out.Bytes())
-	if err != nil {
+	// An engine that exits non-zero having written its review (it does on its last step) still has a review to show.
+	var exit *EngineExitError
+	// Only the engine's own plain failure exit is that: one killed at the deadline or by a signal did not finish.
+	onTime := limit.IsZero() || time.Now().Before(limit)
+	if runErr != nil && errors.As(runErr, &exit) && exit.Code == 1 && onTime && ctx.Err() == nil && review.WroteOnLastStep(out.Bytes()) {
+		runErr = nil
+	}
+	if runErr != nil || err != nil {
 		fmt.Fprint(os.Stderr, chatter.String())
-		fmt.Fprint(os.Stdout, out.String())
-		if !post.Enabled() {
-			return err
+		// Said in words where the run says why; the raw result only when it cannot be read.
+		why := review.EngineFailure(out.Bytes())
+		if why == "" || (runErr != nil && !errors.As(runErr, &exit)) {
+			fmt.Fprint(os.Stdout, out.String())
+			switch {
+			case runErr != nil:
+				return runErr
+			case !post.Enabled():
+				return err
+			}
+			return fmt.Errorf("not posting the review: %w", err)
 		}
-		return fmt.Errorf("not posting the review: %w", err)
+		if post.Enabled() {
+			why += " Nothing was posted."
+		}
+		fmt.Fprintln(os.Stderr, "codeforge: "+why)
+		// The engine's own exit status stands; one is made up only for an engine that exited well with no review.
+		if runErr != nil {
+			return runErr
+		}
+		return &EngineExitError{Code: 1}
 	}
 	// A follow-up round ends with its verdicts on the user's earlier threads; they are shown beside those threads and
 	// posted as replies, never as part of the review.

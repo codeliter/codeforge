@@ -147,7 +147,7 @@ func launchMode(ctx context.Context, home, bin string, cfg config.Config, picked
 			fmt.Fprintln(os.Stderr, "codeforge:", reason)
 		}
 	}
-	if resumed && (hasFlag(rest, "--comment") || hasFlag(rest, "--comment=yes")) {
+	if resumed && (hasFlag(rest, "--comment") || hasFlag(rest, "--comment=yes") || hasFlag(rest, "--no-comment")) {
 		return errCommentResume
 	}
 	if resumed {

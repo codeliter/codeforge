@@ -124,13 +124,45 @@ func EngineOutput(raw []byte) (string, error) {
 	if err := json.Unmarshal(raw, &res); err != nil {
 		return "", fmt.Errorf("%w: %w", errEngineOutput, err)
 	}
-	if res.Error != "" {
+	// A reviewer that writes its review on its last step ends with "Max steps reached" and the review complete:
+	// that is a review. Any other error, or that one with nothing written, is a failed run.
+	finished := strings.TrimSpace(res.Output) != "" && maxSteps.MatchString(res.Error)
+	if res.Error != "" && !finished {
 		return "", fmt.Errorf("%w: %s", errEngineOutput, res.Error)
 	}
 	if strings.TrimSpace(res.Output) == "" {
 		return "", ErrNoReviewText
 	}
 	return res.Output, nil
+}
+
+var maxSteps = regexp.MustCompile(`^Max steps reached(?: \((\d+)\))?$`)
+
+// WroteOnLastStep reports whether raw is the result of a run that ran out of steps with its review written: the
+// engine exits non-zero for it, and it is a review all the same.
+func WroteOnLastStep(raw []byte) bool {
+	var res effort.EmpryoResult
+	return json.Unmarshal(raw, &res) == nil && strings.TrimSpace(res.Output) != "" && maxSteps.MatchString(res.Error)
+}
+
+// EngineFailure says, for a person, why a run whose --json result is raw produced no review. It is "" when raw is
+// not such a result or reports no failure.
+func EngineFailure(raw []byte) string {
+	var res effort.EmpryoResult
+	if json.Unmarshal(raw, &res) != nil {
+		return ""
+	}
+	switch m := maxSteps.FindStringSubmatch(res.Error); {
+	case m != nil && m[1] != "":
+		return "the reviewer used all " + m[1] + " of its steps before it wrote the review, so there is nothing to show. Run it again."
+	case m != nil:
+		return "the reviewer used all of its steps before it wrote the review, so there is nothing to show. Run it again."
+	case res.Error != "":
+		return "the review did not finish: " + res.Error
+	case strings.TrimSpace(res.Output) == "":
+		return "the reviewer finished without writing a review. Run it again."
+	}
+	return ""
 }
 
 // minReviewShare is how much of a comment the review keeps when the leads also need room.

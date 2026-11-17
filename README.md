@@ -80,7 +80,8 @@ decision. Enter or a click opens a file, `c` chats about it, `q` quits.
 | Post it as a GitHub review | `p`, then `1` Approve, `2` Comment or `3` Request changes |
 | Post comments you can delete later | `p`, then `4` |
 | Post the suggested decision without asking | `--comment=yes` |
-| Post from a script or without the view | `--comment`, then answer the question |
+| Post without the view | answer the question on the terminal |
+| Review a PR without being offered to post | `--no-comment` |
 | Follow up on your earlier review | `codeforge review 98`, or `--follow-up` to stop if there is none |
 | Review your branch and run its tests | `codeforge gate` |
 

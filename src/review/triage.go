@@ -70,8 +70,10 @@ func TimeNote(left time.Duration) string {
 }
 
 const (
-	docsSteps     = 4
-	smallSteps    = 5
+	// The small tiers leave room to read a file or two and still write the review: at 4 and 5 the reviewer often
+	// spent its last step reading and ended with nothing.
+	docsSteps     = 6
+	smallSteps    = 10
 	standardSteps = 20
 	riskySteps    = 30
 )

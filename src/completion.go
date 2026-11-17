@@ -25,6 +25,7 @@ var completionTree = []struct {
 	{word{"review", "Read-only review of a PR, or of your local changes"}, append([]word{
 		{"--comment", "Post the review on the PR after you pick how"},
 		{"--comment=yes", "Post the review without asking"},
+		{"--no-comment", "Review a PR without offering to post it"},
 		{"--follow-up", "Follow up on your earlier review: replies and changes since"},
 		{"--fresh", "Review the whole PR again, even after an earlier review"},
 		{"--repo", "The PR's repository, owner/name"},

@@ -228,8 +228,8 @@ func TestTierTimed(t *testing.T) {
 		wantEffort        string
 		wantJury, wantNam bool
 	}{
-		{TierDocs, 4, "low", false, true},
-		{TierSmall, 5, "medium", false, true},
+		{TierDocs, 6, "low", false, true},
+		{TierSmall, 10, "medium", false, true},
 		{TierStandard, 20, "medium", true, true},
 		{TierRisky, 20, "medium", true, true},
 	}

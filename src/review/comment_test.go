@@ -874,3 +874,29 @@ func TestPostRequest_PlainWithOnlyAFileCommentCarriesTheFooter(t *testing.T) {
 	require.Len(t, run.calls, 1)
 	require.Equal(t, "Line 300: X."+commentFooter, run.calls[0].Body)
 }
+
+func TestEngineOutput_AReviewWrittenOnTheLastStepIsAReview(t *testing.T) {
+	got, err := EngineOutput([]byte(`{"output":"Approve.","error":"Max steps reached (5)"}`))
+	require.NoError(t, err)
+	require.Equal(t, "Approve.", got)
+	require.True(t, WroteOnLastStep([]byte(`{"output":"Approve.","error":"Max steps reached (5)"}`)))
+	require.False(t, WroteOnLastStep([]byte(`{"output":"half a review"}`)), "an engine that failed some other way has not finished")
+	_, err = EngineOutput([]byte(`{"output":"","error":"Max steps reached (5)"}`))
+	require.Error(t, err)
+	_, err = EngineOutput([]byte(`{"output":"half","error":"Timeout after 2m"}`))
+	require.Error(t, err, "only running out of steps leaves a finished review behind")
+}
+
+func TestEngineFailure_SaysWhyInWords(t *testing.T) {
+	tests := []struct{ raw, want string }{
+		{`{"output":"","error":"Max steps reached (5)"}`, "the reviewer used all 5 of its steps before it wrote the review, so there is nothing to show. Run it again."},
+		{`{"output":"","error":"Max steps reached"}`, "the reviewer used all of its steps before it wrote the review, so there is nothing to show. Run it again."},
+		{`{"output":"","error":"Timeout after 2m 54s"}`, "the review did not finish: Timeout after 2m 54s"},
+		{`{"output":" "}`, "the reviewer finished without writing a review. Run it again."},
+		{`{"output":"Approve."}`, ""},
+		{"not json", ""},
+	}
+	for _, tt := range tests {
+		require.Equal(t, tt.want, EngineFailure([]byte(tt.raw)), tt.raw)
+	}
+}

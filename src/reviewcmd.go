@@ -131,7 +131,7 @@ func canPickInView(rest []string) bool {
 func reviewArgs(ctx context.Context, bin string, rc config.ReviewConfig, judges []review.Judge, jurors jurorFactory, args []string) ([]string, error) {
 	var ref, repo string
 	var rest []string
-	comment, preapproved, followUp, fresh := false, false, false, false
+	comment, preapproved, followUp, fresh, noComment := false, false, false, false, false
 	for i := 0; i < len(args); i++ {
 		switch {
 		case args[i] == "--follow-up":
@@ -145,6 +145,9 @@ func reviewArgs(ctx context.Context, bin string, rc config.ReviewConfig, judges 
 			// Codeforge's own flag: post the finished review on the PR once the user confirms it (--comment=yes: without
 			// asking). Empryo never sees it.
 			comment, preapproved = true, args[i] == "--comment=yes"
+		case args[i] == "--no-comment":
+			// Review a pull request without offering to post it.
+			noComment = true
 		case strings.HasPrefix(args[i], "--comment="):
 			return nil, fmt.Errorf("%w: %s", errCommentValue, args[i])
 		case args[i] == "--repo" && i+1 < len(args):
@@ -160,6 +163,9 @@ func reviewArgs(ctx context.Context, bin string, rc config.ReviewConfig, judges 
 		}
 	}
 
+	if comment && noComment {
+		return nil, errCommentBoth
+	}
 	if comment && ref == "" && repo == "" {
 		return nil, errCommentNeedsPR
 	}
@@ -244,9 +250,10 @@ func reviewArgs(ctx context.Context, bin string, rc config.ReviewConfig, judges 
 	if comment && post == nil {
 		return nil, errCommentUnavailable
 	}
-	if !comment && post != nil && canPickInView(rest) {
-		// In the review view nothing goes up until the user picks a decision, so a PR review can always be posted from
-		// there: --comment only matters where there is no view to pick in.
+	if !comment && !noComment && post != nil && !hasFlag(rest, "--json") && (canPickInView(rest) || interactive()) {
+		// With a person at the terminal, a review of a pull request is written to be posted and offered for posting,
+		// unless --no-comment says otherwise. Nothing goes up until they pick a decision in the view or answer yes.
+		// A script (--json, or no terminal) gets the run as it is: it has nobody to ask, and --comment=yes is for it.
 		comment = true
 	}
 	if comment {
@@ -291,7 +298,7 @@ func reviewArgs(ctx context.Context, bin string, rc config.ReviewConfig, judges 
 			fmt.Fprintln(os.Stderr, "codeforge: could not check for your earlier review, so this is a full review (--follow-up stops instead):", err)
 		case found:
 			review.FollowUpOf(ctx).Set(fu)
-			if !comment && post != nil && !hasFlag(rest, "--json") { // a script that asks for --json gets the run as it is
+			if !comment && !noComment && post != nil && !hasFlag(rest, "--json") { // a script that asks for --json gets the run as it is
 				// A follow-up round is about the user's own threads on the PR, so it can always be posted: the view offers
 				// the decisions, and nothing goes up until the user picks one.
 				comment = true

@@ -93,13 +93,28 @@ func TestRunReviewEngine_NeverPostsAFailedOrEmptyRun(t *testing.T) {
 
 	empty := newPostFixture(t, "printf '%s' '{\"output\":\"  \"}'", 0)
 	err = runReview(reviewContext(t, true), []string{empty.engine}, os.Environ(), time.Now().Add(10*time.Second))
-	require.ErrorIs(t, err, review.ErrNoReviewText)
+	require.ErrorAs(t, err, &exit, "said in words on the terminal, so only the exit status comes back")
 	require.NoFileExists(t, empty.ghArgs)
 
 	timedOut := newPostFixture(t, "printf '%s' '{\"output\":\"\",\"error\":\"Timeout after 2m 54s\"}'", 0)
 	err = runReview(reviewContext(t, true), []string{timedOut.engine}, os.Environ(), time.Now().Add(10*time.Second))
-	require.ErrorContains(t, err, "Timeout after 2m 54s")
+	require.ErrorAs(t, err, &exit)
 	require.NoFileExists(t, timedOut.ghArgs)
+
+	outOfSteps := newPostFixture(t, "printf '%s' '{\"output\":\"\",\"error\":\"Max steps reached (5)\"}'\nexit 1", 0)
+	err = runReview(reviewContext(t, true), []string{outOfSteps.engine}, os.Environ(), time.Now().Add(10*time.Second))
+	require.ErrorAs(t, err, &exit)
+	require.NoFileExists(t, outOfSteps.ghArgs)
+
+	lastStep := newPostFixture(t, "printf '%s' '{\"output\":\"Approve.\",\"error\":\"Max steps reached (5)\"}'\nexit 1", 0)
+	require.NoError(t, runReview(reviewContext(t, true), []string{lastStep.engine}, os.Environ(), time.Now().Add(10*time.Second)), "a review written on the last step is a review")
+	require.FileExists(t, lastStep.ghArgs)
+
+	killed := newPostFixture(t, "printf '%s' '{\"output\":\"Approve.\",\"error\":\"Max steps reached (5)\"}'\nexit 2", 0)
+	err = runReview(reviewContext(t, true), []string{killed.engine}, os.Environ(), time.Now().Add(10*time.Second))
+	require.ErrorAs(t, err, &exit, "any other exit is a failed run, whatever it printed")
+	require.Equal(t, 2, exit.Code, "and its own status comes back")
+	require.NoFileExists(t, killed.ghArgs)
 }
 
 func TestRunReviewEngine_ReportsAFailedPost(t *testing.T) {
@@ -114,6 +129,9 @@ func TestReviewArgs_CommentNeedsAPullRequest(t *testing.T) {
 
 	_, err = reviewArgs(t.Context(), "", config.ReviewConfig{}, nil, nil, []string{"42;rm", "--comment"})
 	require.ErrorIs(t, err, review.ErrNoPR, "--comment with a PR reference is parsed like any review")
+
+	_, err = reviewArgs(t.Context(), "", config.ReviewConfig{}, nil, nil, []string{"--comment", "--no-comment"})
+	require.ErrorIs(t, err, errCommentBoth)
 }
 
 // asked sets up what the person at the terminal does: nobody there, or answering with line.
