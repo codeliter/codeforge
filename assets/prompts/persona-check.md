@@ -14,6 +14,8 @@ Go through the draft rule by rule and correct it:
 - Remove anything that belongs to another activity than this section's.
 - Remove any secret, token, hostname, customer data or personal data; use a placeholder.
 
+Cut it to {{words}} words at most, dropping the rules with the least evidence first.
+
 A section left with nothing reads exactly "No evidence yet."
 
 Output only the corrected body of the section, without its heading. No preamble, no notes on what you changed.

@@ -14,4 +14,6 @@ How to weigh the evidence:
 
 Be specific and prescriptive: say what to do, not what they value. Quote at most 3 short real examples and never include secrets, tokens, hostnames, customer data or personal data; replace any with placeholders.
 
+Keep it to {{words}} words at most: the rules that change what an agent does, not a description of the history. A shorter section that is followed beats a longer one that is skimmed.
+
 Output only the body of the section, in Markdown, without its heading. No preamble.

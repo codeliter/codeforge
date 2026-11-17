@@ -33,7 +33,9 @@ const (
 	// learnParallel is how many activities are learned at once.
 	learnParallel = 3
 	noEvidence    = "No evidence yet."
-	rulesSection  = "Do and don't"
+	// sectionWords is how long a learned section may be: enough for its rules, short enough to be followed.
+	sectionWords = 350
+	rulesSection = "Do and don't"
 )
 
 // evidenceKind is one kind of history: something the user did that shows how they work.
@@ -316,7 +318,7 @@ func learnFacet(ctx context.Context, bin, model string, f facet, histories []rep
 	if history == "" {
 		return noEvidence, nil
 	}
-	fill := strings.NewReplacer("{{section}}", f.title, "{{brief}}", f.brief)
+	fill := strings.NewReplacer("{{section}}", f.title, "{{brief}}", f.brief, "{{words}}", strconv.Itoa(sectionWords))
 	input := "<history>\n" + history + "\n</history>"
 	draft, err := distil(ctx, bin, model, fill.Replace(assets.InitPrompt), input)
 	if err != nil {

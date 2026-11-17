@@ -34,6 +34,7 @@ Everyday:
   persona update [--section NAME]... [REPO...]
                                      Relearn your global persona from where it was learned (and REPO...); shows
                                      what changed and replaces only the sections you tick. persona revert undoes it
+  persona clear                      Remove your global persona; persona revert puts it back
   persona share                      Put your persona for this repository into it (.codeforge/persona.md) to commit
   persona list | forget [NAME]       List your private repository personas, or remove one (this repository's by default)
   sessions [--all] [--list]          Search this directory's sessions (--all: every project's, from its root) by

@@ -27,6 +27,7 @@ const (
 var (
 	errNoGlobalPersona = errors.New("there is no global persona to update; set one with codeforge init --global")
 	errNoPrevious      = errors.New("there is no earlier persona to put back")
+	errNothingToClear  = errors.New("there is no global persona to clear")
 	errUnknownSection  = errors.New("unknown persona section")
 )
 
@@ -73,7 +74,7 @@ func runPersonaUpdate(ctx context.Context, home, bin string, cfg config.Config, 
 	}
 	fitted, err := reconcilePersona(home, before, persona)
 	if err != nil {
-		return err
+		return keepLearned(true, persona, err)
 	}
 	if fitted.keep {
 		fmt.Fprintln(os.Stderr, "codeforge: your persona is unchanged.")
@@ -83,10 +84,28 @@ func runPersonaUpdate(ctx context.Context, home, bin string, cfg config.Config, 
 		return recordLearned(home, repos, cfg.Init, fitted.fresh && len(only) == 0)
 	})
 	if err != nil {
-		return err
+		return keepLearned(true, persona, err)
 	}
 	fmt.Fprintf(os.Stderr, "codeforge: global persona updated at %s. Undo with codeforge persona revert.\n", p)
 	return nil
+}
+
+// keepLearned keeps a persona that was learned and then could not be saved, so the model calls that made it are not
+// lost, and says where it is with the error. Only the user can read the file.
+func keepLearned(learned bool, persona []byte, err error) error {
+	if !learned || len(persona) == 0 {
+		return err
+	}
+	f, tmpErr := os.CreateTemp("", "codeforge-persona-*.md")
+	if tmpErr != nil {
+		return err
+	}
+	_, tmpErr = f.Write(persona)
+	if tmpErr = errors.Join(tmpErr, f.Close()); tmpErr != nil {
+		_ = os.Remove(f.Name()) //nolint:errcheck // a partial copy is of no use
+		return err
+	}
+	return fmt.Errorf("%w\nThe persona that was learned is kept at %s, so it need not be learned again", err, f.Name())
 }
 
 // sectionNamed is the learnable section a user named, in any case.
@@ -113,6 +132,11 @@ func revertPersona(ctx context.Context, home string, w io.Writer) error {
 	if err != nil || strings.TrimSpace(string(previous)) == "" {
 		return errNoPrevious
 	}
+	current, err := personaSnapshot(home)
+	if err != nil {
+		return err
+	}
+	cleared := strings.TrimSpace(string(current)) == ""
 	// Read before the save, which keeps the current source in this file's place.
 	source, err := os.ReadFile(filepath.Join(config.Dir(home), previousSourceFile))
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -135,7 +159,57 @@ func revertPersona(ctx context.Context, home string, w io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("putting back the persona: %w", err)
 	}
+	if cleared {
+		// Nothing was replaced, so there is no earlier persona left to go back to.
+		for _, name := range []string{previousPersonaFile, previousSourceFile} {
+			_ = os.Remove(filepath.Join(config.Dir(home), name)) //nolint:errcheck // a leftover copy only repeats this revert
+		}
+		fmt.Fprintf(w, "codeforge: put back the persona that was cleared, at %s.\n", p)
+		return nil
+	}
 	fmt.Fprintf(w, "codeforge: put back the earlier persona at %s. Run it again to undo.\n", p)
+	return nil
+}
+
+// clearPersona removes the global persona and its skills' content. It is kept, with the record of where it came
+// from, as the persona a save replaced, so codeforge persona revert puts it back.
+func clearPersona(ctx context.Context, home string, w io.Writer) error {
+	unlock, err := guard.LockContext(ctx, config.Dir(home))
+	if err != nil {
+		return fmt.Errorf("clearing the persona: %w", err)
+	}
+	defer unlock()
+	current, err := personaSnapshot(home)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(string(current)) == "" {
+		return errNothingToClear
+	}
+	dir := config.Dir(home)
+	source, err := os.ReadFile(filepath.Join(dir, personaSourceFile))
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("reading the persona's source to keep a copy of it: %w", err)
+	}
+	err = allOrNothing(home, func() error {
+		if err := fsutil.AtomicWriteFile(filepath.Join(dir, previousPersonaFile), current, privateFile); err != nil {
+			return fmt.Errorf("keeping a copy: %w", err)
+		}
+		if err := fsutil.AtomicWriteFile(filepath.Join(dir, previousSourceFile), source, privateFile); err != nil {
+			return fmt.Errorf("keeping a copy of its source: %w", err)
+		}
+		if err := removePersona(home); err != nil {
+			return err
+		}
+		if err := os.Remove(filepath.Join(dir, personaSourceFile)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("removing the source record: %w", err)
+		}
+		return installPersonaSkill(home)
+	})
+	if err != nil {
+		return fmt.Errorf("clearing the persona: %w", err)
+	}
+	fmt.Fprintf(w, "codeforge: cleared your global persona; codeforge now follows its generic voice and code skills. A copy is kept as %s: codeforge persona revert puts it back.\n", filepath.Join(dir, previousPersonaFile))
 	return nil
 }
 

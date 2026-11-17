@@ -206,3 +206,59 @@ func TestCommitPersona_AFailedRecordPutsEverythingBack(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(skill), "# First")
 }
+
+func TestClearPersona_RemovesItAndRevertPutsItBackWithItsSource(t *testing.T) {
+	home := t.TempDir()
+	var out strings.Builder
+	require.ErrorIs(t, runPersona(t.Context(), home, []string{"clear"}, &out), errNothingToClear)
+	require.ErrorIs(t, runPersona(t.Context(), home, []string{"clear", "x"}, &out), errPersonaUsage)
+
+	doc := "# Persona\n\nCareful.\n\n## Voice\nPlain.\n\n## Code style\nEarly returns.\n"
+	_, err := savePersona(home, []byte(doc))
+	require.NoError(t, err)
+	require.NoError(t, savePersonaSource(home, personaSource{Kind: sourceKindLearned, Repos: []string{"/work/api"}}))
+	require.NoError(t, os.WriteFile(filepath.Join(personaDir(home), "scratch.txt"), []byte("mine"), privateFile))
+
+	require.NoError(t, runPersona(t.Context(), home, []string{"clear"}, &out))
+	got, err := readPersona(home)
+	require.NoError(t, err)
+	require.Nil(t, got)
+	_, known := globalPersonaSource(home, nil)
+	require.False(t, known, "the record of where it came from goes with it")
+	skill, err := os.ReadFile(filepath.Join(home, ".empryo", "skills", "codeforge-persona", "SKILL.md"))
+	require.NoError(t, err)
+	require.Contains(t, string(skill), "No persona yet.")
+	require.NotContains(t, string(skill), "Careful.")
+	code, err := os.ReadFile(filepath.Join(home, ".empryo", "skills", "codeforge-persona-code", "SKILL.md"))
+	require.NoError(t, err)
+	require.NotContains(t, string(code), "Early returns.")
+	_, err = os.Stat(filepath.Join(personaDir(home), "scratch.txt"))
+	require.NoError(t, err, "what is not a section file stays")
+
+	require.NoError(t, runPersona(t.Context(), home, []string{"revert"}, &out))
+	got, err = readPersona(home)
+	require.NoError(t, err)
+	require.Equal(t, doc, string(got))
+	src, known := globalPersonaSource(home, nil)
+	require.True(t, known)
+	require.Equal(t, []string{"/work/api"}, src.Repos)
+	require.ErrorIs(t, runPersona(t.Context(), home, []string{"revert"}, &out), errNoPrevious, "nothing was replaced, so there is nothing further back")
+}
+
+func TestKeepLearned_AFailedSaveDoesNotLoseWhatWasLearned(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir())
+	err := keepLearned(true, []byte("# Learned\n"), errRepoPersonaSize)
+	require.ErrorIs(t, err, errRepoPersonaSize)
+	_, path, found := strings.Cut(err.Error(), "is kept at ")
+	require.True(t, found)
+	path, _, _ = strings.Cut(path, ",")
+	data, readErr := os.ReadFile(path)
+	require.NoError(t, readErr)
+	require.Equal(t, "# Learned\n", string(data))
+	info, statErr := os.Stat(path)
+	require.NoError(t, statErr)
+	require.Equal(t, os.FileMode(privateFile), info.Mode().Perm())
+
+	require.Equal(t, errRepoPersonaSize, keepLearned(false, []byte("# Starter\n"), errRepoPersonaSize), "a starter is not learned, so there is nothing to keep")
+	require.Equal(t, errRepoPersonaSize, keepLearned(true, nil, errRepoPersonaSize))
+}

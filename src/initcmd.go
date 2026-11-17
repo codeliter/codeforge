@@ -91,7 +91,7 @@ func runInit(ctx context.Context, home, bin string, cfg config.Config, args []st
 	}
 	fitted, err := reconcilePersona(home, before, persona)
 	if err != nil {
-		return err
+		return keepLearned(ans.source == sourceLearn, persona, err)
 	}
 	if fitted.keep {
 		fmt.Fprintln(os.Stderr, "codeforge: your persona is unchanged.")
@@ -110,7 +110,7 @@ func runInit(ctx context.Context, home, bin string, cfg config.Config, args []st
 		return recordLearned(home, absolutePaths(config.SplitList(ans.repos)), cfg.Init, fitted.fresh)
 	})
 	if err != nil {
-		return err
+		return keepLearned(ans.source == sourceLearn, persona, err)
 	}
 
 	fmt.Fprintf(os.Stderr, "codeforge: global persona written to %s. It applies in every repository.\n", p)
@@ -151,7 +151,7 @@ func initRepo(ctx context.Context, home, bin, model string, ans initAnswers) err
 
 	p, err := saveRepoPersona(ctx, home, root, persona)
 	if err != nil {
-		return err
+		return keepLearned(ans.source == sourceLearn, persona, err)
 	}
 
 	fmt.Fprintf(os.Stderr, "codeforge: persona for this repository written to %s. It is yours alone and nothing was added to the repository; codeforge persona share puts it there for your team.\n", p)

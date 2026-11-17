@@ -20,7 +20,7 @@ import (
 // built-in starter, or learned from the user's history in some repositories), and this repository's own, which
 // overrides it where they differ. It only reads.
 
-var errPersonaUsage = errors.New("usage: codeforge persona [describe] [--full] | update [--section NAME]... [REPO...] | revert | share | list | forget [NAME]")
+var errPersonaUsage = errors.New("usage: codeforge persona [describe] [--full] | update [--section NAME]... [REPO...] | revert | clear | share | list | forget [NAME]")
 
 // personaSourceFile records where the global persona came from, beside it.
 const personaSourceFile = "persona.source.json"
@@ -94,6 +94,12 @@ func runPersona(ctx context.Context, home string, args []string, w io.Writer) er
 			return errPersonaUsage
 		}
 		return revertPersona(ctx, home, w)
+	}
+	if len(args) > 0 && args[0] == "clear" {
+		if len(args) > 1 {
+			return errPersonaUsage
+		}
+		return clearPersona(ctx, home, w)
 	}
 	if len(args) > 0 && args[0] == "list" {
 		if len(args) > 1 {

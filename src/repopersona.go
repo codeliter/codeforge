@@ -25,9 +25,11 @@ import (
 const (
 	// A repository persona is a directory, one file a section, like the global one; a single persona.md from before
 	// is read as it is.
-	repoPersonaDirPath  = ".codeforge/persona"
-	repoPersonaPath     = ".codeforge/persona.md"
-	maxRepoPersonaBytes = 20_000
+	repoPersonaDirPath = ".codeforge/persona"
+	repoPersonaPath    = ".codeforge/persona.md"
+	// maxRepoPersonaBytes bounds a repository persona. A learned one has six sections of up to sectionWords words,
+	// which comes to well under half of this.
+	maxRepoPersonaBytes = 40_000
 	// maxRepoPersonaRaw bounds a persona on disk, blank lines and all, before it is parsed.
 	maxRepoPersonaRaw = 2 * maxRepoPersonaBytes
 	// maxRepoSections bounds how many section files a repository persona has.

@@ -50,7 +50,7 @@ func TestGHShimNeverCountsAsHelp(t *testing.T) {
 	}
 	require.False(t, ReadOnlyCodeforge([]string{"persona", "set"}))
 	require.True(t, ReadOnlyCodeforge([]string{"persona", "list"}))
-	for _, writes := range []string{"share", "update", "revert", "forget"} {
+	for _, writes := range []string{"share", "update", "revert", "forget", "clear"} {
 		require.False(t, ReadOnlyCodeforge([]string{"persona", writes}), writes)
 	}
 	require.False(t, ReadOnlyCodeforge([]string{"models", "set", "review.model", "x"}))
