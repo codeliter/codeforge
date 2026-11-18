@@ -9,6 +9,7 @@ require (
 	github.com/charmbracelet/bubbletea v1.3.6
 	github.com/charmbracelet/huh v0.7.0
 	github.com/charmbracelet/x/ansi v0.9.3
+	github.com/creack/pty v1.1.24
 	github.com/google/uuid v1.6.0
 	github.com/rivo/uniseg v0.4.7
 	github.com/stretchr/testify v1.12.1
