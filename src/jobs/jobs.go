@@ -377,7 +377,14 @@ func ParseDuration(s string) (time.Duration, error) {
 
 // Status is the job's state in one line, with the countdown to what it waits for.
 func (j *Job) Status(now time.Time) string {
-	parts := []string{fmt.Sprintf("%s %s", j.ID, j.State)}
+	parts := append([]string{fmt.Sprintf("%s %s", j.ID, j.State)}, j.Progress(now)...)
+	return strings.Join(parts, " · ") + " — " + j.Title()
+}
+
+// Progress is how far the job is, each fact a part: what it waits for and for how long, how long it has run, or how
+// it ended.
+func (j *Job) Progress(now time.Time) []string {
+	var parts []string
 	switch j.State {
 	case Waiting:
 		if now.Before(j.At) {
@@ -413,7 +420,7 @@ func (j *Job) Status(now time.Time) string {
 			parts = append(parts, j.Reason)
 		}
 	}
-	return strings.Join(parts, " · ") + " — " + j.Title()
+	return parts
 }
 
 // Countdown writes d to the second, such as 1h02m03s.

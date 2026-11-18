@@ -3,6 +3,7 @@ package guard
 
 import (
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -96,8 +97,28 @@ func TestCheck_SelfStillGuarded(t *testing.T) {
 	in = input(t, "Bash", map[string]any{"command": "cd " + sub + " && sh -c 'sh rec.sh'"})
 	in.Cwd = t.TempDir()
 	require.False(t, DecideOutsideReview(in).Allow, "an inner shell starts where the cd left it")
-	require.True(t, printsOnlyCodeforge([]string{"codeforge", "job", "wait", "j1"}), "review mode may watch a job")
-	require.False(t, printsOnlyCodeforge([]string{"codeforge", "job", "add", "--at", "1:00", "--", "x"}), "but not schedule one")
+	for _, tt := range []struct {
+		args []string
+		read bool
+	}{
+		{args: []string{"job", "list"}, read: true},
+		{args: []string{"job", "show", "j1"}, read: true},
+		{args: []string{"job", "wait", "j1"}, read: true},
+		{args: []string{"job", "log", "j1"}, read: true},
+		{args: []string{"job", "watch"}, read: true},
+		{args: []string{"job", "watch", "j1"}, read: true},
+		{args: []string{"job", "watch", "j1", "j2"}},
+		{args: []string{"job", "show"}},
+		{args: []string{"job", "add", "--at", "1:00", "--", "x"}},
+		{args: []string{"job", "cancel", "j1"}},
+		{args: []string{"job", "run", "j1"}},
+		{args: []string{"job"}},
+	} {
+		t.Run(strings.Join(tt.args, " "), func(t *testing.T) {
+			require.Equal(t, tt.read, printsOnlyCodeforge(append([]string{"codeforge"}, tt.args...)), "review mode may watch a job, but not schedule, cancel or run one")
+			require.Equal(t, tt.read, ReadOnlyCodeforge(tt.args), "and a call that only reads starts no repair")
+		})
+	}
 	require.Equal(t, []string{"a | b", "c", "'make' '' 'deploy'"}, JobCommands([]string{"--until", "a | b", "--name", "n", "--while", "c", "--", "make", "", "deploy"}))
 	for _, cmd := range []string{"codeforge models", "codeforge models recommend", "codeforge gate", "codeforge gate accepted", "codeforge learn list", "codeforge provider", "codeforge provider show", "codeforge providers list"} {
 		require.Empty(t, rules(Check(cmd, false)), cmd)

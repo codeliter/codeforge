@@ -33,6 +33,7 @@ Everyday:
                                      Run COMMAND once it is TIME and every --until check passes (for --hold);
                                      a failing --while check cancels it. Survives the session and posts the
                                      result back into it. Also: job list | show ID | wait ID | log ID | cancel ID
+                                     job watch [ID] redraws the job, its checks and the end of its log as they change
   persona describe [--full]          Summarise your global and repository personas and where each came from;
                                      --full prints them whole
   persona update [--section NAME]... [REPO...]

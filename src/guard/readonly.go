@@ -57,7 +57,8 @@ func printsOnlyCodeforge(w []string) bool {
 		return len(args) == 2 && args[1] == "accepted"
 	case "job":
 		// Watching jobs only reads; scheduling or cancelling one is a write.
-		return len(args) == 2 && args[1] == "list" || len(args) == 3 && slices.Contains([]string{"show", "wait", "log"}, args[1])
+		return len(args) == 2 && (args[1] == "list" || args[1] == "watch") ||
+			len(args) == 3 && slices.Contains([]string{"show", "watch", "wait", "log"}, args[1])
 	case "review":
 		// Listing the findings accepted on a PR: `review accepted PR [--repo OWNER/NAME]`.
 		return len(args) >= 3 && args[1] == "accepted" && (len(args) == 3 || len(args) == 5 && args[3] == "--repo")

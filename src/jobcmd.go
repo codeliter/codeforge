@@ -22,7 +22,7 @@ import (
 
 var (
 	errJobUsage = errors.New("usage: codeforge job add [--name N] [--at TIME] [--until CMD]... [--while CMD]... " +
-		"[--hold DUR] [--every DUR] [--expire DUR] -- COMMAND | list | show ID | wait ID | log ID | cancel ID")
+		"[--hold DUR] [--every DUR] [--expire DUR] -- COMMAND | list | show ID | watch [ID] | wait ID | log ID | cancel ID")
 	errJobInReview   = errors.New("review mode is read-only: a job cannot be scheduled from a review")
 	errJobGuard      = errors.New("codeforge will not schedule this")
 	errJobNoCommand  = errors.New("give the command to run after --")
@@ -60,14 +60,19 @@ func runJob(ctx context.Context, home string, args []string, w io.Writer) error 
 	case args[0] == "add":
 		return jobAdd(ctx, st, args[1:], w, time.Now())
 	case args[0] == "list" && len(args) == 1:
-		return jobList(st, w, time.Now())
+		return jobList(ctx, st, w, time.Now())
 	case args[0] == "show" && len(args) == 2:
 		j, err := st.Load(args[1])
 		if err != nil {
 			return err
 		}
-		fmt.Fprintln(w, jobDetail(j, time.Now()))
+		f, ok := w.(*os.File)
+		// Off a terminal it is likely an agent that reads this, so what the job printed is fenced as data.
+		fenced := !ok || !term.IsTerminal(int(f.Fd()))
+		fmt.Fprintln(w, jobDetail(j, time.Now(), codeStyleFor(ctx, w), st.LogPath(j.ID), fenced))
 		return nil
+	case args[0] == "watch" && len(args) <= 2:
+		return jobWatch(ctx, st, first(args[1:]), w)
 	case args[0] == "wait" && len(args) == 2:
 		return jobWait(ctx, st, args[1], w)
 	case args[0] == "log" && len(args) == 2:
@@ -87,7 +92,7 @@ func runJob(ctx context.Context, home string, args []string, w io.Writer) error 
 		return jobCancel(ctx, st, args[1], w)
 	case args[0] == "run" && len(args) == 2:
 		return jobRun(ctx, home, st, args[1])
-	case slices.Contains([]string{"add", "list", "show", "wait", "log", "cancel", "run"}, args[0]):
+	case slices.Contains([]string{"add", "list", "show", "watch", "wait", "log", "cancel", "run"}, args[0]):
 		return errJobUsage
 	}
 	return fmt.Errorf("%w\n%w", noSuchCommand(append([]string{"job"}, args...)), errJobUsage)
@@ -315,47 +320,17 @@ func statusKey(j *jobs.Job) string {
 	return b.String()
 }
 
-func jobList(st jobs.Store, w io.Writer, now time.Time) error {
+func jobList(ctx context.Context, st jobs.Store, w io.Writer, now time.Time) error {
 	list, err := st.List()
 	if err != nil {
 		return err //nolint:wrapcheck // says what failed
 	}
 	if len(list) == 0 {
 		fmt.Fprintln(w, "codeforge job: no jobs.")
+		return nil
 	}
-	for _, j := range list {
-		fmt.Fprintln(w, j.Status(now))
-	}
+	fmt.Fprint(w, jobTable(list, now, codeStyleFor(ctx, w)))
 	return nil
-}
-
-func jobDetail(j *jobs.Job, now time.Time) string {
-	var b strings.Builder
-	b.WriteString(j.Status(now) + "\n")
-	fmt.Fprintf(&b, "command: %s\ndir: %s\n", j.Command, j.Dir)
-	for _, c := range j.Until {
-		fmt.Fprintf(&b, "until: %s (%s)\n", c.Command, checkState(c))
-	}
-	for _, c := range j.While {
-		fmt.Fprintf(&b, "while: %s (%s)\n", c.Command, checkState(c))
-	}
-	if j.Session != "" {
-		fmt.Fprintf(&b, "posts back to session %s in %s\n", j.Session, j.Workspace)
-	}
-	if j.State.Final() {
-		b.WriteString(j.Result())
-	}
-	return strings.TrimRight(b.String(), "\n")
-}
-
-func checkState(c jobs.Check) string {
-	switch {
-	case c.At.IsZero():
-		return "not run yet"
-	case c.Passing:
-		return "passing"
-	}
-	return fmt.Sprintf("failing, exit %d", c.Exit)
 }
 
 // reviveJobs starts a runner again for each job that needs one and has none, such as after a restart: a waiting job

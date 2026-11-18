@@ -135,11 +135,7 @@ func runSessions(ctx context.Context, home string, args []string, w io.Writer) (
 // pickSession shows the sessions under a search box, each mode's under its own heading, and returns the index of the
 // one picked, -1 when the user left.
 func pickSession(sessions []sessionInfo, now time.Time, all bool, wd string) (int, error) {
-	options := make([]forms.Option, len(sessions))
-	for i, s := range sessions {
-		label, detail := splitDetails(sessionLabel(s, now, all), all)
-		options[i] = forms.Option{Label: label, Detail: detail, Value: strconv.Itoa(i), Group: modeHeading(s.Mode)}
-	}
+	options := sessionOptions(sessions, now, all)
 	where := "in " + filepath.Base(wd)
 	if all {
 		where = "in every project"
@@ -162,6 +158,17 @@ func pickSession(sessions []sessionInfo, now time.Time, all bool, wd string) (in
 		return -1, fmt.Errorf("%w: the picker answered %q", errSessionPick, a.Value)
 	}
 	return i, nil
+}
+
+// sessionOptions are the sessions as the picker offers them: each under the heading of its mode, and answering with
+// its place in sessions, so the one picked is found whatever order the picker shows them in.
+func sessionOptions(sessions []sessionInfo, now time.Time, all bool) []forms.Option {
+	options := make([]forms.Option, len(sessions))
+	for i, s := range sessions {
+		label, detail := splitDetails(sessionLabel(s, now, all), all)
+		options[i] = forms.Option{Label: label, Detail: detail, Value: strconv.Itoa(i), Group: modeHeading(s.Mode)}
+	}
+	return options
 }
 
 // splitDetails splits a session line into its columns and the details after them. The columns are a fixed width, so

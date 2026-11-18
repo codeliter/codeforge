@@ -42,7 +42,7 @@ var completionTree = []struct {
 		{"accepted", "List the accepted findings"}, {"reset", "Allow more gate runs on this branch"},
 	}},
 	{word{"job", "Run a command once its preconditions hold"}, []word{
-		{"add", "Schedule a command"}, {"list", "List the jobs"}, {"show", "Show a job"}, {"wait", "Show the countdown, then the result"},
+		{"add", "Schedule a command"}, {"list", "List the jobs"}, {"show", "Show a job"}, {"watch", "Watch a job, or all, as it changes"}, {"wait", "Show the countdown, then the result"},
 		{"log", "Show a job's log"}, {"cancel", "Cancel a job"}, {"--at", "Earliest start time"}, {"--until", "A check that must pass first"},
 		{"--while", "A check that must keep passing"}, {"--hold", "How long the checks must pass"}, {"--every", "How often to check"},
 		{"--expire", "When to give up waiting"}, {"--name", "A name for the job"},
