@@ -152,6 +152,11 @@ func codeSnippetFocus(content, file string, fc focus, st codeStyle) string {
 	if from, to := addedDeclaration(file, all, lo, hi, fc.Added); from > 0 {
 		first, last = from, to
 	}
+	// So is a constant or variable the change adds with a value of several lines (a list, a map, a tuple): it is
+	// shown to its last entry, with the lines around the finding.
+	if from, to := addedValue(file, all, lo, hi, fc.Added); from > 0 {
+		first, last = min(first, from), max(last, to)
+	}
 	header := enclosingHeader(all, lo)
 	switch {
 	case header >= first:
@@ -647,6 +652,93 @@ func addedDeclaration(file string, all []string, lo, hi int, added map[int]bool)
 		}
 	}
 	return 0, 0
+}
+
+// addedValue returns the first and last line of the constant or variable that lines lo to hi sit in when its value
+// runs over several lines in brackets (a list, array, slice, map, dictionary, tuple or other collection, or a block
+// of constants), the change adds every line of it and it has at most maxAddedLines lines: the outermost such one. It
+// returns 0, 0 when there is none, or when what the change adds is not known.
+func addedValue(file string, all []string, lo, hi int, added map[int]bool) (from, to int) {
+	if len(added) == 0 {
+		return 0, 0
+	}
+	code, _, _, ok := scanLines(file, all)
+	if !ok {
+		return 0, 0
+	}
+	for n := lo; n >= 1 && hi-n < maxAddedLines; n-- {
+		if !valueStart(code[n-1]) {
+			continue
+		}
+		end, sure := valueEnd(code, n)
+		if !sure || end < hi || end-n+1 > maxAddedLines {
+			continue
+		}
+		whole := true
+		for k := n; k <= end && whole; k++ {
+			whole = strings.TrimSpace(all[k-1]) == "" || added[k]
+		}
+		if whole {
+			from, to = n, end
+		}
+	}
+	return from, to
+}
+
+// valueBlock matches the opening of a block of constants or variables, as Go writes them.
+var valueBlock = regexp.MustCompile(`^(var|const)\s*\($`)
+
+// notValues are the words that start a statement which may hold an assignment and is no declaration of a value.
+var notValues = map[string]bool{
+	"if": true, "elif": true, "else": true, "for": true, "while": true, "switch": true, "case": true, "return": true,
+	"match": true, "when": true, "unless": true, "until": true, "with": true, "yield": true, "await": true,
+}
+
+// valueStart reports whether a line of code, its comments and strings blanked, starts a constant or variable whose
+// value goes on past the line: it assigns, outside any bracket, and ends with a bracket still open.
+func valueStart(code string) bool {
+	t := strings.TrimSpace(code)
+	if valueBlock.MatchString(t) {
+		return true
+	}
+	if notValues[leadingWord.FindString(t)] {
+		return false
+	}
+	r := []rune(t)
+	depth, assigned := 0, false
+	for i := 0; i < len(r); i++ {
+		switch c := r[i]; {
+		case strings.ContainsRune("([{", c):
+			depth++
+		case strings.ContainsRune(")]}", c):
+			depth--
+		case c == '=' && depth == 0:
+			if i+1 < len(r) && (r[i+1] == '=' || r[i+1] == '>') {
+				i++ // a comparison or an arrow
+				continue
+			}
+			// "x = [" and "x := [" declare; "x += [" and "x <= (" do not.
+			if i == 0 || !strings.ContainsRune("=!<>+-*/%&|^~", r[i-1]) {
+				assigned = true
+			}
+		}
+	}
+	return assigned && depth > 0
+}
+
+// valueEnd is the line where the brackets a value opens at line start are closed again, and whether they are.
+func valueEnd(code []string, start int) (int, bool) {
+	var scan braceScan
+	for n := start; n <= len(code); n++ {
+		scan.line(code[n-1])
+		switch {
+		case scan.depth < 0:
+			return 0, false
+		case scan.depth == 0:
+			return n, true
+		}
+	}
+	return 0, false
 }
 
 // enclosingSpan returns the first and last line of the largest construct around lines lo to hi that has at most

@@ -52,6 +52,9 @@ func main() {
 // ask shows the form on the alternate screen. Drawing in place leaves stale copies of earlier frames in some
 // terminals; a full-screen form is cleared and restored as a whole.
 func ask(f forms.Form) (forms.Answers, error) {
+	if f.Steps != nil {
+		return showSteps(*f.Steps)
+	}
 	if f.Accordion != nil {
 		return showAccordion(*f.Accordion)
 	}

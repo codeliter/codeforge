@@ -1,6 +1,7 @@
 package src
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -68,8 +69,10 @@ func TestStartWalkthrough_WritesItInAForkInTheBackground(t *testing.T) {
 	require.Equal(t, "--fork\nrev-1\n--profile\ncodeforge-review\n--headless\n"+walkthroughPrompt()+"\n", string(args),
 		"a fork of the review's session, so the session itself stays free for questions and the chat")
 
-	old := showAccordion
-	t.Cleanup(func() { showAccordion = old })
+	old, oldSteps := showAccordion, showSteps
+	t.Cleanup(func() { showAccordion, showSteps = old, oldSteps })
+	// A forms helper too old for steps: the accordion it knows is shown instead.
+	showSteps = func(string, forms.Steps) (string, error) { return "", forms.ErrOldHelper }
 	shown := 0
 	showAccordion = func(string, forms.Accordion) (string, []forms.Change, error) { shown++; return "", nil, nil }
 	showWalkthrough(t.Context(), job)
@@ -120,4 +123,110 @@ func TestParseWalkthrough_Requirements(t *testing.T) {
 	w, err = parseWalkthrough("x\n- `a.go:1` — y\nNot covered: none.")
 	require.NoError(t, err)
 	require.Empty(t, w.Uncovered)
+}
+
+func TestWalkthroughSteps_OneStopAScreenUnderAnOverview(t *testing.T) {
+	w, err := parseWalkthrough(walkReply)
+	require.NoError(t, err)
+	code := func(file string, _ focus) string { return "  " + file + " code" }
+	s := walkthroughSteps(w, codeStyle{width: 100}, code, false)
+	require.Equal(t, "Walkthrough", s.Title)
+	require.Empty(t, s.Keys)
+	require.Len(t, s.Items, 4)
+	require.Equal(t, "Overview", s.Items[0].Tab)
+	require.Contains(t, s.Items[0].Body, "Adds Ludo as a game")
+	require.Contains(t, s.Items[0].Body, " 2  app/Games/Ludo/LudoHandler.php:520-540  Ends the game and gives the winner a…", "the overview lists the stops")
+	require.Equal(t, "2", s.Items[2].Tab)
+	require.True(t, strings.HasPrefix(s.Items[2].Body, "app/Games/Ludo/LudoHandler.php:520-540\nEnds the game"))
+	require.Contains(t, s.Items[2].Body, "app/Games/Ludo/LudoHandler.php code")
+	require.Empty(t, s.Items[2].Group)
+
+	w, err = parseWalkthrough("Adds Ludo.\n- `a.php:40` — Ranks the players. Requirement: the finisher ranks first – not met: sorts by score only.\nNot covered: reconnects.")
+	require.NoError(t, err)
+	s = walkthroughSteps(w, codeStyle{width: 100}, nil, false)
+	require.Equal(t, "not met", s.Items[1].Status, "the strip says whether the stop does what was asked")
+	require.Contains(t, s.Items[0].Body, "Not covered by the change: reconnects.")
+}
+
+func TestFollowUpWalkthrough_GroupsTheStopsByWhatTheyAnswer(t *testing.T) {
+	reply := "Two of the three comments were taken up, and the cache moved.\n\n" +
+		"- `cache.go:12` — The cache now lives in its own type.\n" +
+		"- `a.go:40` — The error is returned now. Answers: the swallowed error in `load`.\n" +
+		"- `b.go:7` — The loop answers: stop, at the limit. answers: the unbounded retry\n" +
+		"Not addressed: the missing test for an empty list.\n"
+	w, err := parseWalkthrough(reply)
+	require.NoError(t, err)
+	asFollowUp(&w)
+	require.Equal(t, []string{"a.go", "b.go", "cache.go"}, []string{w.Stops[0].Path, w.Stops[1].Path, w.Stops[2].Path}, "what answers a comment comes first")
+	require.Equal(t, walkStop{Path: "a.go", Line: 40, Text: "The error is returned now.", Answers: "the swallowed error in `load`."}, w.Stops[0])
+	require.Equal(t, "the unbounded retry", w.Stops[1].Answers)
+	require.Equal(t, "the missing test for an empty list.", w.Unaddressed)
+
+	s := walkthroughSteps(w, codeStyle{width: 100}, nil, true)
+	require.Equal(t, "Changes since your review", s.Title)
+	require.Equal(t, []forms.Action{{Key: keyWhole, Label: "the whole change"}}, s.Keys)
+	require.Equal(t, []string{"", "Your comments", "Your comments", "Other changes"}, []string{s.Items[0].Group, s.Items[1].Group, s.Items[2].Group, s.Items[3].Group})
+	require.Equal(t, "answers your comment", s.Items[1].Status)
+	require.Empty(t, s.Items[3].Status)
+	require.Contains(t, s.Items[1].Body, "Answers your comment: the swallowed error in load.")
+	require.Contains(t, s.Items[0].Body, "Not addressed: the missing test for an empty list.")
+	require.Contains(t, walkthroughView(w, codeStyle{width: 100}, nil).Intro, "Changes since your review")
+
+	w, err = parseWalkthrough("x\n- `a.go:1` — y\nNot addressed: none.")
+	require.NoError(t, err)
+	require.Empty(t, w.Unaddressed)
+}
+
+func TestStartWalkthrough_AFollowUpRoundToursTheChangesSinceTheLastReview(t *testing.T) {
+	dir := t.TempDir()
+	engine, got := filepath.Join(dir, "engine"), filepath.Join(dir, "args")
+	reply, err := json.Marshal(map[string]string{"output": "Changed.\n- a.go:40 — Returned now. Answers: the swallowed error"})
+	require.NoError(t, err)
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" >> " + got + "\nprintf '%s' '" + strings.ReplaceAll(string(reply), "'", "'\\''") + "'\n"
+	require.NoError(t, os.WriteFile(engine, []byte(script), 0o700))
+	oldFollow, oldSteps := followUpWalk, showSteps
+	t.Cleanup(func() { followUpWalk, showSteps = oldFollow, oldSteps })
+	followUpWalk = func(context.Context) bool { return true }
+
+	job := startWalkthrough(t.Context(), []string{engine, "--session-id", "rev-1", "brief"}, os.Environ())
+	defer job.stop()
+	<-job.done
+	require.NoError(t, job.err)
+	require.True(t, job.w.FollowUp)
+	require.Equal(t, "the swallowed error", job.w.Stops[0].Answers)
+	args, err := os.ReadFile(got)
+	require.NoError(t, err)
+	require.Equal(t, "--fork\nrev-1\n"+followUpWalkPrompt()+"\n", string(args))
+
+	var titles []string
+	showSteps = func(_ string, s forms.Steps) (string, error) {
+		titles = append(titles, s.Title)
+		if len(titles) == 1 {
+			return keyWhole, nil
+		}
+		return "", nil
+	}
+	showWalkthrough(t.Context(), job)
+	require.Equal(t, []string{"Changes since your review", "Walkthrough"}, titles, "f goes on to the tour of the whole change")
+	args, err = os.ReadFile(got)
+	require.NoError(t, err)
+	require.Contains(t, string(args), walkthroughPrompt(), "written when first asked for")
+	whole := job.wholeJob
+	showWalkthrough(t.Context(), job)
+	require.Same(t, whole, job.wholeJob, "and written once")
+
+	// A forms helper too old for steps offers the same key on the accordion.
+	oldAccordion := showAccordion
+	t.Cleanup(func() { showAccordion = oldAccordion })
+	showSteps = func(string, forms.Steps) (string, error) { return "", forms.ErrOldHelper }
+	var keys [][]forms.Action
+	showAccordion = func(_ string, a forms.Accordion) (string, []forms.Change, error) {
+		keys = append(keys, a.Keys)
+		if len(keys) == 1 {
+			return keyWhole, nil, nil
+		}
+		return "", nil, nil
+	}
+	showWalkthrough(t.Context(), job)
+	require.Equal(t, [][]forms.Action{{{Key: keyWhole, Label: "the whole change", Footer: true}}, nil}, keys)
 }

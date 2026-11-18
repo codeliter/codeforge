@@ -78,6 +78,18 @@ func (fu *FollowUp) Active() bool {
 	return fu.data.active
 }
 
+// HasDelta reports whether this is a follow-up round whose changes since the user's last review are known and hold
+// code: what a walkthrough of only those changes needs.
+func (fu *FollowUp) HasDelta() bool {
+	if fu == nil {
+		return false
+	}
+	fu.mu.Lock()
+	defer fu.mu.Unlock()
+	d := fu.data
+	return d.active && d.Since != "" && d.DeltaErr == nil && strings.TrimSpace(d.Delta) != ""
+}
+
 // Threads returns the user's open threads in this round.
 func (fu *FollowUp) Threads() []MyThread {
 	if fu == nil {

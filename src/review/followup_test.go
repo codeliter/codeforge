@@ -661,3 +661,18 @@ func TestParseFollowUp_NoThreadsAndInventedVerdictsStillPosts(t *testing.T) {
 	_, _, err = fu.ParseFollowUp(withText)
 	require.Error(t, err, "a block with anything more is not cut")
 }
+
+func TestFollowUp_HasDelta(t *testing.T) {
+	var none *FollowUp
+	require.False(t, none.HasDelta())
+	fu := &FollowUp{data: followUpData{active: true, Since: "abc", Head: "def", Delta: "+x\n"}}
+	require.True(t, fu.HasDelta())
+	for name, d := range map[string]followUpData{
+		"not a follow-up":        {Since: "abc", Delta: "+x\n"},
+		"the commit is unknown":  {active: true, Delta: "+x\n"},
+		"the changes are unread": {active: true, Since: "abc", Delta: "+x\n", DeltaErr: errDiverged},
+		"no code changed":        {active: true, Since: "abc", Delta: " \n"},
+	} {
+		require.False(t, (&FollowUp{data: d}).HasDelta(), name)
+	}
+}

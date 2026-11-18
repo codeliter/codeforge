@@ -461,3 +461,69 @@ func TestAddedDeclaration_FindsTheWholeDeclarationHoweverItIsWritten(t *testing.
 		require.False(t, isDeclaration(not), not)
 	}
 }
+
+func TestAddedValue_ShowsANewConstantOrVariableToItsLastEntry(t *testing.T) {
+	lines := func(s string) []string { return strings.Split(s, "\n") }
+	added := func(from, to int) map[int]bool {
+		m := map[int]bool{}
+		for n := from; n <= to; n++ {
+			m[n] = true
+		}
+		return m
+	}
+	for _, c := range []struct{ file, src string }{
+		{"a.go", "var names = []string{\n    \"a\",\n    \"b\",\n}"},
+		{"a.go", "    limits := map[string]int{\n        \"a\": 1,\n        \"b\": 2,\n    }"},
+		{"a.go", "const (\n    first = iota\n    second\n)"},
+		{"a.go", "var sizes = [...]int{1, 2,\n    3,\n    4}"},
+		{"a.py", "LIMITS: dict[str, int] = {\n    \"a\": 1,\n    \"b\": 2,\n}"},
+		{"a.py", "PAIR = (\n    1,\n    2,\n)"},
+		{"a.ts", "export const routes: Record<string, string> = {\n  home: \"/\",\n  nested: { a: \"}\" },\n};"},
+		{"a.rs", "static PRIMES: [u8; 3] = [\n    2,\n    3,\n];"},
+		{"A.java", "    private static final List<String> NAMES = List.of(\n        \"a\",\n        \"b\");"},
+		{"a.rb", "NAMES = [\n  'a',\n  'b',\n]"},
+	} {
+		src := lines(c.src)
+		for _, at := range []int{1, 3, len(src)} {
+			from, to := addedValue(c.file, src, at, at, added(1, len(src)))
+			require.Equal(t, []int{1, len(src)}, []int{from, to}, "%s from line %d", c.src, at)
+		}
+	}
+	src := lines("var names = []string{\n    \"a\",\n    \"b\",\n}")
+	from, to := addedValue("a.go", src, 3, 3, added(2, 4))
+	require.Equal(t, []int{0, 0}, []int{from, to}, "one the change only adds to is not new")
+	from, to = addedValue("a.go", src, 3, 3, nil)
+	require.Equal(t, []int{0, 0}, []int{from, to}, "what the change adds is not known")
+	nested := lines("var all = map[string][]string{\n    \"a\": {\n        \"x\",\n    },\n}")
+	from, to = addedValue("a.go", nested, 3, 3, added(1, 5))
+	require.Equal(t, []int{1, 5}, []int{from, to}, "the outermost")
+	for _, not := range []string{
+		"if err := run(\n    a,\n); err != nil {\n}",
+		"total += sum(\n    a,\n    b,\n)",
+		"run(name=value, items=[\n    1,\n    2,\n])",
+		"ok := a == (\n    b,\n)",
+		"x = 1\ny = 2\nz = 3",
+	} {
+		src := lines(not)
+		from, to = addedValue("a.go", src, 2, 2, added(1, len(src)))
+		if strings.HasPrefix(not, "ok :=") {
+			require.Equal(t, []int{1, 3}, []int{from, to}, "a value that holds a comparison is still a value")
+			continue
+		}
+		require.Equal(t, []int{0, 0}, []int{from, to}, not)
+	}
+	var big strings.Builder
+	big.WriteString("var names = []string{\n")
+	for range maxAddedLines {
+		big.WriteString("    \"a\",\n")
+	}
+	big.WriteString("}")
+	long := lines(big.String())
+	from, to = addedValue("a.go", long, 5, 5, added(1, len(long)))
+	require.Equal(t, []int{0, 0}, []int{from, to}, "one too long to read at once")
+
+	content := "package p\n\nfunc old() {}\n\nvar names = []string{\n" + strings.Repeat("    \"a\",\n", 30) + "}\n\nfunc other() {}\n"
+	shown := codeSnippetFocus(content, "p.go", focus{Line: 20, Added: added(5, 36)}, codeStyle{width: 100})
+	require.Contains(t, shown, "var names = []string{")
+	require.Contains(t, shown, " 36 ")
+}

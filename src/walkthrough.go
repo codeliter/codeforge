@@ -37,6 +37,8 @@ type walkStop struct {
 	// Requirement is what the PR description or its ticket asks of this code, Status whether it does it (met, partly
 	// met or not met) and Why the reason; all empty when no stated requirement is about this code.
 	Requirement, Status, Why string
+	// Answers is the comment of the user's that this stop answers, in a tour of the changes since their last review.
+	Answers string
 }
 
 // walkthrough is the reviewer's tour of the change.
@@ -45,6 +47,10 @@ type walkthrough struct {
 	Stops    []walkStop
 	// Uncovered lists the stated requirements no stop implements.
 	Uncovered string
+	// FollowUp says the tour is of the changes since the user's last review, and Unaddressed lists the comments of
+	// theirs that no change answers.
+	FollowUp    bool
+	Unaddressed string
 }
 
 // requirementTail is the clause a stop's note ends with when a stated requirement is about its code:
@@ -94,6 +100,12 @@ func parseWalkthrough(reply string) (walkthrough, error) {
 			}
 			continue
 		}
+		if rest, ok := cutPrefixFold(t, "not addressed:"); ok {
+			if rest = strings.TrimSpace(rest); !strings.EqualFold(strings.TrimSuffix(rest, "."), "none") {
+				w.Unaddressed = rest
+			}
+			continue
+		}
 		switch {
 		case t == "" || strings.HasPrefix(t, "#"):
 		case len(w.Stops) > 0:
@@ -121,6 +133,46 @@ func cutPrefixFold(s, prefix string) (string, bool) {
 	return s, false
 }
 
+// answersTail is the clause a stop's note ends with when its code answers one of the user's comments.
+var answersTail = regexp.MustCompile(`(?is)^(.*)\banswers:\s*(.+?)\s*$`)
+
+// asFollowUp reads w as a tour of the changes since the user's last review: each stop's "Answers:" clause is taken
+// off its note, and the stops that answer a comment come first, in the order the reviewer gave them.
+func asFollowUp(w *walkthrough) {
+	w.FollowUp = true
+	for i := range w.Stops {
+		s := &w.Stops[i]
+		if m := answersTail.FindStringSubmatchIndex(s.Text); m != nil {
+			// The last "Answers:" is the clause; one earlier in the note is the note's own words.
+			s.Answers = strings.TrimSpace(s.Text[m[4]:m[5]])
+			s.Text = strings.TrimSpace(s.Text[m[2]:m[3]])
+		}
+	}
+	slices.SortStableFunc(w.Stops, func(a, b walkStop) int {
+		switch {
+		case a.Answers != "" && b.Answers == "":
+			return -1
+		case a.Answers == "" && b.Answers != "":
+			return 1
+		}
+		return 0
+	})
+}
+
+// followUpWalkPrompt asks the reviewer, in a follow-up round, for a tour of only what changed since the user's last
+// review: what was done about each of their comments, then whatever else moved.
+func followUpWalkPrompt() string {
+	return "Walk me through what changed since my last review, so I can see what was done about my comments before I " +
+		"read your review. This is not the review: no findings, no judgement, no Decision line. Start with two or three " +
+		"plain sentences on what changed since then. Then list the places to read, " +
+		fmt.Sprintf("at most %d, each on one line as `- path:line — note`, citing a line those changes add or change: ", maxWalkStops) +
+		"first the ones that answer one of my comments, in the order of my comments, then whatever else changed. Each " +
+		"note says in one or two sentences what that code does now, in plain words. When it answers one of my comments, " +
+		"end the note with `Answers: <that comment, in a few words>`. After the list, one line " +
+		"`Not addressed: <my comments that no change answers>`, or `Not addressed: none`. Reply with the overview and " +
+		"the list only."
+}
+
 // walkthroughPrompt asks the reviewer, in its own session, for the tour.
 func walkthroughPrompt() string {
 	return "Walk me through this change so I can get familiar with it before I read your review. This is not the " +
@@ -134,52 +186,127 @@ func walkthroughPrompt() string {
 		"or `Not covered: none`. With no stated requirements, leave both out. Reply with the overview and the list only."
 }
 
-// walkthroughView is the walkthrough as the accordion shows it: the overview on top, then each stop with its note and
-// its code, the first one open.
+// keyWhole, in a tour of the changes since the user's last review, opens the tour of the whole change.
+const keyWhole = "f"
+
+// walkTitle names the tour.
+func walkTitle(w walkthrough) string {
+	if w.FollowUp {
+		return "Changes since your review"
+	}
+	return "Walkthrough"
+}
+
+// walkPlace is where a stop is, as path:line or path:line-end.
+func walkPlace(s walkStop) string {
+	place := fmt.Sprintf("%s:%d", s.Path, s.Line)
+	if s.End > s.Line {
+		place += fmt.Sprintf("-%d", s.End)
+	}
+	return place
+}
+
+// walkIntro is what a tour opens with, within width: the overview, then the stated requirements no stop implements
+// and the comments no change answers.
+func walkIntro(w walkthrough, st codeStyle, width int) string {
+	text := strings.TrimRight(wrapSpans(st, width, "", "", inlineSpans(w.Overview, st)...), "\n")
+	for _, more := range []struct{ label, text string }{
+		{"Not covered by the change: ", w.Uncovered},
+		{"Not addressed: ", w.Unaddressed},
+	} {
+		if more.text != "" {
+			text += "\n" + strings.TrimRight(wrapSpans(st, width, "", "",
+				append([]span{{text: more.label, code: st.pal.issue}}, inlineSpans(more.text, st)...)...), "\n")
+		}
+	}
+	return text
+}
+
+// walkStopText is a stop as it is read: its note, whether its code does what was asked of it, the comment it
+// answers, and its code.
+func walkStopText(s walkStop, body codeStyle, code codeSource) string {
+	wrap := func(line ...span) string {
+		return strings.TrimRight(wrapSpans(body, max(0, body.width), "", "", line...), "\n")
+	}
+	text := wrap(inlineSpans(s.Text, body)...)
+	if s.Requirement != "" {
+		line := []span{{text: "Requirement: ", code: body.pal.dim}}
+		line = append(line, inlineSpans(s.Requirement, body)...)
+		status := span{text: s.Status, code: requirementColor(s.Status, body)}
+		if s.Why != "" {
+			status.text += ":" // the colon sits on the status, so no space comes between them
+		}
+		line = append(line, span{text: " — "}, status)
+		line = append(line, inlineSpans(s.Why, body)...)
+		text += "\n" + wrap(line...)
+	}
+	if s.Answers != "" {
+		text += "\n" + wrap(append([]span{{text: "Answers your comment: ", code: body.pal.dim}}, inlineSpans(s.Answers, body)...)...)
+	}
+	if code != nil {
+		if snippet := strings.Trim(code(s.Path, focus{Line: s.Line, End: s.End, Hints: inlineNames(s.Text)}), "\n"); snippet != "" {
+			text += "\n\n" + snippet
+		}
+	}
+	return text
+}
+
+// walkthroughSteps is the walkthrough one stop a screen: the overview first, with the stops listed under it, then each
+// stop with its note and its code. A tour of the changes since the user's last review groups the stops that answer
+// their comments apart from the rest, and with whole offers the tour of the whole change.
+func walkthroughSteps(w walkthrough, st codeStyle, code codeSource, whole bool) forms.Steps {
+	steps := forms.Steps{Title: walkTitle(w), Accent: st.pal.accent, Dim: st.pal.dim}
+	if whole {
+		steps.Keys = []forms.Action{{Key: keyWhole, Label: "the whole change"}}
+	}
+	var contents strings.Builder
+	for i, s := range w.Stops {
+		var status, colour, group string
+		if s.Requirement != "" {
+			// Whether this code does what was asked of it, said on the strip, its colour on the tab too.
+			colour = requirementColor(s.Status, st)
+			status = st.paint(colour, s.Status)
+		}
+		if w.FollowUp {
+			group = "Other changes"
+			if s.Answers != "" {
+				group = "Your comments"
+				status = cmp.Or(status, st.paint(st.pal.dim, "answers your comment"))
+			}
+		}
+		steps.Items = append(steps.Items, forms.Step{
+			Tab: strconv.Itoa(i + 1), Group: group, Color: colour, Status: status,
+			Body: st.paint(st.pal.accent, walkPlace(s)) + "\n" + walkStopText(s, st, code),
+		})
+		fmt.Fprintf(&contents, "\n%s  %s  %s", st.paint(cmp.Or(colour, st.pal.accent), fmt.Sprintf("%2d", i+1)),
+			walkPlace(s), st.paint(st.pal.dim, firstWords(s.Text, walkSummaryWords)))
+	}
+	overview := forms.Step{Tab: "Overview", Body: walkIntro(w, st, max(0, st.width)) + "\n" + contents.String()}
+	steps.Items = append([]forms.Step{overview}, steps.Items...)
+	return steps
+}
+
+// walkthroughView is the walkthrough as the accordion shows it, for a forms helper that knows no steps: the overview
+// on top, then each stop with its note and its code, the first one open.
 func walkthroughView(w walkthrough, st codeStyle, code codeSource) forms.Accordion {
 	body := st
 	if body.wrap {
 		body.width = max(minCodeWidth, body.width-len(accordionIndent))
 	}
 	a := forms.Accordion{
-		Intro: st.paint(st.pal.bold, "Walkthrough") + st.paint(st.pal.dim, "  q goes back to the review") + "\n" +
-			strings.TrimRight(wrapSpans(st, max(0, st.width-len(accordionIndent)), "", "", inlineSpans(w.Overview, st)...), "\n"),
+		Intro: st.paint(st.pal.bold, walkTitle(w)) + st.paint(st.pal.dim, "  q goes back to the review") + "\n" +
+			walkIntro(w, st, max(0, st.width-len(accordionIndent))),
 		Accent: st.pal.accent, Dim: st.pal.dim,
 	}
-	if w.Uncovered != "" {
-		a.Intro += "\n" + strings.TrimRight(wrapSpans(st, max(0, st.width-len(accordionIndent)), "", "",
-			append([]span{{text: "Not covered by the change: ", code: st.pal.issue}}, inlineSpans(w.Uncovered, st)...)...), "\n")
-	}
 	for i, s := range w.Stops {
-		place := fmt.Sprintf("%s:%d", s.Path, s.Line)
-		if s.End > s.Line {
-			place += fmt.Sprintf("-%d", s.End)
-		}
-		text := strings.TrimRight(wrapSpans(body, max(0, body.width), "", "", inlineSpans(s.Text, body)...), "\n")
 		summary := firstWords(s.Text, walkSummaryWords)
 		if s.Requirement != "" {
-			// Whether this code does what was asked of it, said beside the stop, its colour on the closed row too.
-			verdict := st.paint(requirementColor(s.Status, st), s.Status)
-			line := []span{{text: "Requirement: ", code: st.pal.dim}}
-			line = append(line, inlineSpans(s.Requirement, body)...)
-			status := span{text: s.Status, code: requirementColor(s.Status, st)}
-			if s.Why != "" {
-				status.text += ":" // the colon sits on the status, so no space comes between them
-			}
-			line = append(line, span{text: " — "}, status)
-			line = append(line, inlineSpans(s.Why, body)...)
-			text += "\n" + strings.TrimRight(wrapSpans(body, max(0, body.width), "", "", line...), "\n")
-			summary = verdict + st.paint(st.pal.dim, " · ") + summary
-		}
-		if code != nil {
-			if snippet := strings.Trim(code(s.Path, focus{Line: s.Line, End: s.End, Hints: inlineNames(s.Text)}), "\n"); snippet != "" {
-				text += "\n\n" + snippet
-			}
+			summary = st.paint(requirementColor(s.Status, st), s.Status) + st.paint(st.pal.dim, " · ") + summary
 		}
 		a.Items = append(a.Items, forms.Section{
-			Title:   st.paint(st.pal.accent, fmt.Sprintf("%d. %s", i+1, place)),
+			Title:   st.paint(st.pal.accent, fmt.Sprintf("%d. %s", i+1, walkPlace(s))),
 			Summary: summary,
-			Body:    text,
+			Body:    walkStopText(s, body, code),
 			Open:    i == 0,
 		})
 	}
@@ -233,15 +360,35 @@ type walkJob struct {
 	w      walkthrough
 	err    error
 	cancel context.CancelFunc
+	// whole starts the tour of the whole change, when this one is only of the changes since the user's last review;
+	// wholeJob is that tour once it was asked for.
+	whole    func() *walkJob
+	wholeJob *walkJob
 }
 
 // startWalkthrough has the reviewer write the walkthrough in the background, in a fork of the review's session: it
 // knows what the review read, and the review's own session stays free for the user's questions and the chat. It is
 // bounded by revisionLimit and stopped by stop.
 func startWalkthrough(ctx context.Context, argv, env []string) *walkJob {
+	if !followUpWalk(ctx) {
+		return startWalk(ctx, argv, env, walkthroughPrompt(), false)
+	}
+	// In a follow-up round the tour is of what changed since the user's last review; the whole one is a key away.
+	job := startWalk(ctx, argv, env, followUpWalkPrompt(), true)
+	job.whole = func() *walkJob { return startWalk(ctx, argv, env, walkthroughPrompt(), false) }
+	return job
+}
+
+// followUpWalk reports whether the tour is of the changes since the user's last review: in a follow-up round where
+// those changes are known. Tests replace it.
+var followUpWalk = func(ctx context.Context) bool { return review.FollowUpOf(ctx).HasDelta() }
+
+// startWalk has the reviewer answer prompt with a tour, in the background; followUp reads it as one of the changes
+// since the user's last review.
+func startWalk(ctx context.Context, argv, env []string, prompt string, followUp bool) *walkJob {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), revisionLimit)
 	job := &walkJob{done: make(chan struct{}), cancel: cancel}
-	fork, err := forkArgv(argv, walkthroughPrompt())
+	fork, err := forkArgv(argv, prompt)
 	if err != nil {
 		job.err = err
 		close(job.done)
@@ -253,7 +400,7 @@ func startWalkthrough(ctx context.Context, argv, env []string) *walkJob {
 		var exit *exec.ExitError
 		if errors.As(err, &exit) && exit.ExitCode() == exitUsage && ctx.Err() == nil {
 			// A flag the review ran with may not suit a fork: once more with only what a turn needs, as reviewTurn does.
-			out, err = runFork(ctx, minimalFork(argv, walkthroughPrompt()), env)
+			out, err = runFork(ctx, minimalFork(argv, prompt), env)
 		}
 		if err != nil {
 			job.err = fmt.Errorf("the reviewer could not write it: %w", err)
@@ -262,6 +409,9 @@ func startWalkthrough(ctx context.Context, argv, env []string) *walkJob {
 		reply, err := review.EngineOutput(out)
 		if err == nil {
 			job.w, err = parseWalkthrough(reply)
+		}
+		if err == nil && followUp {
+			asFollowUp(&job.w)
 		}
 		job.err = err
 	}()
@@ -298,7 +448,12 @@ func minimalFork(argv []string, prompt string) []string {
 var walkthroughStarter = startWalkthrough
 
 // stop ends the background turn if it is still running.
-func (j *walkJob) stop() { j.cancel() }
+func (j *walkJob) stop() {
+	j.cancel()
+	if j.wholeJob != nil {
+		j.wholeJob.cancel()
+	}
+}
 
 // forkArgv is the review's command line turned into a turn in a fork of its session: the sandbox it ran in and its
 // flags kept, its session named with --fork, and prompt in place of the review's own.
@@ -313,22 +468,44 @@ func forkArgv(argv []string, prompt string) ([]string, error) {
 	return slices.Concat(wrapper, engine[:1], []string{"--fork", id}, args, []string{prompt}), nil
 }
 
-// showWalkthrough shows the walkthrough job writes, waiting for it when it is not done yet. A failure is said on the
-// terminal, and the review opens again as it was.
+// showSteps runs the steps through the forms helper; tests replace it.
+var showSteps = forms.ShowSteps // name, steps -> key pressed
+
+// showWalkthrough shows the walkthrough job writes, waiting for it when it is not done yet: one stop a screen, or as an
+// accordion when the forms helper is too old for that. From a tour of the changes since the user's last review,
+// keyWhole goes on to the tour of the whole change, written when first asked for. A failure is said on the terminal,
+// and the review opens again as it was.
 func showWalkthrough(ctx context.Context, job *walkJob) {
-	select {
-	case <-job.done:
-	default:
-		fmt.Fprintln(os.Stderr, "codeforge: the reviewer is finishing the walkthrough...")
-		<-job.done
-	}
-	if job.err != nil {
-		fmt.Fprintln(os.Stderr, "codeforge: no walkthrough: "+job.err.Error()+".")
-		return
-	}
-	st := codeStyleFor(ctx, os.Stdout)
-	a := walkthroughView(job.w, st, reviewCode(ctx, st, walkthroughText(job.w)))
-	if _, _, err := showAccordion("walkthrough", a); err != nil && !errors.Is(err, forms.ErrAborted) {
-		fmt.Fprintln(os.Stderr, "codeforge: could not open the walkthrough:", err)
+	for {
+		select {
+		case <-job.done:
+		default:
+			fmt.Fprintln(os.Stderr, "codeforge: the reviewer is finishing the walkthrough...")
+			<-job.done
+		}
+		if job.err != nil {
+			fmt.Fprintln(os.Stderr, "codeforge: no walkthrough: "+job.err.Error()+".")
+			return
+		}
+		st := codeStyleFor(ctx, os.Stdout)
+		code := reviewCode(ctx, st, walkthroughText(job.w))
+		key, err := showSteps("walkthrough", walkthroughSteps(job.w, st, code, job.whole != nil))
+		if errors.Is(err, forms.ErrOldHelper) {
+			a := walkthroughView(job.w, st, code)
+			if job.whole != nil {
+				a.Keys = []forms.Action{{Key: keyWhole, Label: "the whole change", Footer: true}}
+			}
+			key, _, err = showAccordion("walkthrough", a)
+		}
+		if err != nil && !errors.Is(err, forms.ErrAborted) {
+			fmt.Fprintln(os.Stderr, "codeforge: could not open the walkthrough:", err)
+		}
+		if key != keyWhole || job.whole == nil {
+			return
+		}
+		if job.wholeJob == nil {
+			job.wholeJob = job.whole()
+		}
+		job = job.wholeJob
 	}
 }

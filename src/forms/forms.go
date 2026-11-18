@@ -110,6 +110,47 @@ type Form struct {
 	Name      string     `json:"name"`
 	Groups    []Group    `json:"groups"`
 	Accordion *Accordion `json:"accordion,omitempty"`
+	Steps     *Steps     `json:"steps,omitempty"`
+}
+
+// Steps shows a sequence one step a screen, on the alternate screen: a strip of tabs on top says where the reader
+// is, left and right move between the steps, and up and down scroll the one shown. Every text is already laid out
+// for the terminal, colours included.
+type Steps struct {
+	// Title heads the strip.
+	Title string `json:"title,omitempty"`
+	Items []Step `json:"items"`
+	// Keys are actions offered besides moving: pressing one closes the view and answers with its Key.
+	Keys []Action `json:"keys,omitempty"`
+	// Accent and Dim are the escapes for the title and the key help, so the view matches the caller's theme.
+	Accent string `json:"accent,omitempty"`
+	Dim    string `json:"dim,omitempty"`
+}
+
+// Step is one screen of Steps.
+type Step struct {
+	// Tab names the step on the strip, in a word or a number. Typing a number jumps to the step it names; a step
+	// named in a word is reached by moving, and the first one with o.
+	Tab string `json:"tab"`
+	// Group heads the tabs that share it on the strip, when there is room.
+	Group string `json:"group,omitempty"`
+	// Color is the escape its tab is drawn in, and Status what the strip says beside the count while it is shown.
+	Color  string `json:"color,omitempty"`
+	Status string `json:"status,omitempty"`
+	Body   string `json:"body,omitempty"`
+}
+
+// ShowSteps runs the steps and returns the Action key the user pressed to close them, or "" for q. It refuses, with
+// ErrOldHelper, a helper that knows no steps.
+func ShowSteps(name string, s Steps) (string, error) {
+	if err := needProtocol(name, stepsProtocol); err != nil {
+		return "", err
+	}
+	answers, err := Run(Form{Name: name, Steps: &s})
+	if err != nil {
+		return "", err
+	}
+	return answers.String(AccordionKey), nil
 }
 
 // Accordion shows a long text as sections the user opens and closes, one row each, on the alternate screen. Every
@@ -222,12 +263,13 @@ func Show(name string, a Accordion) (string, []Change, error) {
 }
 
 // Protocol is the version of what codeforge sends codeforge-forms: 2 added an Accordion's Notes, Edits and Changes,
-// 3 the Search field, 4 the rewrite of a note of several lines, 5 the Changes with any Action key, not only KeySend. The helper answers ProtocolFlag with its own, and one that cannot is 1.
+// 3 the Search field, 4 the rewrite of a note of several lines, 5 the Changes with any Action key, not only KeySend, 6 the grouped Search, 7 the Steps. The helper answers ProtocolFlag with its own, and one that cannot is 1.
 const (
-	Protocol       = 6
+	Protocol       = 7
 	editsProtocol  = 5 // 4 rewrites a note of several lines; 5 answers the rewrites and deletions with any key
 	searchProtocol = 3
 	pickerProtocol = 6 // a Search with grouped options, or one that takes several
+	stepsProtocol  = 7
 )
 
 // needProtocol refuses, with ErrOldHelper, a form that needs protocol p when the helper is older. With no helper it
