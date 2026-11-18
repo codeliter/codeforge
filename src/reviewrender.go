@@ -307,7 +307,7 @@ func reviewCode(ctx context.Context, st codeStyle, text string) codeSource {
 			return nil
 		}
 		return func(file string, fc focus) string {
-			fc.Added = review.DisplayOf(ctx).Added(strings.TrimPrefix(file, "./"))
+			fc.Added = review.DisplayOf(ctx).Added(diffPath(root, file))
 			return codeAroundFocus(root, file, fc, st)
 		}
 	case src.HeadRef != "":
@@ -330,9 +330,20 @@ func reviewCode(ctx context.Context, st codeStyle, text string) codeSource {
 		if !ok {
 			return ""
 		}
-		fc.Added = review.DisplayOf(ctx).Added(strings.TrimPrefix(file, "./"))
+		fc.Added = review.DisplayOf(ctx).Added(diffPath("", file))
 		return codeSnippetFocus(content, file, fc, st)
 	}
+}
+
+// diffPath is file as a diff names it: from the repository's root, with slashes, however a finding wrote it
+// ("./a/b.go", "a//b.go", or in full under root).
+func diffPath(root, file string) string {
+	if root != "" && filepath.IsAbs(file) {
+		if rel, err := filepath.Rel(root, file); err == nil {
+			file = rel
+		}
+	}
+	return filepath.ToSlash(filepath.Clean(file))
 }
 
 // codeRunner runs git and gh for reviewCode; tests replace it.

@@ -434,3 +434,10 @@ func TestReviewCode_ReadsAPRFromAnotherCheckoutOnGitHub(t *testing.T) {
 	require.Equal(t, []string{"gh api -H Accept: application/vnd.github.raw repos/{owner}/{repo}/contents/a.go?ref=abc123"}, calls.calls,
 		"a PR named by number is read from this checkout's repository")
 }
+
+func TestDiffPath_NamesAFileAsTheDiffDoes(t *testing.T) {
+	root := filepath.Join(string(filepath.Separator), "work", "repo")
+	for _, written := range []string{"src/a.go", "./src/a.go", "src//a.go", "src/x/../a.go", filepath.Join(root, "src", "a.go")} {
+		require.Equal(t, "src/a.go", diffPath(root, written), written)
+	}
+}

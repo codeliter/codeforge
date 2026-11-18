@@ -6,7 +6,6 @@ import (
 	"io"
 	"math"
 	"os"
-	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -303,10 +302,6 @@ func codeCard(place, file string, marked map[int]bool, nums []int, code []string
 	return s.String()
 }
 
-// declLine matches the first line of a declaration or block in common languages: Go, Python, JS/TS, Rust, Java,
-// Ruby, shell, Terraform and YAML keys.
-var declLine = regexp.MustCompile(`^\s*(func|def|class|function|fn|pub|impl|trait|interface|struct|enum|type|module|resource|data|locals|variable|describe|it|test|public|private|protected|static|async|export|const\s+\w+\s*=\s*(async\s*)?\(|[\w.]+\s*\(\)\s*\{|[\w.-]+:\s*$)`)
-
 // enclosingHeader returns the line number of the declaration (function, method, class, resource) that contains line,
 // found by walking up through ever less indented lines within headerSearch lines. Without one, the nearest enclosing
 // block opener ("if x {") is used; without that, 0.
@@ -321,7 +316,7 @@ func enclosingHeader(all []string, line int) int {
 		if strings.TrimSpace(l) == "" || indentOf(l) >= target {
 			continue
 		}
-		if declLine.MatchString(l) {
+		if isDeclaration(l) {
 			return n
 		}
 		if block == 0 && strings.HasSuffix(strings.TrimSpace(l), "{") {
@@ -332,7 +327,8 @@ func enclosingHeader(all []string, line int) int {
 	return block
 }
 
-// isDeclaration reports whether l starts a declaration: declLine's keyword as a whole word, and not the start of an
+// isDeclaration reports whether l starts a declaration or block in common languages (Go, Python, JS/TS, Rust, Java,
+// Ruby, shell, Terraform and YAML keys): a declaring keyword as a whole word, and not the start of an
 // assignment or call that only begins like one ("data := load()", "functionCall()").
 func isDeclaration(l string) bool {
 	t := strings.TrimSpace(l)
@@ -381,30 +377,75 @@ var (
 // declarationEnd is the last line of the declaration that starts at line start, and whether that is certain. A body
 // in braces ends where its brace closes, however its lines are indented; any other ends by indentation. Its header
 // may run over several lines (parameters one a line), which blockEnd alone takes for the end.
-func declarationEnd(file string, all, code []string, literal []bool, start int) (int, bool) {
-	if end, ok, braces := braceEnd(file, all, start); braces {
+func declarationEnd(code []string, literal []bool, start int) (int, bool) {
+	if end, ok, braces := braceEnd(code, start); braces {
 		return end, ok
 	}
 	end := indentedEnd(code, start)
-	for end < len(all) && literal[end] {
+	for end < len(code) && literal[end] {
 		end++ // a literal the declaration ends with is part of it to its last line
 	}
 	return end, true
 }
 
-// scanLines returns the lines with those that continue a literal or comment of several lines (a raw string, a
-// here-document, a string in triple quotes) left blank, and how many brackets are open where each begins.
-func scanLines(file string, all []string) (code []string, depth []int, literal []bool) {
-	code, depth, literal = make([]string, len(all)), make([]int, len(all)), make([]bool, len(all))
-	scan := newBraceScan(file)
-	for i, l := range all {
-		if literal[i] = scan.inLiteral(); !literal[i] {
-			code[i] = l
-		}
+// scanLines returns the code of the lines, as codeLines has it, how many brackets are open where each begins, and
+// which lines begin inside a comment or string of several lines.
+func scanLines(file string, all []string) (code []string, depth []int, literal []bool, ok bool) {
+	code, literal, ok = codeLines(file, all)
+	depth = make([]int, len(all))
+	var scan braceScan
+	for i, l := range code {
 		depth[i] = scan.depth
 		scan.line(l)
 	}
-	return code, depth, literal
+	return code, depth, literal, ok
+}
+
+// codeLines returns the lines with their comments and strings blanked, as the lexer of the file's language tells
+// them apart: what is left is code, whose brackets and indentation say where a declaration ends. literal marks the
+// lines that begin inside a comment or string of several lines (a raw string, a here-document, a docstring). ok is false
+// for a file in no language the lexers know, which is returned as it is.
+func codeLines(file string, all []string) (code []string, literal []bool, ok bool) {
+	literal = make([]bool, len(all))
+	lexer := lexers.Match(file)
+	if lexer == nil {
+		return all, literal, false
+	}
+	it, err := chroma.Coalesce(lexer).Tokenise(nil, strings.Join(all, "\n")+"\n")
+	if err != nil {
+		return all, literal, false
+	}
+	var b strings.Builder
+	line := 0
+	for _, tok := range it.Tokens() {
+		parts := strings.Split(tok.Value, "\n")
+		str := tok.Type.InSubCategory(chroma.LiteralString)
+		if tok.Type.InCategory(chroma.Comment) || str {
+			for j, p := range parts {
+				if j == 0 && str {
+					// Where a string starts it still stands for a value: a line that holds only a string is not blank.
+					parts[j] = strings.Map(func(r rune) rune {
+						if unicode.IsSpace(r) {
+							return r
+						}
+						return '"'
+					}, p)
+					continue
+				}
+				if j > 0 && line+j < len(all) && (j < len(parts)-1 || p != "") {
+					literal[line+j] = true
+				}
+				parts[j] = strings.Repeat(" ", utf8.RuneCountInString(p))
+			}
+		}
+		b.WriteString(strings.Join(parts, "\n"))
+		line += len(parts) - 1
+	}
+	code = strings.Split(strings.TrimSuffix(b.String(), "\n"), "\n")
+	if len(code) != len(all) {
+		return all, make([]bool, len(all)), false // the lexer did not keep the lines one for one
+	}
+	return code, literal, true
 }
 
 // unindentedStart is the line of the declaration whose brackets hold line n when n is written at the margin, where
@@ -429,8 +470,8 @@ func unindentedStart(code []string, depth []int, n int) int {
 // braceEnd is the line that closes the body a declaration at line start opens with a brace: at the end of its header
 // or on a line of its own after it. braces is false when it has no such body, and ok is false when its brackets do not
 // pair up, so where it ends is not known.
-func braceEnd(file string, all []string, start int) (end int, ok, braces bool) {
-	scan := newBraceScan(file)
+func braceEnd(all []string, start int) (end int, ok, braces bool) {
+	var scan braceScan
 	header := true // still in the header; false once it has ended without a brace
 	for n := start; n <= len(all); n++ {
 		last := scan.line(all[n-1])
@@ -475,39 +516,11 @@ func closesDeclaration(all []string, start, end int) bool {
 	return true
 }
 
-// heredocOpen matches the start of a here-document, and captures the word that ends it.
-var heredocOpen = regexp.MustCompile(`^<<[-~]?["']?([A-Za-z_]\w*)["']?`)
-
-// shiftOnly are the languages where "<<" shifts a value and never opens a here-document.
-var shiftOnly = map[string]bool{
-	".go": true, ".js": true, ".jsx": true, ".ts": true, ".tsx": true, ".mjs": true, ".cjs": true, ".py": true,
-	".java": true, ".kt": true, ".c": true, ".h": true, ".cc": true, ".cpp": true, ".hpp": true, ".rs": true,
-	".cs": true, ".swift": true,
-}
-
-// newBraceScan is a scan for the language the file is written in, by its name.
-func newBraceScan(file string) *braceScan {
-	ext := strings.ToLower(filepath.Ext(file))
-	return &braceScan{plainRaw: ext == ".go", noHeredoc: shiftOnly[ext]}
-}
-
-// braceScan counts the brackets left open over lines of code, those in strings and comments aside.
+// braceScan counts the brackets left open over lines of code.
 type braceScan struct {
-	depth   int
-	raw     bool   // inside a raw string that runs over lines
-	comment bool   // inside a /* comment */
-	heredoc string // inside a here-document that this word ends
-	triple  string // inside a string in these triple quotes
-	code    int    // how many characters of code the last line had
-	open    []rune // the brackets left open, outermost first
-
-	plainRaw  bool // a raw string has no escapes and ends at its first backtick, as in Go
-	noHeredoc bool // "<<" is never a here-document
-}
-
-// inLiteral reports whether the next line continues a literal or comment begun on an earlier one.
-func (b *braceScan) inLiteral() bool {
-	return b.raw || b.comment || b.heredoc != "" || b.triple != ""
+	depth int
+	code  int    // how many characters of code the last line had
+	open  []rune // the brackets left open, outermost first
 }
 
 // outer is the outermost bracket left open, 0 when none is.
@@ -522,73 +535,8 @@ func (b *braceScan) outer() rune {
 func (b *braceScan) line(s string) rune {
 	var last rune
 	b.code = 0
-	if b.heredoc != "" {
-		if strings.TrimSpace(s) == b.heredoc {
-			b.heredoc = ""
-		}
-		return 0
-	}
-	if b.triple != "" {
-		_, rest, closed := strings.Cut(s, b.triple)
-		if !closed {
-			return 0
-		}
-		s, b.triple = rest, ""
-	}
-	r := []rune(s)
-	for i := 0; i < len(r); i++ {
-		c := r[i]
-		next := rune(0)
-		if i+1 < len(r) {
-			next = r[i+1]
-		}
+	for _, c := range s {
 		switch {
-		case b.comment:
-			if c == '*' && next == '/' {
-				b.comment = false
-				i++
-			}
-			continue
-		case b.raw:
-			if c == '\\' && !b.plainRaw {
-				i++ // an escaped character of a template
-			}
-			b.raw = c != '`'
-			continue
-		case c == '/' && next == '/':
-			return last
-		case c == '#' && (i == 0 || unicode.IsSpace(r[i-1])) && (next == 0 || next == ' '):
-			return last
-		case c == '<' && next == '<' && !b.noHeredoc && !unicode.IsLetter(last) && !unicode.IsDigit(last) && !strings.ContainsRune(")]_", last):
-			// After a value "<<" shifts it; anywhere else it opens a here-document, from the next line on.
-			if m := heredocOpen.FindStringSubmatch(string(r[i:])); m != nil {
-				b.heredoc = m[1]
-			}
-		case c == '/' && next == '*':
-			b.comment = true
-			i++
-			continue
-		case c == '`':
-			b.raw = true
-		case (c == '"' || c == '\'') && next == c && i+2 < len(r) && r[i+2] == c:
-			quotes := string(r[i : i+3])
-			_, rest, closed := strings.Cut(string(r[i+3:]), quotes)
-			if !closed {
-				b.triple = quotes
-				return c
-			}
-			i = len(r) - len([]rune(rest)) - 1
-		case c == '"' || c == '\'':
-			if end := closingQuote(r, i); end > 0 {
-				i = end
-			} else if c == '"' {
-				return c
-			}
-		case c == '/' && (last == 0 || strings.ContainsRune("=(,:[!&|?{};", last)):
-			// Where a value is expected, a slash opens a regular expression, not a division.
-			if end := closingQuote(r, i); end > 0 {
-				i = end
-			}
 		case strings.ContainsRune("([{", c):
 			b.depth++
 			b.open = append(b.open, c)
@@ -604,19 +552,6 @@ func (b *braceScan) line(s string) rune {
 		}
 	}
 	return last
-}
-
-// closingQuote is the index of the quote that closes the one at r[open], or -1 when the line has none.
-func closingQuote(r []rune, open int) int {
-	for i := open + 1; i < len(r); i++ {
-		switch r[i] {
-		case '\\':
-			i++
-		case r[open]:
-			return i
-		}
-	}
-	return -1
 }
 
 // onlyBrace reports whether a line is an opening brace alone, a comment after it aside.
@@ -658,15 +593,20 @@ func addedDeclaration(file string, all []string, lo, hi int, added map[int]bool)
 	if len(added) == 0 {
 		return 0, 0
 	}
-	// What a literal of several lines holds is text, not code: its indentation says nothing of the code around it.
+	// What a comment or string holds is text, not code: its brackets and indentation say nothing of the code around
+	// it. A declaration is still told by its line as written, a quoted name and all.
 	src := all
-	all, depth, literal := scanLines(file, src)
+	all, depth, literal, ok := scanLines(file, src)
+	if !ok {
+		return 0, 0 // in a language unknown a string is not told from code, nor where a declaration ends
+	}
+	declared := func(n int) bool { return strings.TrimSpace(all[n-1]) != "" && isDeclaration(src[n-1]) }
 	var starts []int // innermost first
 	label := marginLabel(all, lo)
-	if !label && isDeclaration(all[lo-1]) {
+	if !label && declared(lo) {
 		starts = append(starts, lo)
 	}
-	if n := unindentedStart(all, depth, lo); n > 0 && n < lo && indentOf(all[lo-1]) == 0 && isDeclaration(all[n-1]) {
+	if n := unindentedStart(all, depth, lo); n > 0 && n < lo && indentOf(all[lo-1]) == 0 && declared(n) {
 		starts = append(starts, n)
 	}
 	target := indentOf(all[lo-1])
@@ -688,13 +628,13 @@ func addedDeclaration(file string, all []string, lo, hi int, added map[int]bool)
 			target++
 			continue
 		}
-		if isDeclaration(l) {
+		if declared(n) {
 			starts = append(starts, n)
 		}
 	}
 	for i := len(starts) - 1; i >= 0; i-- {
 		start := starts[i]
-		end, sure := declarationEnd(file, src, all, literal, start)
+		end, sure := declarationEnd(all, literal, start)
 		if !sure || end < hi || end-start+1 > maxAddedLines {
 			continue
 		}
@@ -732,7 +672,7 @@ func enclosingSpan(all []string, lo, hi int) (from, to int) {
 			break
 		}
 		from, to = n, end
-		if declLine.MatchString(l) {
+		if isDeclaration(l) {
 			break
 		}
 	}
