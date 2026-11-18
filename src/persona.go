@@ -23,6 +23,8 @@ const (
 	// format and wording, never whether a text is clear.
 	clarityBaseline = "Baseline for every text, whatever the persona says: clear, concise and free of ambiguity. " +
 		"One meaning per sentence, no filler, no hedging, and every ask stated as an ask. " +
+		"The answer comes first, a condition before its command, and a command before its risk. " +
+		"One word for one thing, a term defined where it first appears, and the fact stated, not its importance. " +
 		"The persona below sets tone, format and wording on top of this; it never lowers it."
 	emptyPersona = personaHeader + "No persona yet. Follow codeforge-voice and codeforge-code, and suggest running `codeforge init`.\n"
 )

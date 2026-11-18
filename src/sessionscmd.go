@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math"
 	"os"
 	"path/filepath"
 	"slices"
@@ -22,8 +21,8 @@ import (
 	"github.com/codeliter/codeforge/src/store"
 )
 
-// `codeforge sessions` lists the sessions of this directory (with --all, of every project codeforge has run in), newest
-// first, each with what tells it apart (when it was last used, its mode, its title, how much was done in it and what it
+// `codeforge sessions` lists the sessions of this directory (with --all, of every project codeforge has run in),
+// separated by mode and newest first in each, each with what tells it apart (when it was last used, its mode, its title, how much was done in it and what it
 // cost), under a search box, and opens the one picked the way `codeforge --resume ID` does: in its own mode and
 // directory, with codeforge's profile and hooks. Empryo's own session list knows none of that, so a codeforge session
 // resumed from it starts in the wrong mode.
@@ -117,8 +116,11 @@ func runSessions(ctx context.Context, home string, args []string, w io.Writer) (
 		fmt.Fprintln(w, "codeforge: "+err.Error()+"\nThe sessions are listed instead.")
 	}
 	fmt.Fprintln(w, sessionHeader(all))
-	for _, s := range sessions {
-		fmt.Fprintln(w, sessionLabel(s, now, all)) // ends with the ID's first characters, which --resume takes as a prefix
+	for _, g := range sessionsByMode(sessions) {
+		fmt.Fprintf(w, "\n%s (%d)\n", modeHeading(g.Mode), len(g.Sessions))
+		for _, s := range g.Sessions {
+			fmt.Fprintln(w, sessionLabel(s, now, all)) // ends with the ID's first characters, which --resume takes as a prefix
+		}
 	}
 	if skipped > 0 {
 		fmt.Fprintf(w, "(%s left out: empty, or not started by codeforge so their mode is unknown)\n", plural(skipped, "session"))
@@ -130,12 +132,13 @@ func runSessions(ctx context.Context, home string, args []string, w io.Writer) (
 	return "", "", nil
 }
 
-// pickSession shows the sessions under a search box and returns the index of the one picked, -1 when the user left.
+// pickSession shows the sessions under a search box, each mode's under its own heading, and returns the index of the
+// one picked, -1 when the user left.
 func pickSession(sessions []sessionInfo, now time.Time, all bool, wd string) (int, error) {
 	options := make([]forms.Option, len(sessions))
 	for i, s := range sessions {
 		label, detail := splitDetails(sessionLabel(s, now, all), all)
-		options[i] = forms.Option{Label: label, Detail: detail, Value: strconv.Itoa(i), Group: sessionDay(s.Updated, now)}
+		options[i] = forms.Option{Label: label, Detail: detail, Value: strconv.Itoa(i), Group: modeHeading(s.Mode)}
 	}
 	where := "in " + filepath.Base(wd)
 	if all {
@@ -143,7 +146,7 @@ func pickSession(sessions []sessionInfo, now time.Time, all bool, wd string) (in
 	}
 	a, err := forms.Ask("sessions", forms.Field{
 		Kind: forms.Search, Title: "Open a session",
-		Description: fmt.Sprintf("%s %s, newest first. * ran headless (a review or a gate).", plural(len(sessions), "session"), where),
+		Description: fmt.Sprintf("%s %s, by mode, newest first. * ran headless (a review or a gate).", plural(len(sessions), "session"), where),
 		Header:      strings.Join(headerParts(all), "\t"),
 		Placeholder: "Type to search by title, mode, project, model, day or ID",
 		Options:     options, Value: "0",
@@ -180,26 +183,32 @@ func headerParts(all bool) []string {
 	return []string{columns, details}
 }
 
-// sessionDay heads the sessions last used on the same day: today, yesterday, earlier this week, or before that.
-func sessionDay(t, now time.Time) string {
-	const (
-		hoursPerDay = 24
-		daysPerWeek = 7
-	)
-	midnight := func(x time.Time) time.Time {
-		y, m, d := x.In(now.Location()).Date()
-		return time.Date(y, m, d, 0, 0, 0, 0, now.Location())
+// modeSessions are the sessions of one mode, newest first.
+type modeSessions struct {
+	Mode     string
+	Sessions []sessionInfo
+}
+
+// sessionsByMode separates sessions, given newest first, by their mode: the mode used last comes first, and each
+// mode's sessions stay newest first.
+func sessionsByMode(sessions []sessionInfo) []modeSessions {
+	var groups []modeSessions
+	for _, s := range sessions {
+		i := slices.IndexFunc(groups, func(g modeSessions) bool { return g.Mode == s.Mode })
+		if i < 0 {
+			i, groups = len(groups), append(groups, modeSessions{Mode: s.Mode})
+		}
+		groups[i].Sessions = append(groups[i].Sessions, s)
 	}
-	switch days := int(math.Round(midnight(now).Sub(midnight(t)).Hours() / hoursPerDay)); {
-	case days <= 0:
-		return "Today"
-	case days == 1:
-		return "Yesterday"
-	case days < daysPerWeek:
-		return "This week"
-	default:
-		return "Earlier"
+	return groups
+}
+
+// modeHeading heads the sessions of a mode: its name, as a title.
+func modeHeading(mode string) string {
+	if mode == "" {
+		return mode
 	}
+	return strings.ToUpper(mode[:1]) + mode[1:]
 }
 
 // listAllSessions reads the sessions codeforge started in every project it has a record of, newest first. A session

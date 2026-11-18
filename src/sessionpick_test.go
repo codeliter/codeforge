@@ -1,28 +1,33 @@
 package src
 
 import (
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 )
 
-func TestSessionDay(t *testing.T) {
-	now := time.Date(2026, 11, 12, 9, 0, 0, 0, time.UTC)
-	tests := []struct {
-		ago  time.Duration
-		want string
-	}{
-		{ago: time.Minute, want: "Today"},
-		{ago: 9 * time.Hour, want: "Today"},
-		{ago: 10 * time.Hour, want: "Yesterday"},
-		{ago: 48 * time.Hour, want: "This week"},
-		{ago: 6 * 24 * time.Hour, want: "This week"},
-		{ago: 8 * 24 * time.Hour, want: "Earlier"},
+func TestSessionsByMode_EachModeApartNewestFirst(t *testing.T) {
+	now := time.Now()
+	at := func(id, mode string, ago time.Duration) sessionInfo {
+		return sessionInfo{ID: id, Mode: mode, Updated: now.Add(-ago)}
 	}
-	for _, tt := range tests {
-		require.Equal(t, tt.want, sessionDay(now.Add(-tt.ago), now), tt.ago.String())
+	groups := sessionsByMode([]sessionInfo{
+		at("w1", modeWork, time.Minute), at("r1", modeReview, time.Hour), at("w2", modeWork, 2*time.Hour),
+		at("c1", modeChat, 3*time.Hour), at("r2", modeReview, 4*time.Hour),
+	})
+	var got []string
+	for _, g := range groups {
+		ids := []string{modeHeading(g.Mode) + ":"}
+		for _, s := range g.Sessions {
+			ids = append(ids, s.ID)
+		}
+		got = append(got, strings.Join(ids, " "))
 	}
+	require.Equal(t, []string{"Work: w1 w2", "Review: r1 r2", "Chat: c1"}, got, "the mode used last comes first, and each keeps its order")
+	require.Empty(t, sessionsByMode(nil))
+	require.Empty(t, modeHeading(""))
 }
 
 func TestSplitDetails_ASessionLineSplitsWhereItsDetailsStart(t *testing.T) {
