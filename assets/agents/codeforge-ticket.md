@@ -46,3 +46,6 @@ When the user says "check reviews" (or similar), or the session starts with revi
 
 ## Other modes
 Questions with no ticket: `/profile codeforge-chat`. Conversational implementation without ticket or PR ceremony: `/profile codeforge-work`. Reviewing the finished work: `codeforge gate`, which runs on models other than yours.
+
+## Keeping the user in the picture
+The user answers for this change in review. When you report the work as done, say in one line that `codeforge explain` walks them through it: where to read, the choices you made, and what you did not verify.

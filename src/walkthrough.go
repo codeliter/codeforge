@@ -47,6 +47,8 @@ type walkthrough struct {
 	Stops    []walkStop
 	// Uncovered lists the stated requirements no stop implements.
 	Uncovered string
+	// Background is the existing code the change leans on, to know before reading the stops.
+	Background []walkStop
 	// FollowUp says the tour is of the changes since the user's last review, and Unaddressed lists the comments of
 	// theirs that no change answers.
 	FollowUp    bool
@@ -73,6 +75,9 @@ func splitRequirement(s *walkStop) {
 // backticks or not), a dash, and the note.
 var walkStopLine = regexp.MustCompile("^\\s*(?:[-*]|\\d+[.)])\\s+`?([^\\s`:]+):(\\d+)(?:-(\\d+))?`?\\s*[—–:-]+\\s*(.+)$")
 
+// knowFirstLine is a line that names existing code the change leans on: "Know first: path:line — what it does".
+var knowFirstLine = regexp.MustCompile("(?i)^\\s*(?:[-*]\\s+)?know first:\\s*`?([^\\s`:]+):(\\d+)(?:-(\\d+))?`?\\s*[—–:-]+\\s*(.+)$")
+
 // errNoWalkthrough is returned when the reviewer's answer lists no stop.
 var errNoWalkthrough = errors.New("the reviewer sent no walkthrough")
 
@@ -82,6 +87,13 @@ func parseWalkthrough(reply string) (walkthrough, error) {
 	var w walkthrough
 	var overview []string
 	for _, l := range reviewLines(reply) {
+		if m := knowFirstLine.FindStringSubmatch(l); m != nil && validRepoPath(m[1]) {
+			if line, err := strconv.Atoi(m[2]); err == nil {
+				end, _ := strconv.Atoi(m[3]) //nolint:errcheck // no range: the place is one line
+				w.Background = append(w.Background, walkStop{Path: m[1], Line: line, End: end, Text: strings.TrimSpace(m[4])})
+				continue
+			}
+		}
 		if m := walkStopLine.FindStringSubmatch(l); m != nil && validRepoPath(m[1]) {
 			line, err := strconv.Atoi(m[2])
 			if err == nil {
@@ -177,7 +189,9 @@ func followUpWalkPrompt() string {
 func walkthroughPrompt() string {
 	return "Walk me through this change so I can get familiar with it before I read your review. This is not the " +
 		"review: no findings, no judgement, no Decision line. Start with two or three plain sentences on what the change " +
-		"does and why. Then list the places to read, in the order that makes the change easy to follow (where it starts, " +
+		"does and why. When the change leans on existing code a newcomer to this repository would not know, add up to " +
+		"three lines `Know first: path:line — what that existing code does`, for code the change calls or extends and " +
+		"does not itself change; leave them out when there is none. Then list the places to read, in the order that makes the change easy to follow (where it starts, " +
 		fmt.Sprintf("then what it calls), at most %d, each on one line as `- path:line — note`, citing a line the change ", maxWalkStops) +
 		"adds or changes. Each note says in one or two sentences what that code does and how it fits the rest, in plain " +
 		"words. When the PR description or its ticket states a requirement this code is for, end the note with " +
@@ -251,6 +265,15 @@ func walkStopText(s walkStop, body codeStyle, code codeSource) string {
 	return text
 }
 
+// walkBackground is the existing code the change leans on, each place with what it does and its code.
+func walkBackground(w walkthrough, body codeStyle, code codeSource) string {
+	parts := []string{body.paint(body.pal.dim, "Existing code this change leans on.")}
+	for _, s := range w.Background {
+		parts = append(parts, body.paint(body.pal.accent, walkPlace(s))+"\n"+walkStopText(s, body, code))
+	}
+	return strings.Join(parts, "\n\n")
+}
+
 // walkthroughSteps is the walkthrough one stop a screen: the overview first, with the stops listed under it, then each
 // stop with its note and its code. A tour of the changes since the user's last review groups the stops that answer
 // their comments apart from the rest, and with whole offers the tour of the whole change.
@@ -281,8 +304,11 @@ func walkthroughSteps(w walkthrough, st codeStyle, code codeSource, whole bool) 
 		fmt.Fprintf(&contents, "\n%s  %s  %s", st.paint(cmp.Or(colour, st.pal.accent), fmt.Sprintf("%2d", i+1)),
 			walkPlace(s), st.paint(st.pal.dim, firstWords(s.Text, walkSummaryWords)))
 	}
-	overview := forms.Step{Tab: "Overview", Body: walkIntro(w, st, max(0, st.width)) + "\n" + contents.String()}
-	steps.Items = append([]forms.Step{overview}, steps.Items...)
+	first := []forms.Step{{Tab: "Overview", Body: walkIntro(w, st, max(0, st.width)) + "\n" + contents.String()}}
+	if len(w.Background) > 0 {
+		first = append(first, forms.Step{Tab: "Know first", Body: walkBackground(w, st, code)})
+	}
+	steps.Items = append(first, steps.Items...)
 	return steps
 }
 
@@ -297,6 +323,13 @@ func walkthroughView(w walkthrough, st codeStyle, code codeSource) forms.Accordi
 		Intro: st.paint(st.pal.bold, walkTitle(w)) + st.paint(st.pal.dim, "  q goes back to the review") + "\n" +
 			walkIntro(w, st, max(0, st.width-len(accordionIndent))),
 		Accent: st.pal.accent, Dim: st.pal.dim,
+	}
+	if len(w.Background) > 0 {
+		a.Items = append(a.Items, forms.Section{
+			Title:   st.paint(st.pal.accent, "Know first"),
+			Summary: "existing code this change leans on",
+			Body:    walkBackground(w, body, code),
+		})
 	}
 	for i, s := range w.Stops {
 		summary := firstWords(s.Text, walkSummaryWords)
@@ -348,7 +381,7 @@ func inlineNames(text string) []string {
 // walkthroughText lists the stops as findings, so reviewCode fetches the files they are in.
 func walkthroughText(w walkthrough) string {
 	var b strings.Builder
-	for _, s := range w.Stops {
+	for _, s := range slices.Concat(w.Background, w.Stops) {
 		fmt.Fprintf(&b, "- fyi: %s:%d — x\n", s.Path, s.Line)
 	}
 	return b.String()

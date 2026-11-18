@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/codeliter/codeforge/src/config"
@@ -63,6 +64,8 @@ func runMode(ctx context.Context, p prepared, args []string) error {
 		return runGate(ctx, p.home, bin, cfg, os.Stdout)
 	case "respond":
 		return respondLaunch(ctx, p.home, bin, cfg, rest)
+	case "explain":
+		return runExplain(ctx, p.home, bin, rest, os.Stdout)
 	case modeTicket, "start", modeChat, modeWork, modeReview:
 		staleNotice(ctx, p.home, os.Stderr)
 	default:
@@ -176,15 +179,45 @@ func launchMode(ctx context.Context, home, bin string, cfg config.Config, picked
 		ctx, engine, cancel = startReviewClock(ctx)
 		defer cancel()
 	}
+	// The flag is codeforge's own, never Empryo's.
+	rest, noPlan := takeFlag(rest, flagNoPlan)
 	mode, args, err := modeArgs(ctx, bin, cfg, cmd, rest)
 	if err != nil {
 		return err
 	}
 	if mode == modeTicket && !resumed && !hasFlag(args, "--headless") {
+		// With a person there, the plan is shown and agreed before any code is written.
+		if !noPlan && interactive() {
+			if args, err = ticketPlan(ctx, bin, args, os.Stdin, os.Stderr); err != nil {
+				return err
+			}
+		}
 		// Ticket work is reviewed by other models before the TUI opens; blocking findings go back to the agent.
 		return launchWith(engine, home, bin, mode, args, ticketAfterTask(home, bin, cfg))
 	}
 	return launch(engine, home, bin, mode, args)
+}
+
+// ownFlagsWithValue are codeforge's own flags that take the next word as their value.
+var ownFlagsWithValue = map[string]bool{"--ticket": true, "--repo": true}
+
+// takeFlag removes a flag of codeforge's own that takes no value from args, and reports whether it was there. A word
+// that is the value of another flag ("--system --no-plan") is that flag's, and stays.
+func takeFlag(args []string, name string) ([]string, bool) {
+	out, found := make([]string, 0, len(args)), false
+	for i := 0; i < len(args); i++ {
+		key, _, equal := strings.Cut(args[i], "=")
+		switch {
+		case (flagsWithValue[key] || ownFlagsWithValue[key]) && !equal && i+1 < len(args):
+			out = append(out, args[i], args[i+1])
+			i++
+		case args[i] == name:
+			found = true
+		default:
+			out = append(out, args[i])
+		}
+	}
+	return out, found
 }
 
 // startReviewClock gives a new review its hard limit and the state shared across it: the jurors running beside the
@@ -205,7 +238,7 @@ func isModeWord(args []string) bool {
 		return false
 	}
 	switch args[0] {
-	case "init", "gate", "respond", "persona", modeTicket, "start", modeChat, modeWork, modeReview:
+	case "init", "gate", "respond", "explain", "persona", modeTicket, "start", modeChat, modeWork, modeReview:
 		return true
 	}
 	return false

@@ -43,3 +43,6 @@ Load `codeforge-review-handoff` before reviewing local work or a PR, or before a
 
 ## Expert help only when needed
 Routine edits and investigation stay here. Delegate a bounded task to `codeforge-expert` only for a hard debugging problem, real design uncertainty, or cross-cutting work; verify what it returns.
+
+## Keeping the user in the picture
+The user answers for this change in review. When you report the work as done, say in one line that `codeforge explain` walks them through it: where to read, the choices you made, and what you did not verify.
