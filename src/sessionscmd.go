@@ -260,8 +260,8 @@ func listSessions(ctx context.Context, home, wd string) (sessions []sessionInfo,
 	}
 	defer func() { _ = st.Close() }() // read only; a close error changes nothing listed
 	for _, e := range entries {
-		if !e.IsDir() || !safeSessionID(e.Name()) {
-			continue
+		if !e.IsDir() || !safeSessionID(e.Name()) || markedFork(wd, e.Name()) {
+			continue // a fork codeforge is about to throw away is no session of the user's
 		}
 		s, ok := readSession(filepath.Join(dir, e.Name()), wd)
 		if !ok {
@@ -332,24 +332,34 @@ func sessionTitle(title string) string {
 // readSessionLog counts the user's turns in a session log and reads whether it ran headless (a review, a gate), from
 // the log's first line. It reads line starts only, so a long log costs one pass and little memory.
 func readSessionLog(path string) (turns int, headless, ok bool) {
+	userLine, first := []byte(`{"k":"user"`), true
+	ok = sessionLogLines(path, func(line []byte) {
+		if first {
+			headless = bytes.Contains(line, []byte(`"host":"headless"`))
+			first = false
+		}
+		if bytes.HasPrefix(line, userLine) {
+			turns++
+		}
+	})
+	return turns, headless, ok
+}
+
+// sessionLogLines calls each with the start of every line of a session log, in order; ok is false when the log cannot
+// be opened. Only the start of a line is read, so a long log costs one pass and little memory.
+func sessionLogLines(path string, each func(start []byte)) (ok bool) {
 	f, err := os.Open(path)
 	if err != nil {
-		return 0, false, false
+		return false
 	}
 	defer func() { _ = f.Close() }() // read only
 	const bufferBytes = 64 * 1024
 	r := bufio.NewReaderSize(f, bufferBytes)
-	userLine, first, atStart := []byte(`{"k":"user"`), true, true
+	atStart := true
 	for {
 		line, err := r.ReadSlice('\n')
 		if atStart {
-			if first {
-				headless = bytes.Contains(line, []byte(`"host":"headless"`))
-				first = false
-			}
-			if bytes.HasPrefix(line, userLine) {
-				turns++
-			}
+			each(line)
 		}
 		// A line longer than the buffer comes in pieces; only the first piece starts a line.
 		atStart = !errors.Is(err, bufio.ErrBufferFull)
@@ -357,7 +367,7 @@ func readSessionLog(path string) (turns int, headless, ok bool) {
 			break
 		}
 	}
-	return turns, headless, true
+	return true
 }
 
 // The columns of the session list.

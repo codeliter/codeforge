@@ -5,10 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -87,6 +90,8 @@ func TestRunExplain_AsksTheSessionsAgentInAReadOnlyFork(t *testing.T) {
 	t.Cleanup(func() { explainSession, sandboxRepo = old, oldSandbox })
 	sandboxed := 0
 	sandboxRepo = func(_ context.Context, argv []string) ([]string, error) { sandboxed++; return argv, nil }
+	nameForks(t, forkPrefix+"x")
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, ".empryo", "sessions", "work-1"), 0o700))
 	asked := ""
 	explainSession = func(_ context.Context, _, _, id string) (sessionInfo, error) {
 		asked = id
@@ -102,7 +107,7 @@ func TestRunExplain_AsksTheSessionsAgentInAReadOnlyFork(t *testing.T) {
 	require.GreaterOrEqual(t, sandboxed, 2, "the operating system holds the agent to reading, and the git that reads the diff")
 	args, err := os.ReadFile(got)
 	require.NoError(t, err)
-	require.Equal(t, "--fork\nwork-1\n--headless\n--json\n--profile\n"+profileFor(modeWork)+"\n--mode\nplan\n"+explainPrompt()+"\nreview\n", string(args),
+	require.Equal(t, "--fork\nwork-1\n--session-id\n"+forkPrefix+"x\n--headless\n--json\n--profile\n"+profileFor(modeWork)+"\n--mode\nplan\n"+explainPrompt()+"\nreview\n", string(args),
 		"a fork in plan mode under the review guard: the session is left as it was and nothing is changed")
 	require.Contains(t, out.String(), "Not verified: a server that closes the connection mid-body.", "without a terminal to show steps on, it is printed")
 
@@ -110,6 +115,59 @@ func TestRunExplain_AsksTheSessionsAgentInAReadOnlyFork(t *testing.T) {
 	require.ErrorIs(t, runExplain(t.Context(), dir, engine, []string{"a", "b"}, &out), errExplainUsage)
 	require.ErrorIs(t, runExplain(t.Context(), dir, engine, []string{"--list"}, &out), errExplainUsage)
 	require.Contains(t, commands, "explain")
+}
+
+func TestRunExplain_ASessionInTheMiddleOfATurnIsNotAsked(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	engine, ran := filepath.Join(dir, "engine"), filepath.Join(dir, "ran")
+	require.NoError(t, os.WriteFile(engine, []byte("#!/bin/sh\n: > "+ran+"\n[ -e slow ] && exec sleep 30\nexit 1\n"), 0o700))
+	old, oldSandbox := explainSession, sandboxRepo
+	t.Cleanup(func() { explainSession, sandboxRepo = old, oldSandbox })
+	sandboxRepo = func(_ context.Context, argv []string) ([]string, error) { return argv, nil }
+	explainSession = func(context.Context, string, string, string) (sessionInfo, error) {
+		return sessionInfo{ID: "work-1", Dir: dir, Mode: modeWork, Title: "retry uploads"}, nil
+	}
+	session := filepath.Join(dir, ".empryo", "sessions", "work-1")
+	require.NoError(t, os.MkdirAll(session, 0o700))
+	write := func(name, content string) {
+		t.Helper()
+		require.NoError(t, os.WriteFile(filepath.Join(session, name), []byte(content), 0o600))
+	}
+	const done = `{"k":"meta"}` + "\n" + `{"k":"user"}` + "\n" + `{"k":"tool-start"}` + "\n" + `{"k":"assistant"}` + "\n"
+	running := done + `{"k":"user"}` + "\n" + `{"k":"tool-start","name":"shell","args":{"command":"codeforge explain"}}` + "\n"
+	alive := fmt.Sprintf(`{"pid":%d,"host":"tui"}`, os.Getpid())
+	gone := exec.CommandContext(t.Context(), "true")
+	require.NoError(t, gone.Run())
+
+	var out bytes.Buffer
+	write("session.jsonl", running)
+	write("writer.lock", alive)
+	err := runExplain(t.Context(), dir, engine, nil, &out)
+	require.ErrorIs(t, err, errSessionWorking, "a fork would wait for the turn, and the turn may be waiting for this command")
+	require.ErrorContains(t, err, `the session "retry uploads" is in the middle of a turn`)
+	require.NoFileExists(t, ran, "the engine is not started to wait out the limit")
+
+	for name, files := range map[string][2]string{
+		"its turn is over":         {done, alive},
+		"its turn was stopped":     {running + `{"k":"turn-stop"}` + "\n", alive},
+		"its engine died mid-turn": {running, fmt.Sprintf(`{"pid":%d}`, gone.Process.Pid)},
+		"its lock cannot be read":  {running, "{"},
+	} {
+		write("session.jsonl", files[0])
+		write("writer.lock", files[1])
+		require.NoError(t, os.RemoveAll(ran))
+		err = runExplain(t.Context(), dir, engine, nil, &out)
+		require.NotErrorIs(t, err, errSessionWorking, name)
+		require.NotErrorIs(t, err, errExplainSlow, "an engine that fails in time is not called slow")
+		require.FileExists(t, ran, name)
+	}
+
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "slow"), nil, 0o600))
+	ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
+	defer cancel()
+	err = runExplain(ctx, dir, engine, nil, &out)
+	require.ErrorIs(t, err, errExplainSlow, "an engine stopped at the limit is said to be that, not a killed process")
 }
 
 func TestTicketPlan_IsAgreedBeforeAnyCodeIsWritten(t *testing.T) {

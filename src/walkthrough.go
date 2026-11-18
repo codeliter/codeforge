@@ -453,6 +453,8 @@ func startWalk(ctx context.Context, argv, env []string, prompt string, followUp 
 
 // runFork runs one forked turn and returns what the engine printed; a failure ends with the engine's own reason.
 func runFork(ctx context.Context, argv, env []string) ([]byte, error) {
+	argv, remove := throwawayFork(argv)
+	defer remove() // the fork was for this turn only
 	var stderr bytes.Buffer
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	cmd.Env, cmd.Stderr = env, &stderr

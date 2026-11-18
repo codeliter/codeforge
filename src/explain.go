@@ -1,14 +1,18 @@
 package src
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/codeliter/codeforge/src/forms"
@@ -183,7 +187,44 @@ func explanationText(e explanation) string {
 var (
 	errNoWorkSession = errors.New("no work or ticket session here to explain: run this where the work was done, or name one with `codeforge explain SESSION` (`codeforge sessions --list` shows them)")
 	errExplainUsage  = errors.New("usage: codeforge explain [SESSION]")
+	errExplainSlow   = errors.New("the agent did not finish explaining it in time")
+	// errSessionWorking is said of a session in the middle of a turn. An agent that runs `codeforge explain` itself
+	// is always in one: its turn waits for the command, and the command would wait for its turn.
+	errSessionWorking = errors.New("is in the middle of a turn, and its change can be explained when that turn is over: run `codeforge explain` then, in a terminal of your own (an agent cannot run it on the session it is working in)")
 )
+
+// sessionWorking reports whether an engine is in the middle of a turn of the session kept in dir. A fork of such a
+// session takes no prompt until the step in flight is over, so asking it to explain would wait as long as the turn
+// does: for ever when that step is this very command, run by the session's own agent.
+func sessionWorking(dir string) bool {
+	open := false
+	read := sessionLogLines(filepath.Join(dir, "session.jsonl"), func(line []byte) {
+		switch {
+		case bytes.HasPrefix(line, []byte(`{"k":"user"`)):
+			open = true
+		case bytes.HasPrefix(line, []byte(`{"k":"assistant"`)), bytes.HasPrefix(line, []byte(`{"k":"turn-stop"`)):
+			open = false
+		}
+	})
+	return read && open && writerAlive(filepath.Join(dir, "writer.lock"))
+}
+
+// writerAlive reports whether the engine named in a session's writer lock is still running: a turn left open by an
+// engine that died is no turn in progress.
+func writerAlive(path string) bool {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	var lock struct {
+		PID int `json:"pid"`
+	}
+	if json.Unmarshal(data, &lock) != nil || lock.PID <= 0 {
+		return false
+	}
+	err = syscall.Kill(lock.PID, 0)
+	return err == nil || errors.Is(err, syscall.EPERM)
+}
 
 // explainSession finds the session to explain in wd: the one named by id, or the latest work or ticket session. Tests
 // replace it.
@@ -243,6 +284,9 @@ func runExplain(ctx context.Context, home, bin string, args []string, w io.Write
 	if err != nil {
 		return err
 	}
+	if sessionWorking(filepath.Join(s.Dir, ".empryo", "sessions", s.ID)) {
+		return fmt.Errorf("the session %q %w", cmpOrText(s.Title, s.ID), errSessionWorking)
+	}
 	fmt.Fprintf(os.Stderr, "codeforge: asking the agent of %q to explain its change...\n", cmpOrText(s.Title, s.ID))
 	tctx, cancel := context.WithTimeout(ctx, explainLimit)
 	defer cancel()
@@ -253,6 +297,10 @@ func runExplain(ctx context.Context, home, bin string, args []string, w io.Write
 		return err
 	}
 	out, err := runFork(tctx, argv, readOnlyEnv())
+	if err != nil && errors.Is(tctx.Err(), context.DeadlineExceeded) {
+		// The engine was stopped at the limit: "signal: killed" says nothing of why.
+		return fmt.Errorf("%w (%s)", errExplainSlow, explainLimit)
+	}
 	if err != nil {
 		return fmt.Errorf("the agent could not explain it: %w", err)
 	}

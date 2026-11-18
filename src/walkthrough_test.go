@@ -59,6 +59,9 @@ func TestStartWalkthrough_WritesItInAForkInTheBackground(t *testing.T) {
 	require.NoError(t, err)
 	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + got + "\nprintf '%s' '" + strings.ReplaceAll(string(reply), "'", "'\\''") + "'\n"
 	require.NoError(t, os.WriteFile(engine, []byte(script), 0o700))
+	t.Chdir(dir) // the fork is marked where the engine runs, beside the session it forks
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, ".empryo", "sessions", "rev-1"), 0o700))
+	nameForks(t, forkPrefix+"x")
 	job := startWalkthrough(t.Context(), []string{engine, "--profile", "codeforge-review", "--session-id", "rev-1", "--save-session", "--headless", "brief"}, os.Environ())
 	defer job.stop()
 	<-job.done
@@ -66,8 +69,8 @@ func TestStartWalkthrough_WritesItInAForkInTheBackground(t *testing.T) {
 	require.Len(t, job.w.Stops, 3)
 	args, err := os.ReadFile(got)
 	require.NoError(t, err)
-	require.Equal(t, "--fork\nrev-1\n--profile\ncodeforge-review\n--headless\n"+walkthroughPrompt()+"\n", string(args),
-		"a fork of the review's session, so the session itself stays free for questions and the chat")
+	require.Equal(t, "--fork\nrev-1\n--session-id\n"+forkPrefix+"x\n--profile\ncodeforge-review\n--headless\n"+walkthroughPrompt()+"\n", string(args),
+		"a fork of the review's session, so the session itself stays free for questions and the chat; named, so it is removed after")
 
 	old, oldSteps := showAccordion, showSteps
 	t.Cleanup(func() { showAccordion, showSteps = old, oldSteps })
@@ -187,6 +190,9 @@ func TestStartWalkthrough_AFollowUpRoundToursTheChangesSinceTheLastReview(t *tes
 	oldFollow, oldSteps := followUpWalk, showSteps
 	t.Cleanup(func() { followUpWalk, showSteps = oldFollow, oldSteps })
 	followUpWalk = func(context.Context) bool { return true }
+	t.Chdir(dir) // the fork is marked where the engine runs, beside the session it forks
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, ".empryo", "sessions", "rev-1"), 0o700))
+	nameForks(t, forkPrefix+"x")
 
 	job := startWalkthrough(t.Context(), []string{engine, "--session-id", "rev-1", "brief"}, os.Environ())
 	defer job.stop()
@@ -196,7 +202,7 @@ func TestStartWalkthrough_AFollowUpRoundToursTheChangesSinceTheLastReview(t *tes
 	require.Equal(t, "the swallowed error", job.w.Stops[0].Answers)
 	args, err := os.ReadFile(got)
 	require.NoError(t, err)
-	require.Equal(t, "--fork\nrev-1\n"+followUpWalkPrompt()+"\n", string(args))
+	require.Equal(t, "--fork\nrev-1\n--session-id\n"+forkPrefix+"x\n"+followUpWalkPrompt()+"\n", string(args))
 
 	var titles []string
 	showSteps = func(_ string, s forms.Steps) (string, error) {
