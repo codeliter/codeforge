@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/codeliter/codeforge/src/config"
+	"github.com/codeliter/codeforge/src/guard"
 
 	"github.com/codeliter/codeforge/src/store"
 )
@@ -204,6 +205,10 @@ func runObserve(ctx context.Context, home string, stdin io.Reader) {
 	}
 	if in.Event == promptEvent {
 		logPromptShape(home, in, observePrompt(ctx, home, in))
+		return
+	}
+	if text, ok := guard.LearnCorrection(in.ToolInput.Command); ok && guard.ShellTool(in.Tool) {
+		logPromptShape(home, in, stampCorrection(ctx, home, in, text))
 		return
 	}
 	if in.Tool != "Bash" {

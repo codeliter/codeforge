@@ -74,7 +74,7 @@ func TestCheck_SelfStillGuarded(t *testing.T) {
 	for _, cmd := range []string{"codeforge trust", "codeforge init", "codeforge repair", "codeforge reinit"} {
 		require.Equal(t, []string{RuleSelf}, rules(Check(cmd, false)), cmd)
 	}
-	require.Equal(t, []string{RuleLearning}, rules(Check("codeforge learn correct x", false)))
+	require.Equal(t, []string{RuleLearning}, rules(Check("codeforge learn accept P1", false)))
 	for _, cmd := range []string{"codeforge gate accept a.go:3", "codeforge gate reset", "codeforge gate unaccept a.go:3", "codeforge gate $x",
 		"codeforge review accept 42 a.go:3", "codeforge review unaccept 42 a.go:3", "codeforge review $w 42 a.go:3"} {
 		require.Equal(t, []string{RuleUserOnly}, rules(Check(cmd, false)), "only the user accepts a finding or lifts the cap: %s", cmd)
@@ -82,7 +82,7 @@ func TestCheck_SelfStillGuarded(t *testing.T) {
 	}
 	for _, cmd := range []string{
 		"codeforge job add --at 02:00 -- codeforge observe x", "codeforge job add --until 'codeforge gate reset' -- make",
-		"codeforge job add --while 'codeforge learn correct x' -- make", "codeforge job $sub",
+		"codeforge job add --while 'codeforge learn forget R1' -- make", "codeforge job $sub",
 		"codeforge job add --name -- --until 'codeforge gate reset' -- make",
 	} {
 		require.False(t, DecideOutsideReview(input(t, "Bash", map[string]any{"command": cmd})).Allow, "what the agent may not run, it may not schedule: %s", cmd)

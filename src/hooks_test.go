@@ -54,7 +54,7 @@ func TestRunHook(t *testing.T) {
 	}
 	require.Equal(t, 0, runHook(t.Context(), home, strings.NewReader("not json"), &stderr), "outside review even garbage passes")
 
-	for _, cmd := range []string{"codeforge observe", "echo '{}' | codeforge observe", "codeforge learn correct x"} {
+	for _, cmd := range []string{"codeforge observe", "echo '{}' | codeforge observe", "codeforge learn accept P1", "codeforge learn correct --session s1 x"} {
 		in := `{"hook_event_name":"PreToolUse","tool_name":"Bash","cwd":"/","tool_input":{"command":"` + cmd + `"}}`
 		require.Equal(t, hookExitBlock, runHook(t.Context(), home, strings.NewReader(in), &stderr), "an agent cannot forge learning evidence: "+cmd)
 	}

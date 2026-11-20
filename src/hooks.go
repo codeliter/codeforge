@@ -8,12 +8,14 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/codeliter/codeforge/src/guard"
 )
 
 // installHooks merges codeforge's guard and resume hint into ~/.empryo/hooks.json, keeping any hooks the user added.
 // The guard is registered globally and fail-closed, but runHook enforces the full rules only in review mode, where the
 // read-only promise must hold even when the model ignores its instructions. Other sessions are gated only against
-// the agent writing learning evidence (see DecideOutsideReview).
+// the agent deciding what is learned (see DecideOutsideReview).
 // The resume hint is fail-open: a shutdown must never wait on it.
 func installHooks(empryoDir, self string, legacyHooks ...string) error {
 	path := filepath.Join(empryoDir, "hooks.json")
@@ -42,7 +44,7 @@ func installHooks(empryoDir, self string, legacyHooks ...string) error {
 	}
 
 	const hookTimeoutSeconds = 10
-	setOurs(hooks, "PreToolUse", hookCommand, "", map[string]any{
+	setOurs(hooks, "PreToolUse", hookCommand, nil, map[string]any{
 		"type":       "command",
 		"command":    shellQuote(self) + " " + hookCommand,
 		"timeout":    hookTimeoutSeconds,
@@ -50,7 +52,7 @@ func installHooks(empryoDir, self string, legacyHooks ...string) error {
 	}, legacyHooks...)
 	// Empryo gives each SessionEnd hook at most 3 seconds while it shuts down.
 	const sessionEndTimeoutSeconds = 3
-	setOurs(hooks, "SessionEnd", sessionEndCommand, "", map[string]any{
+	setOurs(hooks, "SessionEnd", sessionEndCommand, nil, map[string]any{
 		"type":    "command",
 		"command": shellQuote(self) + " " + sessionEndCommand,
 		"timeout": sessionEndTimeoutSeconds,
@@ -58,7 +60,7 @@ func installHooks(empryoDir, self string, legacyHooks ...string) error {
 	// Learning: Empryo reports whether each shell command succeeded or failed. Async and fail-open, so it never
 	// slows or blocks a tool call.
 	for _, event := range []string{"PostToolUse", "PostToolUseFailure"} {
-		setOurs(hooks, event, observeCommand, "Bash", map[string]any{
+		setOurs(hooks, event, observeCommand, guard.ShellTools(), map[string]any{
 			"type":    "command",
 			"command": shellQuote(self) + " " + observeCommand,
 			"timeout": observeTimeoutSec,
@@ -66,7 +68,7 @@ func installHooks(empryoDir, self string, legacyHooks ...string) error {
 		}, legacyHooks...)
 	}
 	// Corrections: Empryo sends each prompt the user submits. Same rules as above: async and fail-open.
-	setOurs(hooks, promptEvent, observeCommand, "", map[string]any{
+	setOurs(hooks, promptEvent, observeCommand, nil, map[string]any{
 		"type":    "command",
 		"command": shellQuote(self) + " " + observeCommand,
 		"timeout": observeTimeoutSec,
@@ -90,13 +92,17 @@ const (
 )
 
 // setOurs replaces only codeforge's hooks, including stale temporary launchers.
-// User hooks in the same rule and the rule's matcher are preserved.
-func setOurs(hooks map[string]any, event, sub, matcher string, hook map[string]any, legacyHooks ...string) {
-	rule := map[string]any{"hooks": []any{hook}}
-	if matcher != "" {
-		rule["matcher"] = matcher
+// User hooks in the same rule and the rule's matcher are preserved. The hook gets one rule for each tool it matches,
+// each named exactly, or one rule for every tool when it names none.
+func setOurs(hooks map[string]any, event, sub string, matchers []string, hook map[string]any, legacyHooks ...string) {
+	rules := keepOthers(hooks[event], sub, legacyHooks)
+	if len(matchers) == 0 {
+		rules = append(rules, map[string]any{"hooks": []any{hook}})
 	}
-	hooks[event] = append(keepOthers(hooks[event], sub, legacyHooks), rule)
+	for _, m := range matchers {
+		rules = append(rules, map[string]any{"matcher": m, "hooks": []any{hook}})
+	}
+	hooks[event] = rules
 }
 
 // keepOthers returns the rules of an event without codeforge's hooks.

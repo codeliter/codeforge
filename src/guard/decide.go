@@ -20,8 +20,10 @@ func onlyComments(found []Finding) bool {
 }
 
 // DecideOutsideReview is the only check outside review mode: git, gh, scripts and settings are not gated, but the
-// agent may not write learning evidence (codeforge observe, codeforge learn), because that would record its own
-// words as the user's corrections. Commands the guard cannot read (process substitution, git
+// agent may not decide what is learned or feed the observer (codeforge observe, codeforge learn accept, dismiss,
+// forget, revert, or any learn command naming a session), because that would pass its own words off as the user's
+// repeated corrections. Recording a correction or an outcome without a session is allowed (see classifyLearn);
+// codeforge names the session itself. Commands the guard cannot read (process substitution, git
 // aliases and hooks that run programs, code_script it cannot parse) are refused too, since they could run those
 // commands unseen. Script files that cannot be read are not.
 func DecideOutsideReview(in Input) Decision {

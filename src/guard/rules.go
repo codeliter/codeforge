@@ -188,7 +188,9 @@ func checkIn(command string, readOnly bool, cwd string) Result {
 			continue
 		}
 		// Where the command runs: the tool's directory, after any cd earlier in the line.
-		r.Blocked = append(r.Blocked, classify(words, joinDir(r.cwd, dir))...)
+		// What the shell replaces before codeforge reads it: a variable or substitution anywhere in the line, or a
+		// pattern such as --sessio? in this command.
+		r.Blocked = append(r.Blocked, classify(words, joinDir(r.cwd, dir), substitutes(command) || expandsInShell(seg))...)
 	}
 
 	// A PR comment is offered for approval only as written. A variable or command substitution anywhere in the command
@@ -204,7 +206,7 @@ func checkIn(command string, readOnly bool, cwd string) Result {
 	return r
 }
 
-func classify(w []string, cwd string) []Finding {
+func classify(w []string, cwd string, expands bool) []Finding {
 	switch w[0] {
 	case "script", "expect", "unbuffer", "socat", "tmux", "screen", "zpty":
 		// These give a program a pseudo-terminal the agent controls, which could answer codeforge trust's prompt.
@@ -227,16 +229,56 @@ func classify(w []string, cwd string) []Finding {
 			return classifyJob(w[2:], cwd)
 		}
 		// A subcommand built from a variable (`o=observe; codeforge $o`) can name observe or learn where no literal shows.
-		if len(w) > 1 && strings.ContainsAny(w[1], "$`") {
+		// So can one built from a pattern (`codeforge observ?` beside a file named observe).
+		if len(w) > 1 && (strings.ContainsAny(w[1], "$`") || expands && strings.ContainsAny(w[1], "*?[{~")) {
 			return []Finding{{RuleLearning, learningReason}}
 		}
-		if len(w) > 1 && (w[1] == "observe" || w[1] == "learn" && !readsLearning(w[2:])) {
-			return []Finding{{RuleLearning, "only you can record or revert codeforge learning evidence"}}
+		if len(w) > 1 && w[1] == "observe" {
+			return []Finding{{RuleLearning, learningReason}}
+		}
+		if len(w) > 1 && w[1] == "learn" {
+			return classifyLearn(w[2:], cwd, expands)
 		}
 	case "gh":
 		return classifyGH(w)
 	}
 	return nil
+}
+
+// classifyLearn judges `codeforge learn ...`. The agent may read what was learned, record a correction and record a
+// check's outcome. A correction typed here names no session: codeforge stamps the session itself from the tool result
+// (see stampCorrection in src), so one session counts once however often the agent repeats itself, and a rule needs
+// the same sentence in two sessions. Naming a session would claim another session as evidence, and accept, dismiss,
+// forget and revert decide what is learned, so those stay with the user. The check that
+// outcome runs is judged as if the agent ran it directly.
+//
+// Only what the shell would replace is refused (expands): a variable, a substitution or a pattern such as --sessio?,
+// which names a session beside a file called --session. A character the shell leaves alone, as in 'Always quote $HOME',
+// -run '^TestFoo$' or a lone '$', is text like any other.
+func classifyLearn(args []string, cwd string, expands bool) []Finding {
+	if readsLearning(args) {
+		return nil
+	}
+	if len(args) == 0 || args[0] != "correct" && args[0] != "outcome" {
+		return []Finding{{RuleLearning, learningReason}}
+	}
+	if strings.HasPrefix(arg(args, 1), "--session") || expands && (args[0] == "correct" || arg(args, 1) != "--") {
+		return []Finding{{RuleLearning, "only you can record learning evidence for a named session"}}
+	}
+	if expands {
+		return []Finding{{RuleOpaque, "the check for codeforge learn outcome is built from a variable or pattern the guard cannot read"}}
+	}
+	if args[0] == "correct" || len(args) < 3 || args[1] != "--" {
+		return nil
+	}
+	argv := args[2:]
+	var found []Finding
+	for _, f := range checkIn(quoteWords(argv), false, cwd).Blocked {
+		if f.Rule == RuleLearning || f.Rule == RuleOpaque || f.Rule == RuleUserOnly {
+			found = append(found, Finding{f.Rule, "the check `" + strings.Join(argv, " ") + "`: " + f.Reason})
+		}
+	}
+	return found
 }
 
 // classifyJob judges `codeforge job ...`. A scheduled command runs later with nobody watching and outside every tool
@@ -287,6 +329,11 @@ func JobCommandLine(words []string) string {
 	if len(words) == 1 {
 		return strings.TrimSpace(words[0])
 	}
+	return quoteWords(words)
+}
+
+// quoteWords is a shell line that runs words as one command, each word quoted so it arrives exactly as given.
+func quoteWords(words []string) string {
 	quoted := make([]string, len(words))
 	for i, w := range words {
 		quoted[i] = "'" + strings.ReplaceAll(w, "'", `'\''`) + "'"

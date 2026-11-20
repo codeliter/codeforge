@@ -25,7 +25,7 @@ var errAllowRemoved = errors.New("codeforge allow was removed: opening a PR, mer
 // runHook is the PreToolUse hook Empryo calls before every tool. In review sessions (CODEFORGE_GUARD=review) it
 // keeps the review read-only (no writes, pushes, PR comments or merges) and stops the agent from changing
 // codeforge's settings or switching the guard off. Other sessions are not gated, except that the agent may not
-// write learning evidence (codeforge observe, codeforge learn).
+// decide what is learned or feed the observer (codeforge observe, codeforge learn accept and the like).
 func runHook(_ context.Context, _ string, stdin io.Reader, stderr io.Writer) int {
 	review := os.Getenv("CODEFORGE_GUARD") == "review"
 

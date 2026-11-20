@@ -15,6 +15,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/codeliter/codeforge/src/guard"
 	"github.com/codeliter/codeforge/src/store"
 )
 
@@ -149,6 +150,89 @@ func observePayloadJSON(t *testing.T, repo, event, tool, command, response strin
 	data, err := json.Marshal(p)
 	require.NoError(t, err)
 	return strings.NewReader(string(data))
+}
+
+// TestRunObserve_StampsTheSessionOfACorrectionTheAgentRecorded: the session comes from the tool result, so the same
+// correction recorded in two sessions is adopted like one the user typed twice, and nothing else earns a session.
+func TestRunObserve_StampsTheSessionOfACorrectionTheAgentRecorded(t *testing.T) {
+	home, repo := t.TempDir(), gitRepo(t)
+	t.Chdir(repo)
+	t.Setenv(launchMarker, "1")
+	t.Setenv("CODEFORGE_GUARD", "")
+	t.Setenv(humanLaunchMarker, "1")
+	require.NoError(t, withLearning(t.Context(), home, func(s *store.Store) error {
+		for _, id := range []string{"sess-1", "sess-2"} {
+			if err := s.Put(t.Context(), store.Session{ID: id, Mode: modeChat, Profile: profileFor(modeChat), Repository: repo}); err != nil {
+				return err
+			}
+		}
+		return nil
+	}))
+	said, failed, cwd := "", false, repo // what the last learn correct printed, as the tool result carries it
+	response := func() any { return map[string]any{"output": said, "success": !failed} }
+	observe := func(session, tool, command string) {
+		data, err := json.Marshal(map[string]any{"session_id": session, "cwd": cwd, "hook_event_name": "PostToolUse", "tool_name": tool, "tool_input": map[string]string{"command": command}, "tool_response": response()})
+		require.NoError(t, err)
+		runObserve(t.Context(), home, strings.NewReader(string(data)))
+	}
+	correct := func(text string) {
+		var out bytes.Buffer
+		require.NoError(t, runLearn(t.Context(), home, []string{"correct", text}, &out))
+		said = out.String()
+	}
+	sessions := func() []string {
+		var ids []string
+		for _, o := range loadObservations(t, home, repo) {
+			ids = append(ids, o.SessionID)
+		}
+		return ids
+	}
+
+	observe("sess-1", "Bash", "codeforge learn correct 'always use table-driven tests'")
+	require.Empty(t, sessions(), "a tool result with no correction behind it records nothing")
+
+	correct("always use table-driven tests")
+	observe("nope", "Bash", "codeforge learn correct 'always use table-driven tests'")
+	observe("sess-1", "Edit", "codeforge learn correct 'always use table-driven tests'")
+	observe("sess-1", "Bash", "codeforge learn correct 'always use other tests'")
+	require.Equal(t, []string{""}, sessions(), "an unknown session, another tool or other words stamp nothing")
+
+	t.Setenv(humanLaunchMarker, "")
+	observe("sess-1", "Bash", "codeforge learn correct 'always use table-driven tests'")
+	require.Equal(t, []string{""}, sessions(), "a session no person started teaches nothing")
+	t.Setenv(humanLaunchMarker, "1")
+
+	failed = true
+	observe("sess-1", "Bash", "codeforge learn correct 'always use table-driven tests'")
+	failed = false
+	require.Equal(t, []string{""}, sessions(), "a call that failed stamps nothing")
+	for _, unsure := range []map[string]any{{"output": said}, {"output": said, "success": false, "exit_code": 0}, {"output": said, "success": true, "exit_code": 1}} {
+		response = func() any { return unsure }
+		observe("sess-1", "Bash", "codeforge learn correct 'always use table-driven tests'")
+		require.Equal(t, []string{""}, sessions(), "a call Empryo does not report as passed stamps nothing: %v", unsure)
+	}
+	response = func() any { return map[string]any{"output": said, "success": !failed} }
+
+	sub := filepath.Join(repo, "sub")
+	require.NoError(t, os.Mkdir(sub, 0o700))
+	cwd = sub
+	observe("sess-1", "Bash", "codeforge learn correct 'always use table-driven tests'")
+	cwd = repo
+	require.Equal(t, []string{""}, sessions(), "a correction recorded in another directory is not this call's")
+
+	observe("sess-1", "shell", "codeforge learn correct 'always use table-driven tests'")
+	observe("sess-2", "Bash", "codeforge learn correct 'always use table-driven tests'")
+	require.Equal(t, []string{"sess-1"}, sessions(), "a stamped correction is not stamped again")
+
+	var out bytes.Buffer
+	adoptRules(t.Context(), home, repo, ".", &out)
+	require.NotContains(t, out.String(), "learned a rule", "one session is not enough")
+
+	correct("always use table-driven tests")
+	observe("sess-2", "Bash", "codeforge learn correct 'always use table-driven tests'")
+	require.Equal(t, []string{"sess-1", "sess-2"}, sessions())
+	adoptRules(t.Context(), home, repo, ".", &out)
+	require.Contains(t, out.String(), "learned a rule from your corrections")
 }
 
 func loadObservations(t *testing.T, home, repo string) []store.Observation {
@@ -492,18 +576,17 @@ func TestInstallHooks_RegistersObserver(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal(data, &doc))
 	for _, event := range []string{"PostToolUse", "PostToolUseFailure"} {
-		var ours int
+		var ours []string
 		for _, rule := range doc.Hooks[event] {
 			for _, h := range rule.Hooks {
 				if cmd, _ := h["command"].(string); strings.HasSuffix(cmd, "codeforge' observe") { //nolint:errcheck // absence counts as not ours
-					ours++
-					require.Equal(t, "Bash", rule.Matcher)
+					ours = append(ours, rule.Matcher)
 					require.Equal(t, true, h["async"])
 					require.NotEqual(t, true, h["failClosed"], "learning is fail-open")
 					require.Equal(t, "'/opt/homebrew/bin/codeforge' observe", cmd, "a moved binary replaces the old entry")
 				}
 			}
 		}
-		require.Equal(t, 1, ours, event)
+		require.Equal(t, guard.ShellTools(), ours, "%s: one rule for each tool that runs a shell command", event)
 	}
 }

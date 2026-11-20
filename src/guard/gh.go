@@ -40,17 +40,18 @@ func ghGlobalRepo(w []string) []string {
 	return out
 }
 
-// knownGH lists gh's built-in commands. Anything else may be a user alias, which gh expands into any
-// command (including `pr merge`), so it is refused rather than guessed.
+// knownGH lists gh's built-in commands and the one extension the user allowed by name: stack (github/gh-stack),
+// which manages stacked PRs. Anything else may be a user alias, which gh expands into any command (including
+// `pr merge`), so it is refused rather than guessed.
 var knownGH = set(
 	"alias", "api", "attestation", "auth", "browse", "cache", "co", "codespace", "completion", "config",
 	"extension", "gist", "gpg-key", "help", "issue", "label", "org", "pr", "project", "release", "repo",
-	"ruleset", "run", "search", "secret", "ssh-key", "status", "variable", "workflow", "version",
+	"ruleset", "run", "search", "secret", "ssh-key", "stack", "status", "variable", "workflow", "version",
 	"--version", "--help", "-h",
 )
 
-// classifyGH refuses only gh aliases and extensions, which can run any command unseen. Opening, merging and
-// commenting on PRs, and every gh api call, need no approval.
+// classifyGH refuses only gh aliases and unlisted extensions, which can run any command unseen. Opening, merging
+// and commenting on PRs, and every gh api call, need no approval.
 func classifyGH(w []string) []Finding {
 	w = ghGlobalRepo(w)
 	if len(w) >= minGitTokens && !knownGH[w[1]] {

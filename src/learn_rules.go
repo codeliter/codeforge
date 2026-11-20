@@ -547,7 +547,8 @@ func rulesBlock(rules []store.Rule) string {
 const maxAutoRules = 3
 
 // adoptRules turns groups of corrections the user repeated across sessions into rules by itself. The user never has
-// to run accept: corrections are typed by the user (never by the model), a rule needs two sessions, each adoption is
+// to run accept: only a sentence repeated in two recorded sessions is adopted, whether the user typed it as a prompt
+// or the agent recorded it with learn correct (codeforge stamps that session itself, see stampCorrection), each adoption is
 // announced with how to undo it, forgetting one also declines it for good, and review sessions never adopt.
 func adoptRules(ctx context.Context, home, repo, dir string, w io.Writer) {
 	obs, rules, dismissed, near, err := loadLearning(ctx, home, repo)

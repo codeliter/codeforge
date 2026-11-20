@@ -13,6 +13,17 @@ func expandsInShell(command string) bool { return scanExpansion(command, true) }
 // whole line.
 func substitutes(command string) bool { return scanExpansion(command, false) }
 
+// dollarExpands reports whether a dollar sign followed by rest starts an expansion. Only a dollar sign that ends its
+// word is literal: at the end of the line, before a blank, or before the quote that closes "cost $". Everything else
+// counts as an expansion, since shells differ in what they read after one (zsh has $=s, $^s and $~s).
+func dollarExpands(rest string, quote byte) bool {
+	if rest == "" {
+		return false
+	}
+	c := rest[0]
+	return c != ' ' && c != '\t' && c != '\n' && (c != '"' || quote != '"')
+}
+
 func scanExpansion(command string, globs bool) bool {
 	var quote byte // 0 outside quotes, otherwise the quote character
 	for i := 0; i < len(command); i++ {
@@ -32,7 +43,7 @@ func scanExpansion(command string, globs bool) bool {
 			} else {
 				quote = '"'
 			}
-		case c == '$' || c == '\x60':
+		case c == '\x60' || c == '$' && dollarExpands(command[i+1:], quote):
 			return true
 		case globs && quote == 0 && strings.IndexByte("*?[{~", c) >= 0:
 			return true

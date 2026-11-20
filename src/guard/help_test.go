@@ -130,5 +130,5 @@ func TestHelpOutsideReviewModeKeepsTheLearningRules(t *testing.T) {
 	repo := gitRepo(t)
 	require.True(t, Decide(shell(t, repo, "codeforge observe --help"), false).Allow, "help prints usage; it records nothing")
 	require.False(t, Decide(shell(t, repo, "codeforge observe"), false).Allow)
-	require.False(t, Decide(shell(t, repo, "codeforge learn correct x"), false).Allow)
+	require.False(t, Decide(shell(t, repo, "codeforge learn accept P1"), false).Allow)
 }

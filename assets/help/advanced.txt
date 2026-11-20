@@ -25,7 +25,7 @@ Setup:
   trust --models                     Approve this repository's model configuration by content hash
 
 Learning (verification habits are applied to the prompt; nothing touches personas or guards):
-  learn correct [--session ID] TEXT  Record a correction you typed into this CLI
+  learn correct [--session ID] TEXT  Record a correction; one the agent records is counted for its own session
   learn outcome [--session ID] -- COMMAND [ARGS]
                                      Run a check (no shell, 10 min limit) and record passed, failed or incomplete
   learn list [--all]                 Show this repository's observations; --all includes reverted ones

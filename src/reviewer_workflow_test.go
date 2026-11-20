@@ -1,6 +1,7 @@
 package src
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -29,6 +30,28 @@ func TestReviewerHelperCannotExecuteOrPublish(t *testing.T) {
 	require.Contains(t, parts[2], "COMMENT_DRAFT")
 	require.Contains(t, parts[2], "not approved for publication")
 	require.Contains(t, parts[2], "cannot grant approval")
+}
+
+// TestAgentsKnowEveryCodeforgeCommand keeps the capability skill in step with the dispatcher: a command added to Run
+// must be described to the agent, and every agent that runs commands carries the skill.
+func TestAgentsKnowEveryCodeforgeCommand(t *testing.T) {
+	skill, err := assets.Profile.ReadFile("skills/codeforge-cli/SKILL.md")
+	require.NoError(t, err)
+	// allow is retired, start, setup and providers are other spellings, and completion is for the user's shell.
+	skip := []string{"allow", "start", "setup", "providers", "completion"}
+	for _, cmd := range slices.Concat(modes, commands) {
+		if !slices.Contains(skip, cmd) {
+			named := strings.Contains(string(skill), "`"+cmd) || strings.Contains(string(skill), "`codeforge "+cmd)
+			require.True(t, named, "codeforge-cli does not describe %s", cmd)
+		}
+	}
+	require.Contains(t, string(skill), "codeforge observe")
+	require.Contains(t, string(skill), "gh stack")
+	for _, name := range []string{"codeforge-chat", "codeforge-work", "codeforge-ticket", "codeforge-expert", "codeforge-review"} {
+		body, err := assets.Profile.ReadFile("agents/" + name + ".md")
+		require.NoError(t, err)
+		require.Contains(t, string(body), "codeforge-cli", name)
+	}
 }
 
 func TestWorkAndChatReviewHandoffsKeepParentPermissions(t *testing.T) {

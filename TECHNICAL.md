@@ -170,9 +170,16 @@ fail-closed behaviour or indiscriminately delete missing security hooks.
 
 The `PreToolUse` guard is registered globally and is **fail-closed**. In review sessions
 (`CODEFORGE_GUARD=review`) it enforces read-only plus the self-protection rules (no settings changes, no
-`codeforge trust`, no editing the guard). Every other session is not gated, except that the agent may not write
-learning evidence (`codeforge observe`, `codeforge learn`, directly or through an interpreter or script), because
-that would record its own words as the user's corrections. In review sessions, if the guard cannot run, the tool call is not allowed through; elsewhere an unreadable call passes. Outside review, interpreter code, wrapped commands and readable scripts that mention `codeforge` (and scripts too large to read) are refused, as are commands the guard cannot parse (process substitution, git aliases that run programs), since they could build `codeforge observe` in ways no pattern reads. This is a heuristic: a name carried across a `sh -c` boundary in an environment variable, or piped into a bare shell, is not caught. Outside review the guard no longer blocks `codeforge trust`, settings changes or terminal drivers such as `script` and `tmux`, so an agent there could approve its own trust; that is the accepted cost of gating review mode only. There is no managed `gh` shim:
+`codeforge trust`, no editing the guard). Every other session is not gated, except that the agent may not decide
+what is learned or feed the observer (`codeforge observe`, `codeforge learn accept|dismiss|forget|revert`, any
+`learn` command with `--session`, directly or through an interpreter or script), because that would pass its own
+words off as the user's repeated corrections. It may run `codeforge learn correct TEXT` and `codeforge learn outcome
+-- COMMAND`: the agent never names the session. When the tool result of a lone `codeforge learn correct TEXT` arrives, the
+`observe` hook stamps that correction with the session Empryo reports (a session codeforge launched here, started
+by a person), so one session counts once and the same sentence in two sessions is adopted at the next launch like
+a repeated prompt. The agent chooses what to record, so such a rule is the agent's reading of the user, not proof
+of their words; each adoption is announced and `learn forget` undoes it. The outcome's command is judged as if the
+agent ran it directly. In review sessions, if the guard cannot run, the tool call is not allowed through; elsewhere an unreadable call passes. Outside review, interpreter code, wrapped commands and readable scripts that mention `codeforge` (and scripts too large to read) are refused, as are commands the guard cannot parse (process substitution, git aliases that run programs), since they could build `codeforge observe` in ways no pattern reads. This is a heuristic: a name carried across a `sh -c` boundary in an environment variable, or piped into a bare shell, is not caught. Outside review the guard no longer blocks `codeforge trust`, settings changes or terminal drivers such as `script` and `tmux`, so an agent there could approve its own trust; that is the accepted cost of gating review mode only. There is no managed `gh` shim:
 `repair` deletes one that earlier versions installed, only if it carries Codeforge's marker (the `gh-shim`
 subcommand remains for a stale copy). The `SessionEnd` resume-hint hook is fail-open because shutdown must not
 wait on a hint. In review, agent tools may not alter the guard, its helper, its configuration, or run

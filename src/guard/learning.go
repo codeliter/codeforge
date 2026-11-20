@@ -12,7 +12,7 @@ import (
 // line continuations), so any mention is refused outside review mode. Review mode refuses far more.
 var learningText = regexp.MustCompile(`\bcodeforge\b`)
 
-const learningReason = "only you can record or revert codeforge learning evidence"
+const learningReason = "only you can decide what codeforge learns (accept, dismiss, forget, revert) or feed it session learning evidence (observe)"
 
 var learningWriteWord = regexp.MustCompile(`\b(observe|correct|outcome|revert|accept|dismiss|forget|approve)\b`)
 
@@ -32,6 +32,38 @@ var learningWord = regexp.MustCompile(`\b(observe|learn)\b`)
 // A substitution inside an argument of another command, such as git commit -m "... $(date)", only makes text.
 func substitutedLearning(command string) bool {
 	return (learningText.MatchString(command) || learningWord.MatchString(command)) && buildsCommand(command)
+}
+
+// ShellTool reports a tool that runs a shell command line.
+func ShellTool(name string) bool { return slices.Contains(shellTools, name) }
+
+// ShellTools are the names of the tools that run a shell command line.
+func ShellTools() []string { return slices.Clone(shellTools) }
+
+// LearnCorrection returns the text of a command line that is exactly one `codeforge learn correct TEXT`, as the agent
+// may run it: no session named, nothing else on the line and nothing the shell would expand, so the words read here
+// are the words codeforge received.
+func LearnCorrection(command string) (string, bool) {
+	if expandsInShell(command) {
+		return "", false
+	}
+	var words []string
+	for _, seg := range segments(command) {
+		if strings.TrimSpace(seg) == "" {
+			continue
+		}
+		if words != nil {
+			return "", false
+		}
+		if words = commandWords(seg); len(words) == 0 {
+			return "", false
+		}
+	}
+	if len(words) < 4 || words[0] != "codeforge" || words[1] != "learn" || words[2] != "correct" || strings.HasPrefix(words[3], "--session") {
+		return "", false
+	}
+	text := strings.TrimSpace(strings.Join(words[3:], " "))
+	return text, text != ""
 }
 
 const binarySniffBytes = 8 << 10

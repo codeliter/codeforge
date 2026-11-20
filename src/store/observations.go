@@ -14,7 +14,7 @@ const (
 	KindCorrection = "correction"
 	KindOutcome    = "outcome"
 
-	// OriginCLI means the text was typed into the codeforge CLI. It is not proof a person typed it.
+	// OriginCLI means the text was typed into the codeforge CLI, by the user or by the agent on their behalf.
 	OriginCLI = "cli"
 	// OriginRun means codeforge ran the check itself and saw its exit status.
 	OriginRun = "codeforge-run"
@@ -78,6 +78,24 @@ func insertObservation(ctx context.Context, db execer, o Observation) (int64, er
 		return 0, fmt.Errorf("reading observation id: %w", err)
 	}
 	return id, nil
+}
+
+// StampCorrection names the session of correction id, if it was typed into the CLI with exactly this text in this
+// directory of this repository since the given time and names no session yet. It reports whether it was stamped.
+func (s *Store) StampCorrection(ctx context.Context, id int64, repository, dir, text, session string, since time.Time) (bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, operationTimeout)
+	defer cancel()
+	res, err := s.db.ExecContext(ctx,
+		"UPDATE observations SET session_id = ? WHERE id = ? AND kind = ? AND origin = ? AND session_id = '' AND repository = ? AND dir = ? AND text = ? AND created_at >= ? AND reverted_at IS NULL",
+		session, id, KindCorrection, OriginCLI, repository, cmp.Or(dir, "."), text, since.UTC().Format(time.RFC3339Nano))
+	if err != nil {
+		return false, fmt.Errorf("stamping correction: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("stamping correction: %w", err)
+	}
+	return n > 0, nil
 }
 
 // Observations lists a repository's observations oldest first; reverted ones only when asked.
