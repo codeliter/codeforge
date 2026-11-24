@@ -281,6 +281,14 @@ func TestCodeSnippet_AddedAndRemovedLinesAreToldApart(t *testing.T) {
 	require.NotContains(t, kept, pal.addedBg)
 	require.NotContains(t, kept, pal.removedBg)
 
+	// A removed line that opens a string it does not close colours nothing but its own run.
+	nums, rows := []int{1, removedRow, 2}, []string{"a = 1", `s = """open`, "b = 2"}
+	apart := highlightRows("p.py", nums, rows, pal.code)
+	alone := highlight("p.py", []string{"a = 1", "b = 2"}, pal.code)
+	require.Equal(t, alone, []string{apart[0], apart[2]}, "the code now is coloured as if the removed lines were not there")
+	require.NotEqual(t, alone[1], highlight("p.py", rows, pal.code)[2], "which colouring them as one text would not do")
+	require.Equal(t, `s = """open`, ansi.Strip(apart[1]))
+
 	long := make([]string, maxRemovedRun+3)
 	for i := range long {
 		long[i] = "x()"

@@ -337,7 +337,7 @@ func codeCard(place, file string, marked map[int]bool, nums []int, code []string
 		gutter += len("+ ")
 	}
 	avail := max(minCodeWidth, width-gutter-pad)
-	shown := highlight(file, code, st.pal.code)
+	shown := highlightRows(file, nums, code, st.pal.code)
 	row := func(bg, text string) string {
 		// Every reset inside the highlighted text would also end the background; carry it across them.
 		text = strings.ReplaceAll(text, ansiReset, ansiReset+bg)
@@ -1052,6 +1052,34 @@ func trimSharedIndent(lines []string) []string {
 // whenever the lexer cannot keep them one for one.
 func highlight(file string, lines []string, style *chroma.Style) []string {
 	return highlightWith(lexers.Match(file), lines, style)
+}
+
+// highlightRows highlights a snippet's rows, the file's own lines as one text and each run of removed lines as
+// another: a removed line is no part of the code now, and one that opens a string or comment it does not close (a
+// run cut short, or a removal that the kept lines closed) must not colour the lines after it.
+func highlightRows(file string, nums []int, code []string, style *chroma.Style) []string {
+	out := make([]string, len(code))
+	var kept []int
+	for i := 0; i < len(nums); i++ {
+		if nums[i] != removedRow {
+			kept = append(kept, i)
+			continue
+		}
+		end := i
+		for end < len(nums) && nums[end] == removedRow {
+			end++
+		}
+		copy(out[i:end], highlight(file, code[i:end], style))
+		i = end - 1
+	}
+	lines := make([]string, len(kept))
+	for k, i := range kept {
+		lines[k] = code[i]
+	}
+	for k, l := range highlight(file, lines, style) {
+		out[kept[k]] = l
+	}
+	return out
 }
 
 // highlightLang is highlight for a fenced block whose info string names lang ("go", "yaml", ...), or a file name.
