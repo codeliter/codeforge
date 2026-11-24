@@ -55,7 +55,9 @@ const (
 )
 
 var (
-	newHunkHeader = regexp.MustCompile(`^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@`)
+	// newHunkHeader reads from a hunk's header where it starts in the new version and, when written, how many lines
+	// of that version it has.
+	newHunkHeader = regexp.MustCompile(`^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@`)
 	// findingStart matches a Conventional Comment that names its place: "suggestion: a/b.go:12 — text", with an optional
 	// list marker, bold label, decoration and backticks around the place.
 	findingStart = regexp.MustCompile("(?i)^\\s*(?:[-*]\\s+|\\d+\\.\\s+)?(?:\\*\\*)?" +
@@ -110,9 +112,34 @@ func newPath(header string) string {
 	return p
 }
 
+// RemovedLines lists, per file, the lines the diff removes, in order, under the number of the line of the new version
+// they stood before: one past its last line for lines removed at the end of the file.
+func RemovedLines(diff string) map[string]map[int][]string {
+	out := map[string]map[int][]string{}
+	eachDiffLine(diff, func(file string, line int, kind byte, text string) {
+		if kind == '-' {
+			if out[file] == nil {
+				out[file] = map[int][]string{}
+			}
+			out[file][line] = append(out[file][line], text)
+		}
+	})
+	return out
+}
+
 // eachNewLine calls fn for every line of the new version that the diff shows, with its file, its number there and
 // whether the diff adds it.
 func eachNewLine(diff string, fn func(file string, line int, added bool)) {
+	eachDiffLine(diff, func(file string, line int, kind byte, _ string) {
+		if kind != '-' {
+			fn(file, line, kind == '+')
+		}
+	})
+}
+
+// eachDiffLine calls fn for every line of a file's hunks that the new version keeps (' '), adds ('+') or lost ('-'),
+// with its text and its number in the new version: for a removed line, the number of the line it stood before.
+func eachDiffLine(diff string, fn func(file string, line int, kind byte, text string)) {
 	file, line, inHunk := "", 0, false
 	for _, l := range strings.Split(strings.TrimSuffix(diff, "\n"), "\n") {
 		switch {
@@ -128,6 +155,9 @@ func eachNewLine(diff string, fn func(file string, line int, added bool)) {
 			if m != nil {
 				start, err = strconv.Atoi(m[1])
 			}
+			if m != nil && m[2] == "0" {
+				start++ // a hunk that leaves no line is placed by the line before it: what it removed stood after that
+			}
 			line, inHunk = start, m != nil && err == nil
 			continue
 		}
@@ -135,10 +165,15 @@ func eachNewLine(diff string, fn func(file string, line int, added bool)) {
 			continue
 		}
 		switch {
-		case l == "" || l[0] == ' ' || l[0] == '+':
-			fn(file, line, l != "" && l[0] == '+')
+		case l == "":
+			fn(file, line, ' ', "")
 			line++
-		case l[0] == '-' || l[0] == '\\':
+		case l[0] == ' ' || l[0] == '+':
+			fn(file, line, l[0], l[1:])
+			line++
+		case l[0] == '-':
+			fn(file, line, '-', l[1:])
+		case l[0] == '\\':
 		default:
 			inHunk = false
 		}

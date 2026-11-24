@@ -244,6 +244,52 @@ func TestReviewerFor_LightModelOnlyForLightTiers(t *testing.T) {
 	require.Equal(t, "strong/reviewer", reviewerFor(review.TierSmall, config.ReviewConfig{Model: "strong/reviewer"}), "no light model set: nothing changes")
 }
 
+func TestCodeSnippet_AddedAndRemovedLinesAreToldApart(t *testing.T) {
+	content := "package p\n\nfunc run() {\n\tstart()\n\tretry()\n\tstop()\n}\n"
+	fc := focus{Line: 5, Added: map[int]bool{5: true}, Removed: map[int][]string{5: {"\tsend()", "\tlog()"}, 8: {"// gone"}}}
+
+	plain := codeSnippetFocus(content, "p.go", fc, codeStyle{width: 100})
+	require.Contains(t, plain, "    4 |       start()\n      | -     send()\n      | -     log()\n  > 5 | +     retry()\n    6 |       stop()\n",
+		"what was removed stands where it was, without a number, before the line that replaced it")
+	require.True(t, strings.HasSuffix(plain, "    7 |   }\n      | - // gone\n"), "lines removed at the end of the file come after its last line")
+
+	unknown := codeSnippetFocus(content, "p.go", focus{Line: 5}, codeStyle{width: 100})
+	require.Contains(t, unknown, "  > 5 |     retry()\n", "without the change to go by, no line carries a sign")
+	require.NotContains(t, unknown, "send()")
+
+	pal := paletteFor("dark")
+	require.NotEmpty(t, pal.addedBg)
+	require.NotEmpty(t, pal.removedBg)
+	require.NotEqual(t, pal.addedBg, pal.removedBg)
+	card := codeSnippetFocus(content, "p.go", fc, codeStyle{width: 100, color: true, pal: pal})
+	var added, removed, kept string
+	for _, l := range strings.Split(card, "\n") {
+		switch text := ansi.Strip(l); {
+		case strings.Contains(text, "retry()"):
+			added = l
+		case strings.Contains(text, "send()"):
+			removed = l
+		case strings.Contains(text, "stop()"):
+			kept = l
+		}
+	}
+	require.Contains(t, added, pal.addedBg, "an added line is on its own background")
+	require.Contains(t, added, pal.added+"+")
+	require.Contains(t, ansi.Strip(added), "5  + ")
+	require.Contains(t, removed, pal.removedBg, "and a removed one on another")
+	require.Contains(t, removed, pal.removed+"-")
+	require.NotContains(t, kept, pal.addedBg)
+	require.NotContains(t, kept, pal.removedBg)
+
+	long := make([]string, maxRemovedRun+3)
+	for i := range long {
+		long[i] = "x()"
+	}
+	run := removedRun(long)
+	require.Len(t, run, maxRemovedRun+1)
+	require.Equal(t, "… 3 more lines removed", run[maxRemovedRun], "a long removal is cut, and says by how much")
+}
+
 func TestCodeSnippet_ADeclarationTheChangeAddsIsShownWhole(t *testing.T) {
 	var b strings.Builder
 	b.WriteString("package p\n\nfunc old() {\n\tstep()\n}\n\nfunc added() error {\n")
@@ -259,14 +305,14 @@ func TestCodeSnippet_ADeclarationTheChangeAddsIsShownWhole(t *testing.T) {
 	st := codeStyle{width: 100}
 
 	whole := codeSnippetFocus(content, "p.go", focus{Line: 40, Added: all}, st)
-	require.Contains(t, whole, " 7 | func added() error {", "the new function is shown from its first line")
-	require.Contains(t, whole, "69 | }", "to its last")
+	require.Contains(t, whole, " 7 | + func added() error {", "the new function is shown from its first line, each line marked as added")
+	require.Contains(t, whole, "69 | + }", "to its last")
 	require.NotContains(t, whole, "⋮", "with nothing left out")
 	require.NotContains(t, whole, "func old()")
 	require.NotContains(t, whole, "func after()")
 
 	onHeader := codeSnippetFocus(content, "p.go", focus{Line: 7, Added: all}, st)
-	require.Contains(t, onHeader, "69 | }", "a finding on the declaration's own line shows it whole too")
+	require.Contains(t, onHeader, "69 | + }", "a finding on the declaration's own line shows it whole too")
 
 	unknown := codeSnippetFocus(content, "p.go", focus{Line: 40}, st)
 	require.Contains(t, unknown, "⋮", "without the change to go by, a long function is shown as a window")
@@ -274,7 +320,7 @@ func TestCodeSnippet_ADeclarationTheChangeAddsIsShownWhole(t *testing.T) {
 
 	delete(all, 20)
 	changed := codeSnippetFocus(content, "p.go", focus{Line: 40, Added: all}, st)
-	require.NotContains(t, changed, "69 | }", "a function the change only touches is not new, and is shown as a window")
+	require.NotContains(t, changed, "69 | + }", "a function the change only touches is not new, and is shown as a window")
 
 	long := map[int]bool{}
 	for n := 1; n <= 400; n++ {

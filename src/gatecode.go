@@ -1,6 +1,7 @@
 package src
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"io"
@@ -118,6 +119,9 @@ type focus struct {
 	// Added is the lines of the file that the change under review adds, when that is known: a declaration the change
 	// adds whole is shown whole.
 	Added map[int]bool
+	// Removed is the lines the change removed from the file, each run under the number of the line it stood before:
+	// they are shown there, marked as removed.
+	Removed map[int][]string
 }
 
 // codeSnippetFocus renders the lines of content, the text of file, around a finding, as codeAround describes. Every
@@ -165,17 +169,22 @@ func codeSnippetFocus(content, file string, fc focus, st codeStyle) string {
 		first, header = header, 0 // close enough: show every line from the header down
 	}
 	nums := make([]int, 0, last-first+headerRows)
+	code := make([]string, 0, cap(nums))
 	if header > 0 {
-		nums = append(nums, header, gapRow)
+		nums, code = append(nums, header, gapRow), append(code, all[header-1], "")
+	}
+	// What the change removed is shown where it stood, before the line that follows it now.
+	lost := func(n int) {
+		for _, l := range removedRun(fc.Removed[n]) {
+			nums, code = append(nums, removedRow), append(code, l)
+		}
 	}
 	for n := first; n <= last; n++ {
-		nums = append(nums, n)
+		lost(n)
+		nums, code = append(nums, n), append(code, all[n-1])
 	}
-	code := make([]string, len(nums))
-	for i, n := range nums {
-		if n > 0 {
-			code[i] = all[n-1]
-		}
+	if last == len(all) {
+		lost(last + 1)
 	}
 	code = trimSharedIndent(code)
 	numWidth := len(strconv.Itoa(last))
@@ -183,30 +192,80 @@ func codeSnippetFocus(content, file string, fc focus, st codeStyle) string {
 	if fc.End > line {
 		place += fmt.Sprintf("-%d", fc.End)
 	}
+	// With the change known, every line says what the change did to it: "+" added, "-" removed, nothing for the rest.
+	signs := fc.signs()
 	if st.color {
-		return codeCard(place, file, marked, nums, code, numWidth, st)
+		return codeCard(place, file, marked, nums, code, numWidth, signs, st)
 	}
-	// "  > 12 | " before the code.
-	avail := max(minCodeWidth, st.width-(numWidth+len("  >  | ")))
+	// "  > 12 | " before the code, and "+ " when lines carry a sign.
+	bar := " | "
+	if signs != nil {
+		bar += "  "
+	}
+	avail := max(minCodeWidth, st.width-(numWidth+len("  > ")+len(bar)))
 	var s strings.Builder
 	for i, n := range nums {
-		parts := wrapColumns(code[i], avail)
-		switch {
-		case n == gapRow:
+		if n == gapRow {
 			fmt.Fprintf(&s, "    %*s ⋮\n", numWidth, "")
-		case marked[n]:
-			fmt.Fprintf(&s, "  > %*d | %s\n", numWidth, n, parts[0])
-		default:
-			fmt.Fprintf(&s, "    %*d | %s\n", numWidth, n, parts[0])
+			continue
+		}
+		mark, num, sign := "    ", "", ""
+		if marked[n] {
+			mark = "  > "
+		}
+		if n > 0 {
+			num = strconv.Itoa(n)
+		}
+		if signs != nil {
+			sign = signs(n) + " "
 		}
 		// A line too long for the width goes on under itself, with no number: nothing of it is cut off.
-		if n != gapRow {
-			for _, more := range parts[1:] {
-				fmt.Fprintf(&s, "    %*s | %s\n", numWidth, "", more)
+		for k, part := range wrapColumns(code[i], avail) {
+			if k > 0 {
+				mark, num, sign = "    ", "", strings.Repeat(" ", len(sign))
 			}
+			fmt.Fprintf(&s, "%s%*s | %s%s\n", mark, numWidth, num, sign, part)
 		}
 	}
 	return s.String()
+}
+
+// removedRow stands, among a snippet's line numbers, for a line the change removed: it has no number in the file.
+const removedRow = -1
+
+// maxRemovedRun is the most lines of one removal that a snippet shows; the rest are counted.
+const maxRemovedRun = 12
+
+// removedRun is the removed lines as a snippet shows them: tabs as spaces, and a long run cut to its first lines with
+// a count of the rest.
+func removedRun(lines []string) []string {
+	out := make([]string, 0, min(len(lines), maxRemovedRun+1))
+	for i, l := range lines {
+		if i == maxRemovedRun {
+			// Indented as the run is, so the count does not hold the snippet's shared indentation at none.
+			indent := strings.Repeat(" ", indentOf(out[0]))
+			return append(out, fmt.Sprintf("%s… %s removed", indent, plural(len(lines)-i, "more line")))
+		}
+		out = append(out, strings.ReplaceAll(strings.TrimRight(l, "\r"), "\t", strings.Repeat(" ", tabWidth)))
+	}
+	return out
+}
+
+// signs returns what marks a row of the snippet as added ("+"), removed ("-") or neither (" "), by its line number;
+// nil when the change is not known, and no row is marked.
+func (fc focus) signs() func(n int) string {
+	if fc.Added == nil && fc.Removed == nil {
+		return nil
+	}
+	return func(n int) string {
+		switch {
+		case n == removedRow:
+			return "-"
+		case fc.Added[n]:
+			return "+"
+		}
+		return " "
+	}
 }
 
 // markedLines returns the lines a finding is about: the cited range, plus the lines within hintReach of it that
@@ -267,10 +326,16 @@ func abs(n int) int {
 // codeCard draws the snippet as a card that stands out from the review's prose: a title row with the place, then the
 // code on a raised background, the lines the finding is about on a brighter one with an accent bar, and gaps as a dim
 // marker.
-func codeCard(place, file string, marked map[int]bool, nums []int, code []string, numWidth int, st codeStyle) string {
+//
+// When signs is set the change is known: an added line has "+" before it and a removed one "-", each in its own colour
+// and on its own background, so the two are told apart at a glance and without colour too.
+func codeCard(place, file string, marked map[int]bool, nums []int, code []string, numWidth int, signs func(int) string, st codeStyle) string {
 	const margin, pad, beforeCode = "  ", 1, "  "
 	width := min(maxCardWidth, max(minCodeWidth, st.width-len(margin)))
 	gutter := len("▌") + numWidth + len(beforeCode)
+	if signs != nil {
+		gutter += len("+ ")
+	}
 	avail := max(minCodeWidth, width-gutter-pad)
 	shown := highlight(file, code, st.pal.code)
 	row := func(bg, text string) string {
@@ -282,25 +347,39 @@ func codeCard(place, file string, marked map[int]bool, nums []int, code []string
 	var s strings.Builder
 	s.WriteString(row(st.pal.cardTitle, st.pal.accent+cutColumns(" "+place, width)+ansiReset))
 	for i, n := range nums {
-		switch {
-		case n == gapRow:
+		switch n {
+		case gapRow:
 			s.WriteString(row(st.pal.card, st.pal.dim+fmt.Sprintf(" %*s ⋮", numWidth, "")+ansiReset))
-		case marked[n]:
+		default:
+			// The finding's lines have an accent bar and number on a brighter background; a line the change added or
+			// removed is on the background of its kind instead, and keeps the bar.
+			back, lead := st.pal.card, st.pal.dim+" "
+			if marked[n] {
+				back, lead = st.pal.cardLine, st.pal.accent+"▌"
+			}
+			num, sign := strings.Repeat(" ", numWidth), ""
+			if n > 0 {
+				num = fmt.Sprintf("%*d", numWidth, n)
+			}
+			if signs != nil {
+				switch signs(n) {
+				case "+":
+					back, sign = cmp.Or(st.pal.addedBg, back), st.pal.added+"+"+ansiReset+" "
+				case "-":
+					back, sign = cmp.Or(st.pal.removedBg, back), st.pal.removed+"-"+ansiReset+" "
+				default:
+					sign = "  "
+				}
+			}
 			// A line too long for the card goes on under itself, with no number: nothing of it is cut off.
 			for k, part := range wrapStyled(shown[i], avail) {
-				num := fmt.Sprintf("%*d", numWidth, n)
 				if k > 0 {
 					num = strings.Repeat(" ", numWidth)
+					if signs != nil {
+						sign = "  "
+					}
 				}
-				s.WriteString(row(st.pal.cardLine, st.pal.accent+"▌"+num+ansiReset+beforeCode+part))
-			}
-		default:
-			for k, part := range wrapStyled(shown[i], avail) {
-				num := fmt.Sprintf("%*d", numWidth, n)
-				if k > 0 {
-					num = strings.Repeat(" ", numWidth)
-				}
-				s.WriteString(row(st.pal.card, st.pal.dim+" "+num+ansiReset+beforeCode+part))
+				s.WriteString(row(back, lead+num+ansiReset+beforeCode+sign+part))
 			}
 		}
 	}

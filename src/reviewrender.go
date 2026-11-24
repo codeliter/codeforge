@@ -307,7 +307,8 @@ func reviewCode(ctx context.Context, st codeStyle, text string) codeSource {
 			return nil
 		}
 		return func(file string, fc focus) string {
-			fc.Added = review.DisplayOf(ctx).Added(diffPath(root, file))
+			d, p := review.DisplayOf(ctx), diffPath(root, file)
+			fc.Added, fc.Removed = d.Added(p), d.Removed(p)
 			return codeAroundFocus(root, file, fc, st)
 		}
 	case src.HeadRef != "":
@@ -330,7 +331,8 @@ func reviewCode(ctx context.Context, st codeStyle, text string) codeSource {
 		if !ok {
 			return ""
 		}
-		fc.Added = review.DisplayOf(ctx).Added(diffPath("", file))
+		d, p := review.DisplayOf(ctx), diffPath("", file)
+		fc.Added, fc.Removed = d.Added(p), d.Removed(p)
 		return codeSnippetFocus(content, file, fc, st)
 	}
 }

@@ -915,4 +915,11 @@ func TestAddedLines(t *testing.T) {
 	require.Nil(t, d.Added("a.go"), "not known until the change is recorded")
 	d.SetDiff(diff)
 	require.Equal(t, map[int]bool{2: true, 3: true}, d.Added("a.go"))
+	require.Equal(t, map[int][]string{2: {"old"}}, d.Removed("a.go"), "a removed line is kept under the line it stood before")
+	require.Nil(t, d.Removed("gone.go"), "a file the change deletes has no new version to show it in")
+	end := "--- a/a.go\n+++ b/a.go\n@@ -1,3 +1 @@\n keep\n-last\n-\tlines\n"
+	require.Equal(t, map[string]map[int][]string{"a.go": {2: {"last", "\tlines"}}}, RemovedLines(end), "lines removed at the end are one past it")
+	bare := "--- a/a.go\n+++ b/a.go\n@@ -5,2 +4,0 @@\n-five\n-six\n@@ -1 +0,0 @@\n-one\n"
+	require.Equal(t, map[string]map[int][]string{"a.go": {5: {"five", "six"}, 1: {"one"}}}, RemovedLines(bare),
+		"a hunk that leaves no line names the line before it, and what it removed stood after that")
 }

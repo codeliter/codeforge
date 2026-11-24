@@ -8,9 +8,10 @@ import (
 // Display says where the code a review talks about can be read, so the review can be shown with the lines around each
 // finding: the working tree for local work, or the PR's fetched head ref. A PR whose head was not fetched has neither.
 type Display struct {
-	mu    sync.Mutex
-	src   Source
-	added map[string]map[int]bool
+	mu      sync.Mutex
+	src     Source
+	added   map[string]map[int]bool
+	removed map[string]map[int][]string
 }
 
 // SetDiff records the change under review, so the code shown with a finding can tell what the change added.
@@ -18,10 +19,21 @@ func (d *Display) SetDiff(diff string) {
 	if d == nil {
 		return
 	}
-	added := AddedLines(diff)
+	added, removed := AddedLines(diff), RemovedLines(diff)
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	d.added = added
+	d.added, d.removed = added, removed
+}
+
+// Removed reports the lines the change under review removes from file, each run under the number of the line of the
+// new version it stood before; nil when that is not known.
+func (d *Display) Removed(file string) map[int][]string {
+	if d == nil {
+		return nil
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.removed[file]
 }
 
 // Added reports the lines of file that the change under review adds; nil when that is not known.
