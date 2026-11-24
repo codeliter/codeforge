@@ -20,7 +20,8 @@ import (
 )
 
 // codeforge explain is the tour of the user's own change, written by the agent that made it: for work the user must
-// answer for and did not type. It comes from one turn in a fork of the work or ticket session, read-only, so it knows
+// answer for and did not type. What is explained is a session, not a branch: the work or ticket session the user names
+// or picks among those started in this directory. It comes from one turn in a fork of that session, read-only, so it knows
 // why each choice was made; it is shown as a walkthrough is, with what a reader of their own change needs besides: the
 // choices they might have made differently, what went beyond the task, what was not verified, and a few questions to
 // check they could defend it.
@@ -186,7 +187,8 @@ func explanationText(e explanation) string {
 
 var (
 	errNoWorkSession = errors.New("no work or ticket session here to explain: run this where the work was done, or name one with `codeforge explain SESSION` (`codeforge sessions --list` shows them)")
-	errExplainUsage  = errors.New("usage: codeforge explain [SESSION]")
+	errExplainUsage  = errors.New("usage: codeforge explain [SESSION | --pick]")
+	errExplainPick   = errors.New("--pick asks which session to explain, and there is no terminal to ask on: name one with `codeforge explain SESSION`")
 	errExplainSlow   = errors.New("the agent did not finish explaining it in time")
 	// errSessionWorking is said of a session in the middle of a turn. An agent that runs `codeforge explain` itself
 	// is always in one: its turn waits for the command, and the command would wait for its turn.
@@ -226,9 +228,10 @@ func writerAlive(path string) bool {
 	return err == nil || errors.Is(err, syscall.EPERM)
 }
 
-// explainSession finds the session to explain in wd: the one named by id, or the latest work or ticket session. Tests
-// replace it.
-var explainSession = func(ctx context.Context, home, wd, id string) (sessionInfo, error) {
+// explainSession finds the session to explain among the work and ticket sessions of wd: the one named by id, or the
+// one the user picks. A session belongs to the directory it was started in, not to a branch, so the latest one may be
+// of another branch's work: that is why the user is asked. Tests replace it.
+var explainSession = func(ctx context.Context, home, wd, id string, pick bool) (sessionInfo, error) {
 	sessions, _, err := listSessions(ctx, home, wd)
 	if err != nil {
 		return sessionInfo{}, err
@@ -240,12 +243,42 @@ var explainSession = func(ctx context.Context, home, wd, id string) (sessionInfo
 		}
 		id = full
 	}
-	for _, s := range sessions {
-		if (s.Mode == modeWork || s.Mode == modeTicket) && (id == "" || s.ID == id) {
-			return s, nil
+	sessions = slices.DeleteFunc(sessions, func(s sessionInfo) bool { return s.Mode != modeWork && s.Mode != modeTicket })
+	return chooseExplained(sessions, id, pick, interactive(), func(sessions []sessionInfo) (int, error) {
+		about := fmt.Sprintf("%s in %s, newest first. A session is of the directory it was started in, whatever branch was checked out.",
+			plural(len(sessions), "work or ticket session"), filepath.Base(wd))
+		return pickSession("Explain the change of which session?", about, sessions, time.Now(), false)
+	})
+}
+
+// chooseExplained is the session to explain, of the work and ticket sessions given newest first. The one named by id
+// is taken as it is. Otherwise the user is asked when there is a terminal to ask on and a choice to make, or when
+// --pick says to ask; without a terminal, as in a script, it is the latest. Leaving the picker is forms.ErrAborted.
+func chooseExplained(sessions []sessionInfo, id string, pick, canAsk bool, ask func([]sessionInfo) (int, error)) (sessionInfo, error) {
+	if id != "" {
+		if i := slices.IndexFunc(sessions, func(s sessionInfo) bool { return s.ID == id }); i >= 0 {
+			return sessions[i], nil
 		}
+		return sessionInfo{}, errNoWorkSession
 	}
-	return sessionInfo{}, errNoWorkSession
+	switch {
+	case len(sessions) == 0:
+		return sessionInfo{}, errNoWorkSession
+	case pick && !canAsk:
+		return sessionInfo{}, errExplainPick
+	case !canAsk, !pick && len(sessions) == 1:
+		return sessions[0], nil
+	}
+	i, err := ask(sessions)
+	switch {
+	case !pick && (errors.Is(err, forms.ErrOldHelper) || errors.Is(err, forms.ErrNoHelper)):
+		return sessions[0], nil // nothing to ask with, and the user did not ask to be asked: the latest, as in a script
+	case err != nil:
+		return sessionInfo{}, err
+	case i < 0:
+		return sessionInfo{}, forms.ErrAborted
+	}
+	return sessions[i], nil
 }
 
 // readOnlyEnv is the environment of an engine that only reads: codeforge's guard holds it to that, and nothing in it
@@ -273,14 +306,28 @@ func (sandboxedRunner) Run(ctx context.Context, name string, args ...string) ([]
 
 // runExplain has the agent of a work or ticket session explain the change it made, and shows that.
 func runExplain(ctx context.Context, home, bin string, args []string, w io.Writer) error {
-	if len(args) > 1 || len(args) == 1 && strings.HasPrefix(args[0], "-") {
+	id, pick := "", false
+	for _, a := range args {
+		switch {
+		case a == "--pick":
+			pick = true
+		case strings.HasPrefix(a, "-"), id != "":
+			return errExplainUsage
+		default:
+			id = a
+		}
+	}
+	if pick && id != "" {
 		return errExplainUsage
 	}
 	wd, err := os.Getwd()
 	if err != nil {
 		return fmt.Errorf("finding workspace: %w", err)
 	}
-	s, err := explainSession(ctx, home, wd, first(args))
+	s, err := explainSession(ctx, home, wd, id, pick)
+	if errors.Is(err, forms.ErrAborted) {
+		return nil // the user left the picker: nothing to explain
+	}
 	if err != nil {
 		return err
 	}

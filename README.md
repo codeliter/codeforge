@@ -65,6 +65,12 @@ Or run `codeforge` and pick a mode. **Not sure? Start with `work`.**
 
 The job runs in your terminal; when it finishes, a chat screen opens for follow-up questions.
 
+To be walked through a change the agent made, run `codeforge explain`. It explains a session, not your current branch:
+the work and ticket sessions started in this directory are listed, newest first, and the agent of the one you pick
+tours its change (where to read, its decisions, what it did not verify, questions to check you could defend it).
+Sessions started in another directory or worktree, and chat or review sessions, are not offered. With one session, or
+no terminal to ask on, it takes the latest; `--pick` always asks, and `codeforge explain SESSION` names one by ID or prefix.
+
 To pick up earlier work, run `codeforge sessions`: it lists this directory's sessions, newest first, with when, mode,
 title, turns, time spent, cost and model, under a search box; type to narrow the list, Enter opens the session in its
 own mode. `--all` lists every project's sessions (those started at its root) and opens the one you pick in its project; `--list` prints them

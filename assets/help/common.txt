@@ -14,9 +14,10 @@ Modes:
   review accept PR PATH:LINE [REASON] Accept a finding of your posted review as it is: later rounds leave it out
                                      and its thread no longer blocks (unaccept PR PATH:LINE, accepted PR to list)
   respond [PR] [--watch]             Address new review comments on your PR: judge, fix, push back, draft replies
-  explain [SESSION]                  Be walked through the change your last work or ticket session made, by the
-                                     agent that made it: where to read, its decisions, what it did not verify,
-                                     and questions to check you could defend it
+  explain [SESSION | --pick]         Be walked through the change a work or ticket session made, by the agent that
+                                     made it: where to read, its decisions, what it did not verify, and questions
+                                     to check you could defend it. It explains a session, not the current branch:
+                                     you pick among this directory's (--pick asks even when there is one), or name it
   (none)                             Pick a mode. A PR link or "#42" (quote it: shells treat # as a comment) starts review,
                                      --ticket starts ticket, a question goes to chat
 

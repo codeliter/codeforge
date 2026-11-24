@@ -105,7 +105,12 @@ func runSessions(ctx context.Context, home string, args []string, w io.Writer) (
 	}
 	now := time.Now()
 	if !list && interactive() {
-		picked, err := pickSession(sessions, now, all, wd)
+		where := "in " + filepath.Base(wd)
+		if all {
+			where = "in every project"
+		}
+		about := fmt.Sprintf("%s %s, by mode, newest first. * ran headless (a review or a gate).", plural(len(sessions), "session"), where)
+		picked, err := pickSession("Open a session", about, sessions, now, all)
 		if !errors.Is(err, forms.ErrOldHelper) && !errors.Is(err, forms.ErrNoHelper) {
 			if err != nil || picked < 0 {
 				return "", "", err
@@ -132,17 +137,13 @@ func runSessions(ctx context.Context, home string, args []string, w io.Writer) (
 	return "", "", nil
 }
 
-// pickSession shows the sessions under a search box, each mode's under its own heading, and returns the index of the
-// one picked, -1 when the user left.
-func pickSession(sessions []sessionInfo, now time.Time, all bool, wd string) (int, error) {
+// pickSession shows the sessions under a search box, titled and described as given, each mode's under its own heading,
+// and returns the index of the one picked, -1 when the user left.
+func pickSession(title, about string, sessions []sessionInfo, now time.Time, all bool) (int, error) {
 	options := sessionOptions(sessions, now, all)
-	where := "in " + filepath.Base(wd)
-	if all {
-		where = "in every project"
-	}
 	a, err := forms.Ask("sessions", forms.Field{
-		Kind: forms.Search, Title: "Open a session",
-		Description: fmt.Sprintf("%s %s, by mode, newest first. * ran headless (a review or a gate).", plural(len(sessions), "session"), where),
+		Kind: forms.Search, Title: title,
+		Description: about,
 		Header:      strings.Join(headerParts(all), "\t"),
 		Placeholder: "Type to search by title, mode, project, model, day or ID",
 		Options:     options, Value: "0",

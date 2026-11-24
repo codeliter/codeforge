@@ -71,6 +71,21 @@ SIGTERM sent to the supervising CLI is forwarded to its child.
 Implementation: [run.go](src/run.go), [shutdown.go](src/shutdown.go),
 [sessions.go](src/sessions.go), [acknowledge.go](src/acknowledge.go).
 
+### Explaining a change
+
+`codeforge explain` selects a session, never a branch. Candidates are the sessions under `.empryo/sessions/` of the
+exact working directory (no walk up to the repository root, no other worktrees) whose recorded mode is work or ticket,
+newest first by last update; chat and review sessions, empty ones and those recorded for another repository are left out.
+`SESSION` (an ID or unique prefix) names one. Otherwise, on a terminal with more than one candidate, a picker asks;
+`--pick` asks even of one and fails without a terminal; a script, or a single candidate, gets the latest. A session in
+the middle of a turn is refused.
+
+The tour is one turn in a read-only fork of that session (plan mode, review guard, OS sandbox), so its content comes
+from the session's history. Git is read only afterwards, for the branch diff that shows code at the cited lines: with a
+different branch checked out than the session worked on, the notes are right and the code beside them may not match.
+
+Implementation: [explain.go](src/explain.go), [sessionscmd.go](src/sessionscmd.go).
+
 ### Terminal forms
 
 Every menu and prompt (mode picker, init, model and provider wizards, trust questions) is a declarative

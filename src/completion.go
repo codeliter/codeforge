@@ -36,7 +36,7 @@ var completionTree = []struct {
 		{"--watch", "Wait for new review comments, then start"}, {"--print", "Print the brief instead of starting"},
 		{"--model", "Model for this run"}, {"--effort", "Reasoning effort"},
 	}},
-	{word{"explain", "Be walked through the change your last work or ticket session made"}, nil},
+	{word{"explain", "Be walked through the change a work or ticket session made"}, []word{{"--pick", "Ask which session, even when there is one"}}},
 	{word{"gate", "Review your branch and run the changed packages' tests"}, []word{
 		{"accept", "Accept a blocking finding you will not fix"}, {"unaccept", "Make an accepted finding block again"},
 		{"accepted", "List the accepted findings"}, {"reset", "Allow more gate runs on this branch"},

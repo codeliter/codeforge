@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/codeliter/codeforge/src/forms"
 )
 
 const explainReply = "Adds a retry to the uploader, so a dropped connection no longer loses the file.\n\n" +
@@ -93,8 +95,13 @@ func TestRunExplain_AsksTheSessionsAgentInAReadOnlyFork(t *testing.T) {
 	nameForks(t, forkPrefix+"x")
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, ".empryo", "sessions", "work-1"), 0o700))
 	asked := ""
-	explainSession = func(_ context.Context, _, _, id string) (sessionInfo, error) {
+	picks := 0
+	explainSession = func(_ context.Context, _, _, id string, pick bool) (sessionInfo, error) {
 		asked = id
+		if pick {
+			picks++
+			return sessionInfo{}, forms.ErrAborted
+		}
 		if id == "gone" {
 			return sessionInfo{}, errNoWorkSession
 		}
@@ -114,7 +121,57 @@ func TestRunExplain_AsksTheSessionsAgentInAReadOnlyFork(t *testing.T) {
 	require.ErrorIs(t, runExplain(t.Context(), dir, engine, []string{"gone"}, &out), errNoWorkSession)
 	require.ErrorIs(t, runExplain(t.Context(), dir, engine, []string{"a", "b"}, &out), errExplainUsage)
 	require.ErrorIs(t, runExplain(t.Context(), dir, engine, []string{"--list"}, &out), errExplainUsage)
+	require.ErrorIs(t, runExplain(t.Context(), dir, engine, []string{"--pick", "work"}, &out), errExplainUsage, "a named session leaves nothing to pick")
+	require.NoError(t, os.Remove(got))
+	require.NoError(t, runExplain(t.Context(), dir, engine, []string{"--pick"}, &out), "leaving the picker is no error")
+	require.Equal(t, 1, picks)
+	require.NoFileExists(t, got, "and nothing is explained")
 	require.Contains(t, commands, "explain")
+}
+
+func TestChooseExplained_TheUserPicksUnlessThereIsNothingToChooseOrNoOneToAsk(t *testing.T) {
+	latest, older := sessionInfo{ID: "work-2", Mode: modeWork}, sessionInfo{ID: "ticket-1", Mode: modeTicket}
+	both := []sessionInfo{latest, older}
+	asked := 0
+	answer := func(i int, err error) func([]sessionInfo) (int, error) {
+		return func([]sessionInfo) (int, error) { asked++; return i, err }
+	}
+
+	got, err := chooseExplained(both, "", false, true, answer(1, nil))
+	require.NoError(t, err)
+	require.Equal(t, older, got, "the latest session may be of another branch's work, so the user says which")
+	require.Equal(t, 1, asked)
+
+	asked = 0
+	got, err = chooseExplained(both, "ticket-1", false, true, answer(0, nil))
+	require.NoError(t, err)
+	require.Equal(t, older, got)
+	got, err = chooseExplained(both, "", false, false, answer(1, nil))
+	require.NoError(t, err)
+	require.Equal(t, latest, got, "with no terminal to ask on, the latest")
+	got, err = chooseExplained(both[:1], "", false, true, answer(0, nil))
+	require.NoError(t, err)
+	require.Equal(t, latest, got)
+	require.Zero(t, asked, "a named session, a script and a single session ask nothing")
+
+	_, err = chooseExplained(both[:1], "", true, true, answer(0, nil))
+	require.NoError(t, err)
+	require.Equal(t, 1, asked, "--pick asks even of one")
+	_, err = chooseExplained(both, "", true, false, answer(0, nil))
+	require.ErrorIs(t, err, errExplainPick)
+	_, err = chooseExplained(both, "", false, true, answer(-1, nil))
+	require.ErrorIs(t, err, forms.ErrAborted, "the user left the picker")
+
+	got, err = chooseExplained(both, "", false, true, answer(-1, forms.ErrNoHelper))
+	require.NoError(t, err)
+	require.Equal(t, latest, got, "without a picker to show, the latest")
+	_, err = chooseExplained(both, "", true, true, answer(-1, forms.ErrNoHelper))
+	require.ErrorIs(t, err, forms.ErrNoHelper, "but --pick asked for one")
+
+	_, err = chooseExplained(nil, "", true, true, answer(0, nil))
+	require.ErrorIs(t, err, errNoWorkSession)
+	_, err = chooseExplained(both, "chat-9", false, true, answer(0, nil))
+	require.ErrorIs(t, err, errNoWorkSession, "a session of another mode made no change to explain")
 }
 
 func TestRunExplain_ASessionInTheMiddleOfATurnIsNotAsked(t *testing.T) {
@@ -125,7 +182,7 @@ func TestRunExplain_ASessionInTheMiddleOfATurnIsNotAsked(t *testing.T) {
 	old, oldSandbox := explainSession, sandboxRepo
 	t.Cleanup(func() { explainSession, sandboxRepo = old, oldSandbox })
 	sandboxRepo = func(_ context.Context, argv []string) ([]string, error) { return argv, nil }
-	explainSession = func(context.Context, string, string, string) (sessionInfo, error) {
+	explainSession = func(context.Context, string, string, string, bool) (sessionInfo, error) {
 		return sessionInfo{ID: "work-1", Dir: dir, Mode: modeWork, Title: "retry uploads"}, nil
 	}
 	session := filepath.Join(dir, ".empryo", "sessions", "work-1")
