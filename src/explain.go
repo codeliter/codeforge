@@ -371,7 +371,8 @@ func runExplain(ctx context.Context, home, bin string, args []string, w io.Write
 		return nil
 	}
 	st := codeStyleFor(ctx, os.Stdout)
-	_, err = showSteps("explain", explanationSteps(e, st, reviewCode(ctx, st, walkthroughText(e.walkthrough))))
+	reader := reviewReader(ctx, walkthroughText(e.walkthrough))
+	_, err = showSteps("explain", withMap(explanationSteps(e, st, reader.source(ctx, st)), e.Stops, reader, st))
 	switch {
 	case errors.Is(err, forms.ErrOldHelper):
 		fmt.Fprint(w, explanationText(e))

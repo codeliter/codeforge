@@ -294,6 +294,35 @@ func collapseBlank(s string) string {
 // reviewCode reads the code a review is about from where the review says it is: the working tree for local work, the
 // PR's fetched head otherwise. With neither, findings are shown without code.
 func reviewCode(ctx context.Context, st codeStyle, text string) codeSource {
+	return reviewReader(ctx, text).source(ctx, st)
+}
+
+// codeReader reads the files a review is about: read gives a file's text, and path names the file as the diff does.
+type codeReader struct {
+	read func(file string) (string, bool)
+	path func(file string) string
+}
+
+// source shows the code around a focus with what the change under review added and removed there; nil without a
+// reader.
+func (r *codeReader) source(ctx context.Context, st codeStyle) codeSource {
+	if r == nil {
+		return nil
+	}
+	return func(file string, fc focus) string {
+		content, ok := r.read(file)
+		if !ok {
+			return ""
+		}
+		d, p := review.DisplayOf(ctx), r.path(file)
+		fc.Added, fc.Removed = d.Added(p), d.Removed(p)
+		return codeSnippetFocus(content, file, fc, st)
+	}
+}
+
+// reviewReader reads the files text's findings point at from where the review says the code is: the working tree for
+// local work, the PR's fetched head, or its head commit on GitHub. With none of them it is nil.
+func reviewReader(ctx context.Context, text string) *codeReader {
 	src := review.DisplayOf(ctx).Source()
 	var read func(ctx context.Context, file string) ([]byte, error)
 	switch {
@@ -302,14 +331,22 @@ func reviewCode(ctx context.Context, st codeStyle, text string) codeSource {
 		if err != nil {
 			return nil
 		}
-		root, err := guard.RepoRoot(ctx, wd)
+		repo, err := guard.RepoRoot(ctx, wd)
 		if err != nil {
 			return nil
 		}
-		return func(file string, fc focus) string {
-			d, p := review.DisplayOf(ctx), diffPath(root, file)
-			fc.Added, fc.Removed = d.Added(p), d.Removed(p)
-			return codeAroundFocus(root, file, fc, st)
+		return &codeReader{
+			read: func(file string) (string, bool) {
+				// os.Root refuses a path, or a symlink, that leads out of the repository.
+				root, err := os.OpenRoot(repo)
+				if err != nil {
+					return "", false
+				}
+				defer root.Close()
+				data, err := root.ReadFile(file)
+				return string(data), err == nil
+			},
+			path: func(file string) string { return diffPath(repo, file) },
 		}
 	case src.HeadRef != "":
 		read = func(ctx context.Context, file string) ([]byte, error) {
@@ -326,14 +363,12 @@ func reviewCode(ctx context.Context, st codeStyle, text string) codeSource {
 		return nil
 	}
 	files := prefetch(ctx, findingPaths(text), read)
-	return func(file string, fc focus) string {
-		content, ok := files[strings.TrimPrefix(file, "./")]
-		if !ok {
-			return ""
-		}
-		d, p := review.DisplayOf(ctx), diffPath("", file)
-		fc.Added, fc.Removed = d.Added(p), d.Removed(p)
-		return codeSnippetFocus(content, file, fc, st)
+	return &codeReader{
+		read: func(file string) (string, bool) {
+			content, ok := files[strings.TrimPrefix(file, "./")]
+			return content, ok
+		},
+		path: func(file string) string { return diffPath("", file) },
 	}
 }
 

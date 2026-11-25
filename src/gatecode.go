@@ -8,6 +8,7 @@ import (
 	"math"
 	"os"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode"
@@ -122,6 +123,14 @@ type focus struct {
 	// Removed is the lines the change removed from the file, each run under the number of the line it stood before:
 	// they are shown there, marked as removed.
 	Removed map[int][]string
+	// Whole asks for every place of the file the change touches, not only the one cited: a reader walked through a
+	// change must not take the cited place for all of it. Stops are the lines of the file that other stops of the tour
+	// cite; a change shown at a stop of its own is left to it.
+	Whole bool
+	Stops []int
+	// Reach asks for the whole of the changed place the cited lines touch, however far it runs: what a stop that
+	// leaves the rest of the file to an earlier one still owes its reader.
+	Reach bool
 }
 
 // codeSnippetFocus renders the lines of content, the text of file, around a finding, as codeAround describes. Every
@@ -134,12 +143,9 @@ func codeSnippetFocus(content, file string, fc focus, st codeStyle) string {
 	if line < 1 {
 		return ""
 	}
-	all := strings.Split(strings.TrimSuffix(content, "\n"), "\n")
+	all := snippetLines(content)
 	if line > len(all) {
 		return ""
-	}
-	for i, l := range all {
-		all[i] = strings.ReplaceAll(strings.TrimRight(l, "\r"), "\t", strings.Repeat(" ", tabWidth))
 	}
 	marked := markedLines(all, fc)
 	lo, hi := line, line
@@ -161,27 +167,35 @@ func codeSnippetFocus(content, file string, fc focus, st codeStyle) string {
 	if from, to := addedValue(file, all, lo, hi, fc.Added); from > 0 {
 		first, last = min(first, from), max(last, to)
 	}
-	header := enclosingHeader(all, lo)
-	switch {
-	case header >= first:
-		header = 0 // already in the window
-	case header > 0 && first-header <= headerJoin:
-		first, header = header, 0 // close enough: show every line from the header down
+	// The header of the declaration the code sits in is shown above the window, and joined to it when close enough.
+	shown := []lineRange{{first, last}}
+	if header := enclosingHeader(all, lo); header > 0 && header < first {
+		shown = append(shown, lineRange{header, header})
 	}
+	tail := ""
+	if fc.Whole || fc.Reach {
+		var more []lineRange
+		more, tail = otherChanges(all, fc, shown, first, last)
+		shown = append(shown, more...)
+	}
+	shown = joinRanges(shown)
+	last = shown[len(shown)-1].to
 	nums := make([]int, 0, last-first+headerRows)
 	code := make([]string, 0, cap(nums))
-	if header > 0 {
-		nums, code = append(nums, header, gapRow), append(code, all[header-1], "")
-	}
 	// What the change removed is shown where it stood, before the line that follows it now.
 	lost := func(n int) {
 		for _, l := range removedRun(fc.Removed[n]) {
 			nums, code = append(nums, removedRow), append(code, l)
 		}
 	}
-	for n := first; n <= last; n++ {
-		lost(n)
-		nums, code = append(nums, n), append(code, all[n-1])
+	for i, r := range shown {
+		if i > 0 {
+			nums, code = append(nums, gapRow), append(code, "")
+		}
+		for n := r.from; n <= r.to; n++ {
+			lost(n)
+			nums, code = append(nums, n), append(code, all[n-1])
+		}
 	}
 	if last == len(all) {
 		lost(last + 1)
@@ -195,7 +209,7 @@ func codeSnippetFocus(content, file string, fc focus, st codeStyle) string {
 	// With the change known, every line says what the change did to it: "+" added, "-" removed, nothing for the rest.
 	signs := fc.signs()
 	if st.color {
-		return codeCard(place, file, marked, nums, code, numWidth, signs, st)
+		return codeCard(place, file, marked, nums, code, numWidth, signs, tail, st)
 	}
 	// "  > 12 | " before the code, and "+ " when lines carry a sign.
 	bar := " | "
@@ -227,7 +241,218 @@ func codeSnippetFocus(content, file string, fc focus, st codeStyle) string {
 			fmt.Fprintf(&s, "%s%*s | %s%s\n", mark, numWidth, num, sign, part)
 		}
 	}
+	if tail != "" {
+		fmt.Fprintf(&s, "    %*s   %s\n", numWidth, "", tail)
+	}
 	return s.String()
+}
+
+// lineRange is a run of lines of a file, first to last.
+type lineRange struct{ from, to int }
+
+// joinRanges puts ranges in the file's order and joins those that overlap or have at most headerJoin-1 lines between
+// them: a gap that small is shorter to read than to skip.
+func joinRanges(ranges []lineRange) []lineRange {
+	slices.SortFunc(ranges, func(a, b lineRange) int { return cmp.Or(a.from-b.from, a.to-b.to) })
+	if len(ranges) == 0 {
+		return nil
+	}
+	out := ranges[:1]
+	for _, r := range ranges[1:] {
+		if cur := &out[len(out)-1]; r.from-cur.to <= headerJoin {
+			cur.to = max(cur.to, r.to)
+			continue
+		}
+		out = append(out, r)
+	}
+	return out
+}
+
+// Besides the lines a snippet is about, one that shows the whole of a file's change shows every other place the
+// change touches: otherContext lines around each, and at most maxOtherLines lines in all; a place is shown in part
+// only when at least minOtherLines of it fit.
+const (
+	otherContext  = 3
+	maxOtherLines = 80
+	minOtherLines = 8
+	// aboveShare is the part of the room, one in so many lines, that a change running both ways from the window gets
+	// above it.
+	aboveShare = 2
+)
+
+// otherChanges lists the places of the file the change touches outside the window, first to last, which shown draws
+// with its header: each place with the lines around it and the header of the declaration it sits in. It says in words
+// what is left out: a place another stop of the tour is about, which is read there, and what does not fit.
+func otherChanges(all []string, fc focus, shown []lineRange, first, last int) (ranges []lineRange, note string) {
+	var changed []int
+	for n := range fc.Added {
+		if n >= 1 && n <= len(all) {
+			changed = append(changed, n)
+		}
+	}
+	for n := range fc.Removed {
+		if n >= 1 {
+			changed = append(changed, min(n, len(all))) // lines removed at the end of the file stand after its last
+		}
+	}
+	slices.Sort(changed)
+	var places []lineRange
+	for _, n := range changed {
+		if k := len(places) - 1; k >= 0 && n-places[k].to <= 2*otherContext {
+			places[k].to = n
+			continue
+		}
+		places = append(places, lineRange{n, n})
+	}
+	// What a place costs is the rows it adds to what is shown, counted as they are drawn: its lines, the removed lines
+	// shown among them, the lines between it and a neighbour that joinRanges fills in, and its declaration's header.
+	rows := func(rs ...[]lineRange) (n int) {
+		for _, r := range joinRanges(slices.Concat(rs...)) {
+			for l := r.from; l <= r.to; l++ {
+				n += 1 + len(removedRun(fc.Removed[l]))
+			}
+			if r.to == len(all) {
+				n += len(removedRun(fc.Removed[len(all)+1]))
+			}
+		}
+		return n
+	}
+	// Whether the change shows at line l: it adds the line, or removed lines stand before it (or after the file's last).
+	changes := func(l int) bool {
+		return fc.Added[l] || len(fc.Removed[l]) > 0 || (l == len(all) && len(fc.Removed[l+1]) > 0)
+	}
+	base := slices.Clone(shown)
+	room, own := maxOtherLines, 0
+	var judged []lineRange // the places the reader is owed: what is left out of them is said
+	for _, p := range places {
+		r := lineRange{max(1, p.from-otherContext), min(len(all), p.to+otherContext)}
+		before := rows(base)
+		// A place that reaches the window is read with it, as far as there is room, like any other.
+		touched := r.to >= first && r.from <= last
+		switch {
+		case rows(base, []lineRange{r}) == before:
+			continue // the window shows all of it
+		case !touched && !fc.Whole:
+			continue
+		case !touched && slices.ContainsFunc(fc.Stops, func(n int) bool { return n >= r.from && n <= r.to }):
+			own++
+			continue
+		}
+		if judged = append(judged, p); room < minOtherLines {
+			continue
+		}
+		// A place the window is in is shown around the window, its lines above and those below, each as far as there
+		// is room: cut at its far end, not at the window. Any other is shown from its start, under its header.
+		parts := []lineRange{r}
+		var header []lineRange
+		if touched {
+			parts = parts[:0]
+			if r.from < first {
+				parts = append(parts, lineRange{r.from, first - 1})
+			}
+			if r.to > last {
+				parts = append(parts, lineRange{max(r.from, last+1), r.to})
+			}
+		} else if h := enclosingHeader(all, p.from); h > 0 && h < r.from {
+			header = []lineRange{{h, h}}
+		}
+		for _, part := range parts {
+			share, above := room, touched && part.to < first
+			if above && len(parts) > 1 {
+				share = room / aboveShare
+			}
+			before = rows(base)
+			// A line is a row at least, so no more lines than rows fit: a change of any length is cut to that at once.
+			if part.to-part.from+1 > share {
+				if above {
+					part.from = part.to - share + 1
+				} else {
+					part.to = part.from + share - 1
+				}
+			}
+			// Then a line at a time until it fits: a line can cost several rows, with what was removed there, and a cut
+			// can part the place from a neighbour it was joined to.
+			for part.to >= part.from && rows(base, header, []lineRange{part})-before > share {
+				if above {
+					part.from++
+				} else {
+					part.to--
+				}
+			}
+			// A fragment of the lines around a change, with none of the change, tells the reader nothing.
+			some := false
+			for l := part.from; l <= part.to && !some; l++ {
+				some = changes(l)
+			}
+			if !some {
+				continue
+			}
+			add := slices.Concat(header, []lineRange{part})
+			ranges, base = append(ranges, add...), append(base, add...)
+			room -= rows(base) - before
+		}
+	}
+	// What is left out is read from what is drawn, not kept count of on the way: a place with none of its changed
+	// lines on show is not shown, one with some of them is cut short.
+	drawn := joinRanges(slices.Clone(base))
+	cut, short := 0, false
+	for _, p := range judged {
+		seen, total := 0, 0
+		for l := p.from; l <= p.to; l++ {
+			if !changes(l) {
+				continue
+			}
+			total++
+			if slices.ContainsFunc(drawn, func(r lineRange) bool { return l >= r.from && l <= r.to }) {
+				seen++
+			}
+		}
+		switch {
+		case seen == 0:
+			cut++
+		case seen < total:
+			short = true
+		}
+	}
+	var notes []string
+	switch {
+	case own == 1:
+		notes = append(notes, "1 more change at a stop of its own")
+	case own > 1:
+		notes = append(notes, fmt.Sprintf("%d more changes at stops of their own", own))
+	}
+	if cut > 0 {
+		notes = append(notes, plural(cut, "more change")+" not shown")
+	}
+	if short {
+		notes = append(notes, "a long change is cut short")
+	}
+	if len(notes) > 0 {
+		note = "In this file: " + strings.Join(notes, "; ") + "."
+	}
+	return ranges, note
+}
+
+// wrapWords breaks text at its spaces into lines of at most width characters; a word longer than that is cut by
+// wrapColumns.
+func wrapWords(text string, width int) []string {
+	var lines []string
+	cur := ""
+	for _, w := range strings.Fields(text) {
+		switch {
+		case cur == "":
+			cur = w
+		case utf8.RuneCountInString(cur)+1+utf8.RuneCountInString(w) <= width:
+			cur += " " + w
+		default:
+			lines, cur = append(lines, cur), w
+		}
+		for utf8.RuneCountInString(cur) > width {
+			parts := wrapColumns(cur, width)
+			lines, cur = append(lines, parts[0]), strings.Join(parts[1:], "")
+		}
+	}
+	return append(lines, cur)
 }
 
 // removedRow stands, among a snippet's line numbers, for a line the change removed: it has no number in the file.
@@ -266,6 +491,15 @@ func (fc focus) signs() func(n int) string {
 		}
 		return " "
 	}
+}
+
+// snippetLines is the lines of a file as a snippet reads them: without line endings, a tab as tabWidth spaces.
+func snippetLines(content string) []string {
+	all := strings.Split(strings.TrimSuffix(content, "\n"), "\n")
+	for i, l := range all {
+		all[i] = strings.ReplaceAll(strings.TrimRight(l, "\r"), "\t", strings.Repeat(" ", tabWidth))
+	}
+	return all
 }
 
 // markedLines returns the lines a finding is about: the cited range, plus the lines within hintReach of it that
@@ -329,7 +563,9 @@ func abs(n int) int {
 //
 // When signs is set the change is known: an added line has "+" before it and a removed one "-", each in its own colour
 // and on its own background, so the two are told apart at a glance and without colour too.
-func codeCard(place, file string, marked map[int]bool, nums []int, code []string, numWidth int, signs func(int) string, st codeStyle) string {
+//
+// tail is a line said under the code, of what the card leaves out.
+func codeCard(place, file string, marked map[int]bool, nums []int, code []string, numWidth int, signs func(int) string, tail string, st codeStyle) string {
 	const margin, pad, beforeCode = "  ", 1, "  "
 	width := min(maxCardWidth, max(minCodeWidth, st.width-len(margin)))
 	gutter := len("▌") + numWidth + len(beforeCode)
@@ -381,6 +617,12 @@ func codeCard(place, file string, marked map[int]bool, nums []int, code []string
 				}
 				s.WriteString(row(back, lead+num+ansiReset+beforeCode+sign+part))
 			}
+		}
+	}
+	// What the card leaves out is said whole, over as many rows as it takes: a note cut short hides what it is for.
+	if tail != "" {
+		for _, part := range wrapWords(tail, max(1, width-1)) {
+			s.WriteString(row(st.pal.card, st.pal.dim+" "+part+ansiReset))
 		}
 	}
 	return s.String()

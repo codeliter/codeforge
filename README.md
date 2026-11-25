@@ -68,6 +68,8 @@ The job runs in your terminal; when it finishes, a chat screen opens for follow-
 To be walked through a change the agent made, run `codeforge explain`. It explains a session, not your current branch:
 the work and ticket sessions started in this directory are listed, newest first, and the agent of the one you pick
 tours its change (where to read, its decisions, what it did not verify, questions to check you could defend it).
+Each stop shows its code with added lines marked `+` and removed ones `-`; the first stop in a file also shows every
+other place the change touches there. When stops use each other, a Map step draws which changed code uses which.
 Sessions started in another directory or worktree, and chat or review sessions, are not offered. With one session, or
 no terminal to ask on, it takes the latest; `--pick` always asks, and `codeforge explain SESSION` names one by ID or prefix.
 

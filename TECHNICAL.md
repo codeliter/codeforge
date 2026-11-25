@@ -84,7 +84,18 @@ The tour is one turn in a read-only fork of that session (plan mode, review guar
 from the session's history. Git is read only afterwards, for the branch diff that shows code at the cited lines: with a
 different branch checked out than the session worked on, the notes are right and the code beside them may not match.
 
-Implementation: [explain.go](src/explain.go), [sessionscmd.go](src/sessionscmd.go).
+A stop's code card marks added lines `+` and removed lines `-`, the removed ones where they stood. The first stop in a
+file also shows every other place of that file the change touches, each with its enclosing declaration's header, up to
+80 lines; places another stop cites are left to that stop, and a line under the card counts what is left out. The same
+holds for a review's walkthrough; a finding's card shows its own place only.
+
+The Map step is drawn when at least one stop uses another. It is read from the code, not asked of the model: a stop is
+the declaration it sits in, and it uses another stop when that declaration's name appears in it as a whole word. It is a
+match by name, so two declarations with the same name are not told apart. The map is a tree in the terminal; nothing is
+rendered as an image.
+
+Implementation: [explain.go](src/explain.go), [sessionscmd.go](src/sessionscmd.go), [walkmap.go](src/walkmap.go),
+[gatecode.go](src/gatecode.go).
 
 ### Terminal forms
 

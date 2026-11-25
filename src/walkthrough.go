@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strconv"
@@ -238,7 +239,9 @@ func walkIntro(w walkthrough, st codeStyle, width int) string {
 
 // walkStopText is a stop as it is read: its note, whether its code does what was asked of it, the comment it
 // answers, and its code.
-func walkStopText(s walkStop, body codeStyle, code codeSource) string {
+//
+// fc says how much of the stop's file to show: for a stop of the change, every other place the change touches there.
+func walkStopText(s walkStop, body codeStyle, code codeSource, fc focus) string {
 	wrap := func(line ...span) string {
 		return strings.TrimRight(wrapSpans(body, max(0, body.width), "", "", line...), "\n")
 	}
@@ -258,18 +261,36 @@ func walkStopText(s walkStop, body codeStyle, code codeSource) string {
 		text += "\n" + wrap(append([]span{{text: "Answers your comment: ", code: body.pal.dim}}, inlineSpans(s.Answers, body)...)...)
 	}
 	if code != nil {
-		if snippet := strings.Trim(code(s.Path, focus{Line: s.Line, End: s.End, Hints: inlineNames(s.Text)}), "\n"); snippet != "" {
+		fc.Line, fc.End, fc.Hints = s.Line, s.End, inlineNames(s.Text)
+		if snippet := strings.Trim(code(s.Path, fc), "\n"); snippet != "" {
 			text += "\n\n" + snippet
 		}
 	}
 	return text
 }
 
+// stopFocus is how the code of stop i of a tour is shown. The first stop in a file shows every other place of the
+// file the change touches, but for those another stop is about: no change is left unseen, and none is read twice. A
+// later stop in the file shows its own place, to the end of the change there.
+func stopFocus(stops []walkStop, i int) focus {
+	fc := focus{Whole: true}
+	for k, s := range stops {
+		if k == i || filepath.Clean(s.Path) != filepath.Clean(stops[i].Path) {
+			continue
+		}
+		if k < i {
+			return focus{Reach: true}
+		}
+		fc.Stops = append(fc.Stops, s.Line)
+	}
+	return fc
+}
+
 // walkBackground is the existing code the change leans on, each place with what it does and its code.
 func walkBackground(w walkthrough, body codeStyle, code codeSource) string {
 	parts := []string{body.paint(body.pal.dim, "Existing code this change leans on.")}
 	for _, s := range w.Background {
-		parts = append(parts, body.paint(body.pal.accent, walkPlace(s))+"\n"+walkStopText(s, body, code))
+		parts = append(parts, body.paint(body.pal.accent, walkPlace(s))+"\n"+walkStopText(s, body, code, focus{}))
 	}
 	return strings.Join(parts, "\n\n")
 }
@@ -299,7 +320,7 @@ func walkthroughSteps(w walkthrough, st codeStyle, code codeSource, whole bool) 
 		}
 		steps.Items = append(steps.Items, forms.Step{
 			Tab: strconv.Itoa(i + 1), Group: group, Color: colour, Status: status,
-			Body: st.paint(st.pal.accent, walkPlace(s)) + "\n" + walkStopText(s, st, code),
+			Body: st.paint(st.pal.accent, walkPlace(s)) + "\n" + walkStopText(s, st, code, stopFocus(w.Stops, i)),
 		})
 		fmt.Fprintf(&contents, "\n%s  %s  %s", st.paint(cmp.Or(colour, st.pal.accent), fmt.Sprintf("%2d", i+1)),
 			walkPlace(s), st.paint(st.pal.dim, firstWords(s.Text, walkSummaryWords)))
@@ -339,7 +360,7 @@ func walkthroughView(w walkthrough, st codeStyle, code codeSource) forms.Accordi
 		a.Items = append(a.Items, forms.Section{
 			Title:   st.paint(st.pal.accent, fmt.Sprintf("%d. %s", i+1, walkPlace(s))),
 			Summary: summary,
-			Body:    walkStopText(s, body, code),
+			Body:    walkStopText(s, body, code, stopFocus(w.Stops, i)),
 			Open:    i == 0,
 		})
 	}
@@ -523,8 +544,9 @@ func showWalkthrough(ctx context.Context, job *walkJob) {
 			return
 		}
 		st := codeStyleFor(ctx, os.Stdout)
-		code := reviewCode(ctx, st, walkthroughText(job.w))
-		key, err := showSteps("walkthrough", walkthroughSteps(job.w, st, code, job.whole != nil))
+		reader := reviewReader(ctx, walkthroughText(job.w))
+		code := reader.source(ctx, st)
+		key, err := showSteps("walkthrough", withMap(walkthroughSteps(job.w, st, code, job.whole != nil), job.w.Stops, reader, st))
 		if errors.Is(err, forms.ErrOldHelper) {
 			a := walkthroughView(job.w, st, code)
 			if job.whole != nil {

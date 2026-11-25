@@ -48,7 +48,10 @@ func TestWalkthroughView(t *testing.T) {
 	require.True(t, a.Items[0].Open)
 	require.False(t, a.Items[1].Open)
 	require.Contains(t, a.Items[1].Body, "app/Games/Ludo/LudoHandler.php code", "each stop shows its code")
-	require.Equal(t, focus{Line: 520, End: 540}, asked[1])
+	require.Equal(t, focus{Line: 520, End: 540, Whole: true}, asked[1], "a stop is shown with every other place of its file the change touches")
+	same := []walkStop{{Path: "a.go", Line: 5}, {Path: "b.go", Line: 1}, {Path: "./a.go", Line: 40}}
+	require.Equal(t, focus{Whole: true, Stops: []int{40}}, stopFocus(same, 0), "but for the places other stops are about")
+	require.Equal(t, focus{Reach: true}, stopFocus(same, 2), "and only at the file's first stop, so no change is read twice")
 	require.Equal(t, []string{"app/Games/Ludo/Support/LudoBoard.php", "app/Games/Ludo/LudoHandler.php", "resources/js/Components/Session/Stage/LudoStage.vue"}, findingPaths(walkthroughText(w)))
 }
 

@@ -1,10 +1,13 @@
 package src
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/require"
@@ -296,6 +299,191 @@ func TestCodeSnippet_AddedAndRemovedLinesAreToldApart(t *testing.T) {
 	run := removedRun(long)
 	require.Len(t, run, maxRemovedRun+1)
 	require.Equal(t, "… 3 more lines removed", run[maxRemovedRun], "a long removal is cut, and says by how much")
+}
+
+func TestCodeSnippet_EveryPlaceTheChangeTouchesInTheFileIsShown(t *testing.T) {
+	var b strings.Builder
+	b.WriteString("package p\n\nfunc first() {\n\tone()\n}\n\n")
+	for i := range 40 {
+		fmt.Fprintf(&b, "// filler %d\n", i)
+	}
+	b.WriteString("func second() {\n\ttwo()\n\tthree()\n}\n\n")
+	for i := range 40 {
+		fmt.Fprintf(&b, "// more %d\n", i)
+	}
+	b.WriteString("func third() {\n\tfour()\n}\n")
+	content := b.String() // first() is lines 3-5, second() 47-50, third() 92-94
+	fc := focus{Line: 4, Added: map[int]bool{4: true, 49: true, 93: true}, Removed: map[int][]string{49: {"\told()"}}}
+	st := codeStyle{width: 100}
+
+	one := codeSnippetFocus(content, "p.go", fc, st)
+	require.NotContains(t, one, "three()", "a finding shows its own place")
+
+	fc.Whole = true
+	whole := codeSnippetFocus(content, "p.go", fc, st)
+	for _, want := range []string{"  >  4 | +     one()", "47 |   func second() {", "| -     old()", "49 | +     three()", "93 | +     four()"} {
+		require.Contains(t, whole, want, "a stop of a tour shows every place of its file the change touches")
+	}
+	require.Equal(t, 2, strings.Count(whole, "⋮"), "with what lies between them left out")
+	require.Less(t, strings.Index(whole, "one()"), strings.Index(whole, "three()"), "in the file's order")
+	require.NotContains(t, whole, "In this file", "nothing is left out, so nothing is said")
+
+	fc.Stops = []int{48}
+	apart := codeSnippetFocus(content, "p.go", fc, st)
+	require.NotContains(t, apart, "three()", "a place another stop is about is read there")
+	require.Contains(t, apart, "four()")
+	require.Contains(t, apart, "In this file: 1 more change at a stop of its own.")
+
+	long := map[int]bool{4: true}
+	for n := 9; n <= 44; n++ {
+		long[n] = true
+	}
+	for n := 52; n <= 84; n++ {
+		long[n] = true
+	}
+	for n := 92; n <= 94; n++ {
+		long[n] = true
+	}
+	cut := codeSnippetFocus(content, "p.go", focus{Line: 4, Whole: true, Added: long}, st)
+	require.Contains(t, cut, "1 more change not shown", "what does not fit is counted, not dropped in silence")
+
+	// The lines between places that are joined, and their headers, count toward what is shown.
+	spread := focus{Line: 4, Added: map[int]bool{4: true}}
+	for n := 100; n <= 250; n += 10 {
+		spread.Added[n] = true
+	}
+	many := strings.Repeat("x()\n", 500)
+	alone := codeSnippetFocus(many, "p.txt", spread, st)
+	spread.Whole = true
+	with := codeSnippetFocus(many, "p.txt", spread, st)
+	extra := strings.Count(with, "\n") - strings.Count(alone, "\n") - strings.Count(with, "⋮") - strings.Count(with, "In this file")
+	require.LessOrEqual(t, extra, maxOtherLines, "the other places of a file take no more lines than they are given")
+	require.Greater(t, extra, maxOtherLines-minOtherLines)
+	require.Contains(t, with, "more changes not shown")
+	// The measure of what a snippet adds to its window: rows drawn, without the gap markers and the closing note.
+	added := func(content string, fc focus) int {
+		fc.Whole, fc.Reach = false, false
+		window := codeSnippetFocus(content, "p.txt", fc, st)
+		fc.Whole = true
+		all := codeSnippetFocus(content, "p.txt", fc, st)
+		return strings.Count(all, "\n") - strings.Count(window, "\n") - strings.Count(all, "⋮") + strings.Count(window, "⋮") - strings.Count(all, "In this file")
+	}
+	near := focus{Line: 20, Added: map[int]bool{}}
+	for n := 10; n <= 40; n++ {
+		near.Added[n] = true
+	}
+	for n := 100; n <= 200; n++ {
+		near.Added[n] = true
+	}
+	require.LessOrEqual(t, added(many, near), maxOtherLines, "a place read with the window takes from what the others get")
+	late := focus{Line: 200, Added: map[int]bool{}}
+	for n := 10; n <= 100; n++ {
+		late.Added[n] = true
+	}
+	for n := 190; n <= 220; n++ {
+		late.Added[n] = true
+	}
+	require.LessOrEqual(t, added(many, late), maxOtherLines, "and gets no more than the others leave it")
+	thick := focus{Line: 20, Added: map[int]bool{}, Removed: map[int][]string{}}
+	for n := 10; n <= 40; n++ {
+		thick.Added[n], thick.Removed[n] = true, slices.Repeat([]string{"old()"}, 12)
+	}
+	require.LessOrEqual(t, added(many, thick), maxOtherLines, "with the removed lines it shows")
+	gone := focus{Line: 4, Added: map[int]bool{4: true}, Removed: map[int][]string{}}
+	for n := 100; n <= 200; n += 10 {
+		gone.Removed[n] = slices.Repeat([]string{"old()"}, 12)
+	}
+	require.LessOrEqual(t, added(many, gone), maxOtherLines, "removed lines are rows too")
+	// A fragment that shows none of the change is not shown: the change is counted as left out.
+	bare := focus{Line: 4, Whole: true, Added: map[int]bool{4: true}, Removed: map[int][]string{100: slices.Repeat([]string{"old()"}, 12)}}
+	for n := 20; n <= 85; n++ {
+		bare.Added[n] = true
+	}
+	unseen := codeSnippetFocus(many, "p.txt", bare, st)
+	require.NotContains(t, unseen, " 97 | ")
+	require.Contains(t, unseen, "1 more change not shown")
+	// What is said of a place is what is drawn of it: none of its changed lines, or some.
+	far := focus{Line: 200, Whole: true, Added: map[int]bool{207: true}}
+	for n := 20; n <= 93; n++ {
+		far.Added[n] = true
+	}
+	hidden := codeSnippetFocus(many, "p.txt", far, st)
+	require.NotContains(t, hidden, "207 | +")
+	require.Contains(t, hidden, "1 more change not shown")
+	split := focus{Line: 200, Whole: true, Added: map[int]bool{193: true, 199: true}, Removed: map[int][]string{205: slices.Repeat([]string{"old()"}, 12)}}
+	for n := 20; n <= 85; n++ {
+		split.Added[n] = true
+	}
+	part := codeSnippetFocus(many, "p.txt", split, st)
+	require.Contains(t, part, "193 | +")
+	require.NotContains(t, part, "old()")
+	require.Contains(t, part, "a long change is cut short", "a part of a place left out is said, whatever else of it is shown")
+	// A change of any length is cut without reading it over and over.
+	vast := focus{Line: 50000, Reach: true, Added: map[int]bool{}}
+	for n := 1; n <= 100000; n++ {
+		vast.Added[n] = true
+	}
+	began := time.Now()
+	require.Contains(t, codeSnippetFocus(strings.Repeat("x()\n", 100000), "p.txt", vast, st), "a long change is cut short")
+	require.Less(t, time.Since(began), 5*time.Second)
+	// A place whose rows do not all fit is shown as far as they do, whichever end it is cut at.
+	for name, line := range map[string]int{"cut at its end": 4, "cut at its start": 131} {
+		dense := focus{Line: line, Added: map[int]bool{line: true}, Removed: map[int][]string{}}
+		for n := 100; n <= 129; n++ {
+			dense.Added[n], dense.Removed[n] = true, []string{"a()", "b()", "c()"}
+		}
+		got := added(many, dense)
+		require.LessOrEqual(t, got, maxOtherLines, name)
+		require.Greater(t, got, maxOtherLines-minOtherLines, name)
+	}
+	every := map[int]bool{}
+	for n := 1; n <= 400; n++ {
+		every[n] = true
+	}
+	mid := codeSnippetFocus(strings.Repeat("x()\n", 400), "p.txt", focus{Line: 200, Reach: true, Added: every}, st)
+	require.LessOrEqual(t, strings.Count(mid, "\n")-strings.Count(codeSnippetFocus(strings.Repeat("x()\n", 400), "p.txt", focus{Line: 200, Added: every}, st), "\n"), maxOtherLines+2)
+	require.Contains(t, mid, "190 | + x()", "a long change is shown around the lines cited, not from its far start")
+	require.NotContains(t, mid, "  1 | + x()")
+	require.Contains(t, mid, "215 | + x()", "on both sides of them")
+	require.Contains(t, mid, "a long change is cut short")
+
+	// A later stop in the file shows the whole of the change it is in, and no other.
+	run := map[int]bool{93: true}
+	for n := 10; n <= 40; n++ {
+		run[n] = true
+	}
+	reach := codeSnippetFocus(content, "p.go", focus{Line: 38, Reach: true, Added: run}, st)
+	require.Contains(t, reach, "10 | + // filler 3", "from where the change it cites starts")
+	require.NotContains(t, reach, "four()")
+	all := map[int]bool{}
+	for n := 1; n <= 400; n++ {
+		all[n] = true
+	}
+	bounded := codeSnippetFocus(strings.Repeat("x()\n", 400), "p.txt", focus{Line: 200, Reach: true, Added: all}, st)
+	require.Less(t, strings.Count(bounded, "\n"), maxOtherLines+30, "a change without end is not shown without end")
+	require.Contains(t, bounded, "a long change is cut short")
+
+	card := ansi.Strip(codeSnippetFocus(content, "p.go", fc, codeStyle{width: 100, color: true, pal: paletteFor("dark")}))
+	require.Contains(t, card, "In this file: 1 more change at a stop of its own.")
+	// A narrow card says the whole note, over several rows.
+	narrow := ansi.Strip(codeSnippetFocus(content, "p.go", focus{Line: 4, Whole: true, Stops: []int{93}, Added: long}, codeStyle{width: 40, color: true, pal: paletteFor("dark")}))
+	note := func(card string) string {
+		_, after, found := strings.Cut(card, "In this file")
+		require.True(t, found)
+		return "In this file" + strings.Join(strings.Fields(after), " ")
+	}
+	said := note(narrow)
+	require.Equal(t, "In this file: 1 more change at a stop of its own.", said)
+	both := focus{Line: 200, Whole: true, Added: map[int]bool{207: true}}
+	for n := 20; n <= 120; n++ {
+		both.Added[n] = true
+	}
+	narrow = ansi.Strip(codeSnippetFocus(strings.Repeat("x()\n", 500), "p.txt", both, codeStyle{width: 30, color: true, pal: paletteFor("dark")}))
+	said = note(narrow)
+	require.Equal(t, "In this file: 1 more change not shown; a long change is cut short.", said)
+	require.Equal(t, []string{"ab cd", "efghi", "jk"}, wrapWords("ab cd efghijk", 5))
+
+	require.Equal(t, []lineRange{{1, 9}, {20, 22}}, joinRanges([]lineRange{{20, 22}, {5, 9}, {1, 2}}), "ranges a few lines apart are joined")
 }
 
 func TestCodeSnippet_ADeclarationTheChangeAddsIsShownWhole(t *testing.T) {
